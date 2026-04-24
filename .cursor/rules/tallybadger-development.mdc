@@ -9,6 +9,8 @@ alwaysApply: true
 
 - Build **features and bug fixes on a branch**; do not land substantive work by committing straight to `master`.
 - Merge to `master` only through a **pull request** (self-review is OK; the PR is the audit trail and review surface).
+- Use **squash merge** (or equivalent) when merging PRs so `master` stays a linear, readable history unless the team explicitly chooses otherwise.
+- **Link work to GitHub issues:** in the PR description, reference issues with keywords GitHub understands, e.g. `Fixes #42`, `Closes #42`, or `Refs #42` (see [GitHub linking](https://docs.github.com/en/issues/tracking-your-work-with-issues/linking-a-pull-request-to-an-issue)). Put the primary link in the **PR body** so it survives squash; repeat in commit messages if you like, but the PR body is the reliable place.
 
 ## Testing (ship tests with the change)
 
@@ -26,4 +28,5 @@ alwaysApply: true
 
 ## PR hygiene
 
-- PR description states **what changed**, **why**, and how to **verify** (commands run, screenshots for UI when relevant).
+- PR description states **what changed**, **why**, how to **verify** (commands run, screenshots for UI when relevant), and **which issue(s)** it addresses (`Fixes #…` / `Refs #…`).
+- **Tracking:** features and bugs live in **GitHub Issues**; implementation PRs should reference those issues so history stays traceable.
