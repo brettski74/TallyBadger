@@ -1,0 +1,29 @@
+---
+description: TallyBadger — branches, PRs, testing, and engineering defaults
+alwaysApply: true
+---
+
+# TallyBadger development rules
+
+## Git and delivery
+
+- Build **features and bug fixes on a branch**; do not land substantive work by committing straight to `master`.
+- Merge to `master` only through a **pull request** (self-review is OK; the PR is the audit trail and review surface).
+
+## Testing (ship tests with the change)
+
+- Every **feature** or **bug fix** includes **at least one new automated test**; add more whenever needed to cover behavior and prevent regressions.
+- **Backend** (`src/tallybadger/`, `tests/`): extend **pytest** for API and domain logic (e.g. FastAPI `TestClient`, unit tests). Add **integration tests** when behavior depends on PostgreSQL or migrations.
+- **Frontend** (`frontend/`): once the UI stack is chosen, **every frontend change** must include **automated tests** (e.g. component tests plus e2e or smoke UI tests—match the stack). Until non-trivial UI exists, focus tests on the API; as soon as UI code ships, UI tests are **mandatory** for those paths.
+- **Design for testability:** keep domain and ledger rules **testable without HTTP** where practical; inject config/DB/session dependencies; avoid hidden globals and side effects that block assertions.
+
+## Engineering defaults
+
+- **Money:** use `Decimal` or integer **minor units**—never `float` for currency in new code.
+- **API contract:** treat published routes and stable JSON shapes as contracts; update tests and docs when they change.
+- **Secrets:** never commit credentials; use env (e.g. `TALLYBADGER_*`) or secret stores.
+- **Database:** ship SQL migrations in `sql/` (or the chosen migration tool) with the same PR as code that depends on them; prefer reversible or additive steps when data is live.
+
+## PR hygiene
+
+- PR description states **what changed**, **why**, and how to **verify** (commands run, screenshots for UI when relevant).
