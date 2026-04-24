@@ -1,0 +1,29 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: tallybadger
+      POSTGRES_PASSWORD: tallybadger
+      POSTGRES_DB: tallybadger
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tallybadger -d tallybadger"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      TALLYBADGER_DATABASE_URL: postgresql://tallybadger:tallybadger@db:5432/tallybadger
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
