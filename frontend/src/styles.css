@@ -105,3 +105,124 @@ td {
 .error {
   color: #fca5a5;
 }
+
+.muted {
+  opacity: 0.8;
+  font-size: 0.95rem;
+}
+
+.banner-info {
+  margin-top: 0;
+  padding: 0.65rem 0.75rem;
+  border-radius: 8px;
+  background: #0b1220;
+  border: 1px solid #334155;
+}
+
+.app-nav {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.app-nav button {
+  width: auto;
+  margin: 0;
+  background: #1e293b;
+}
+
+.app-nav button.app-nav-active {
+  background: #0284c7;
+}
+
+.journal-card-wide {
+  grid-column: 1 / -1;
+}
+
+.journal-list-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.journal-list-toolbar h2 {
+  margin: 0;
+}
+
+.journal-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.journal-filters label {
+  margin: 0;
+  min-width: 140px;
+}
+
+.journal-form-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.journal-form-header h2 {
+  margin: 0;
+}
+
+.journal-lines-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 1rem 0 0.5rem 0;
+}
+
+.journal-lines-header h3 {
+  margin: 0;
+}
+
+.balance-banner {
+  padding: 0.65rem 0.75rem;
+  border-radius: 8px;
+  margin: 0.75rem 0;
+  font-size: 0.95rem;
+}
+
+.balance-banner.balance-ok {
+  border: 1px solid #15803d;
+  background: rgba(22, 163, 74, 0.12);
+}
+
+.balance-banner.balance-bad {
+  border: 1px solid #b45309;
+  background: rgba(217, 119, 6, 0.12);
+}
+
+.journal-lines th:last-child,
+.journal-lines td:last-child {
+  width: 6rem;
+}
+
+.button-secondary {
+  background: #334155;
+  font-weight: 600;
+}
+
+.button-link {
+  width: auto;
+  margin: 0;
+  padding: 0.25rem 0.5rem;
+  background: transparent;
+  color: #38bdf8;
+  text-decoration: underline;
+  border: none;
+}
+
+.button-link:disabled {
+  opacity: 0.5;
+}
