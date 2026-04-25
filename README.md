@@ -88,6 +88,24 @@ pytest
 make test
 ```
 
+Quick dev control targets:
+
+```bash
+make up           # start db + api + frontend in background
+make status       # show service status
+make logs         # show api/frontend logs
+make down         # stop all services
+```
+
+Equivalent direct CLI (no environment argument):
+
+```bash
+PYTHONPATH=src .venv/bin/python -m tallybadger.tbad up
+PYTHONPATH=src .venv/bin/python -m tallybadger.tbad status
+PYTHONPATH=src .venv/bin/python -m tallybadger.tbad logs api
+PYTHONPATH=src .venv/bin/python -m tallybadger.tbad down
+```
+
 Run frontend tests:
 
 ```bash
@@ -136,6 +154,8 @@ make frontend-dev
 - Backend API: `http://127.0.0.1:8080`
 
 Use `VITE_API_BASE_URL` when the API host/port differs from local defaults.
+
+When started via `make up`, service logs are written to `local/logs/` and pid files to `local/run/`.
 
 ---
 

@@ -25,6 +25,7 @@ dev = [
 [project.scripts]
 tallybadger-api = "tallybadger.main:run"
 tallybadger-migrate = "tallybadger.db_migrations:main"
+tbad = "tallybadger.tbad:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
