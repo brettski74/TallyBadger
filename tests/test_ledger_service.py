@@ -51,7 +51,12 @@ def test_validate_lines_requires_balance_and_non_zero() -> None:
 
 def test_create_entry_runs_inside_transaction() -> None:
     service, conn, cur = _build_service_with_mocks()
-    cur.fetchone.side_effect = [{"id": 42}, {"line_count": 2, "total": Decimal("0")}]
+    cur.fetchone.side_effect = [
+        {"id": 42},
+        {"is_active": True},
+        {"is_active": True},
+        {"line_count": 2, "total": Decimal("0")},
+    ]
     service.get_entry = MagicMock(  # type: ignore[method-assign]
         return_value={
             "id": 42,
@@ -79,7 +84,11 @@ def test_create_entry_runs_inside_transaction() -> None:
 def test_update_entry_runs_inside_transaction() -> None:
     service, conn, cur = _build_service_with_mocks()
     cur.rowcount = 1
-    cur.fetchone.return_value = {"line_count": 2, "total": Decimal("0")}
+    cur.fetchone.side_effect = [
+        {"is_active": True},
+        {"is_active": True},
+        {"line_count": 2, "total": Decimal("0")},
+    ]
     service.get_entry = MagicMock(  # type: ignore[method-assign]
         return_value={
             "id": 7,
