@@ -2,9 +2,9 @@
 
 Double-entry accounting for a **small set of rental properties**: journals, chart of accounts, bank import, mortgages, depreciation, and reporting—without the bloat of generic small-business packages.
 
-**Stack today:** Python 3.11+, [FastAPI](https://fastapi.tiangolo.com/), PostgreSQL, Docker Compose. A **JavaScript** browser UI will live under `frontend/` and talk to this API; the API is the system of record for money.
+**Stack today:** Python 3.11+, [FastAPI](https://fastapi.tiangolo.com/), PostgreSQL, Docker Compose, and a React + TypeScript + Vite frontend under `frontend/`.
 
-**Not built yet (honest inventory):** auth, bank CSV ingestion, MCP tools, and the real front end. A ledger MVP (accounts + journal entries/lines) now exists as backend API + SQL migration.
+**Not built yet (honest inventory):** auth, bank CSV ingestion, MCP tools, and advanced frontend workflows beyond account management.
 
 ---
 
@@ -17,7 +17,7 @@ Double-entry accounting for a **small set of rental properties**: journals, char
 | Database | PostgreSQL in Compose; `sql/002_ledger_mvp.sql` adds accounts + journal tables |
 | Tests | `pytest` + `TestClient` (health + ledger service/API tests) |
 | Container | `Dockerfile` + `docker-compose.yml` (`api` + `db`) |
-| Front end | `frontend/README.md` — reserved for Vite/React/Vue/etc. |
+| Front end | React + TypeScript + Vite shell with account list/create page |
 
 ---
 
@@ -88,6 +88,17 @@ pytest
 make test
 ```
 
+Run frontend tests:
+
+```bash
+make frontend-install
+make frontend-test
+```
+
+Frontend test report location:
+
+- `test-results/frontend-vitest.html` (static HTML; open directly in browser)
+
 Test report locations:
 
 - `test-results/pytest.xml`
@@ -114,6 +125,20 @@ docker compose up --build
 
 ---
 
+## Frontend
+
+```bash
+make frontend-install
+make frontend-dev
+```
+
+- UI: `http://127.0.0.1:5173`
+- Backend API: `http://127.0.0.1:8080`
+
+Use `VITE_API_BASE_URL` when the API host/port differs from local defaults.
+
+---
+
 ## Repository layout
 
 ```
@@ -124,7 +149,7 @@ docker compose up --build
 │   └── core/               # Settings, shared utilities
 ├── tests/                  # Pytest
 ├── sql/                    # SQL migrations / reference DDL
-├── frontend/               # Future JS UI (empty stub for now)
+├── frontend/               # React + TypeScript + Vite UI
 ├── Dockerfile
 └── docker-compose.yml
 ```

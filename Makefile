@@ -12,6 +12,9 @@ help:
 	@echo "  make test      Run full test suite (single XML + HTML report)"
 	@echo "  make test-integration  Run only Postgres integration tests"
 	@echo "  make run       Run API locally on 127.0.0.1:8080"
+	@echo "  make frontend-install  Install frontend dependencies"
+	@echo "  make frontend-dev      Run frontend dev server on 127.0.0.1:5173"
+	@echo "  make frontend-test     Run frontend Vitest suite"
 	@echo "  make db-up     Start Postgres via Docker Compose"
 	@echo "  make db-down   Stop Docker Compose services"
 	@echo "  make db-migrate Apply SQL migrations to configured DB"
@@ -30,6 +33,16 @@ test-integration:
 
 run:
 	$(UVICORN) tallybadger.main:app --reload --host 127.0.0.1 --port 8080
+
+frontend-install:
+	npm --prefix frontend install
+
+frontend-dev:
+	npm --prefix frontend run dev
+
+frontend-test:
+	npm --prefix frontend test
+	$(PYTHON) scripts/junit_to_html.py --xml test-results/frontend-vitest.xml --html test-results/frontend-vitest.html --title "TallyBadger Frontend Tests"
 
 db-up:
 	docker compose up -d db
