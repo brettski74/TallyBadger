@@ -6,7 +6,7 @@ import uvicorn
 from fastapi import FastAPI
 
 from tallybadger import __version__
-from tallybadger.api.routes import health
+from tallybadger.api.routes import health, ledger
 
 app = FastAPI(
     title="TallyBadger",
@@ -15,6 +15,7 @@ app = FastAPI(
 )
 
 app.include_router(health.router)
+app.include_router(ledger.router)
 
 
 @app.get("/")

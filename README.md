@@ -4,7 +4,7 @@ Double-entry accounting for a **small set of rental properties**: journals, char
 
 **Stack today:** Python 3.11+, [FastAPI](https://fastapi.tiangolo.com/), PostgreSQL, Docker Compose. A **JavaScript** browser UI will live under `frontend/` and talk to this API; the API is the system of record for money.
 
-**Not built yet (honest inventory):** ledger schema, auth, bank CSV ingestion, MCP tools, and the real front end. What exists is a **runnable skeleton** so we can grow the domain model safely.
+**Not built yet (honest inventory):** auth, bank CSV ingestion, MCP tools, and the real front end. A ledger MVP (accounts + journal entries/lines) now exists as backend API + SQL migration.
 
 ---
 
@@ -14,8 +14,8 @@ Double-entry accounting for a **small set of rental properties**: journals, char
 |------|--------|
 | API shell | FastAPI app with `/`, `/health`, OpenAPI at `/docs` when running |
 | Config | `tallybadger.core.config.Settings` — `TALLYBADGER_DATABASE_URL` (see below) |
-| Database | PostgreSQL in Compose; `sql/` holds migration-style SQL (placeholder only) |
-| Tests | `pytest` + `TestClient` (`tests/test_health.py`) |
+| Database | PostgreSQL in Compose; `sql/002_ledger_mvp.sql` adds accounts + journal tables |
+| Tests | `pytest` + `TestClient` (health + ledger service/API tests) |
 | Container | `Dockerfile` + `docker-compose.yml` (`api` + `db`) |
 | Front end | `frontend/README.md` — reserved for Vite/React/Vue/etc. |
 
@@ -64,6 +64,10 @@ python3 -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
 uvicorn tallybadger.main:app --reload --host 127.0.0.1 --port 8080
+
+# apply migrations (new DB)
+psql "$TALLYBADGER_DATABASE_URL" -f sql/001_placeholder.sql
+psql "$TALLYBADGER_DATABASE_URL" -f sql/002_ledger_mvp.sql
 ```
 
 - API: http://127.0.0.1:8080  
@@ -79,7 +83,14 @@ Run tests:
 
 ```bash
 pytest
+# or
+make test
 ```
+
+Test report locations (always regenerated on each run):
+
+- `test-results/pytest.xml`
+- `test-results/pytest.html` (open in browser)
 
 ---
 
@@ -111,9 +122,9 @@ docker compose up --build
 
 ---
 
-## Money in code (later, but non-negotiable)
+## Money in code (non-negotiable)
 
-Use **decimal types** (e.g. Python `Decimal` or integer minor units), not binary floats, for currency amounts. That will land with the first real ledger models.
+Use **decimal types** (e.g. Python `Decimal` or integer minor units), not binary floats, for currency amounts.
 
 ---
 
