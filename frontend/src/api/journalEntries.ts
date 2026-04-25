@@ -4,6 +4,7 @@ import { readApiErrorMessage } from "./errors";
 export interface JournalLineOut {
   id: number;
   account_id: number;
+  account_name: string;
   amount: string;
 }
 
@@ -22,8 +23,9 @@ export interface JournalEntryListItem {
   description: string | null;
   created_at: string;
   updated_at: string;
-  line_count: number;
-  total_amount: string;
+  debit_side_label: string;
+  credit_side_label: string;
+  amount: string;
 }
 
 export interface JournalLineIn {

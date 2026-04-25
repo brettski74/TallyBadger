@@ -8,6 +8,8 @@ export interface LineDraft {
   key: string;
   account_id: number | "";
   amount: string;
+  /** From GET /journal-entries/:id so the row stays labeled if chart cache is stale. */
+  account_name?: string;
 }
 
 function newLineKey(): string {
@@ -31,15 +33,17 @@ function parseAmount(value: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-/** Sum of parsed line amounts; lines with invalid input are skipped in the partial sum. */
+/** Lines that have both an account and a non-empty amount string (may still be invalid number). */
+export function materialJournalLines(lines: LineDraft[]): LineDraft[] {
+  return lines.filter((l) => l.account_id !== "" && l.amount.trim() !== "");
+}
+
+/** Sum of parsed amounts for material lines only; `complete` means every material line parses. */
 export function sumParsedAmounts(lines: LineDraft[]): { sum: number; complete: boolean } {
+  const material = materialJournalLines(lines);
   let sum = 0;
-  let complete = true;
-  for (const line of lines) {
-    if (line.amount.trim() === "") {
-      complete = false;
-      continue;
-    }
+  let complete = material.length > 0;
+  for (const line of material) {
     const n = parseAmount(line.amount);
     if (n === null) {
       complete = false;
@@ -53,17 +57,15 @@ export function sumParsedAmounts(lines: LineDraft[]): { sum: number; complete: b
 const BALANCE_EPS = 1e-9;
 
 export function isBalanced(lines: LineDraft[]): boolean {
-  if (lines.length < 2) {
-    return false;
-  }
-  if (lines.some((l) => l.account_id === "")) {
+  const material = materialJournalLines(lines);
+  if (material.length < 2) {
     return false;
   }
   const { sum, complete } = sumParsedAmounts(lines);
   if (!complete) {
     return false;
   }
-  for (const line of lines) {
+  for (const line of material) {
     const n = parseAmount(line.amount);
     if (n === null || Math.abs(n) < BALANCE_EPS) {
       return false;
@@ -108,14 +110,29 @@ export function JournalEntryForm({
     [lines],
   );
 
-  const selectableAccounts = useMemo(
-    () => accountsForJournalLinePickers(accounts, lineAccountIds),
-    [accounts, lineAccountIds],
-  );
+  const selectableAccounts = useMemo(() => {
+    const base = accountsForJournalLinePickers(accounts, lineAccountIds);
+    const byId = new Map(base.map((a) => [a.id, a]));
+    for (const line of lines) {
+      const hint = line.account_name?.trim();
+      if (typeof line.account_id === "number" && line.account_id > 0 && hint && !byId.has(line.account_id)) {
+        byId.set(line.account_id, {
+          id: line.account_id,
+          name: hint,
+          type: "asset",
+          is_active: true,
+          created_at: "1970-01-01T00:00:00Z",
+          updated_at: "1970-01-01T00:00:00Z",
+        });
+      }
+    }
+    return Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [accounts, lineAccountIds, lines]);
 
+  const material = useMemo(() => materialJournalLines(lines), [lines]);
   const { sum: runningSum, complete: amountsComplete } = sumParsedAmounts(lines);
   const balanced = isBalanced(lines);
-  const hasMinimumLines = lines.length >= 2;
+  const hasMinimumMaterialLines = material.length >= 2;
 
   function addLine() {
     setLines((prev) => [...prev, { key: newLineKey(), account_id: "", amount: "" }]);
@@ -126,23 +143,39 @@ export function JournalEntryForm({
   }
 
   function updateLine(key: string, patch: Partial<Pick<LineDraft, "account_id" | "amount">>) {
-    setLines((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)));
+    setLines((prev) =>
+      prev.map((l) => {
+        if (l.key !== key) {
+          return l;
+        }
+        const next: LineDraft = { ...l, ...patch };
+        if ("account_id" in patch && patch.account_id !== l.account_id) {
+          delete next.account_name;
+        }
+        return next;
+      }),
+    );
   }
 
   async function handleSubmit() {
     setClientError(null);
     setApiError(null);
 
-    if (!hasMinimumLines) {
-      setClientError("Add at least two lines before posting.");
-      return;
+    for (const line of lines) {
+      const hasAmt = line.amount.trim() !== "";
+      const hasAcct = line.account_id !== "";
+      if ((hasAmt || hasAcct) && !(hasAmt && hasAcct)) {
+        setClientError("Each journal line must have both an account and a non-zero amount.");
+        return;
+      }
     }
-    if (lines.some((l) => l.account_id === "")) {
-      setClientError("Select an account on every line.");
+
+    if (material.length < 2) {
+      setClientError("Add at least two complete lines (account and amount on each) before posting.");
       return;
     }
     if (!amountsComplete) {
-      setClientError("Enter a valid non-zero amount on every line.");
+      setClientError("Enter a valid non-zero amount on every line that has an account.");
       return;
     }
     if (!balanced) {
@@ -153,7 +186,7 @@ export function JournalEntryForm({
     const payload: JournalEntryWrite = {
       entry_date: entryDate,
       description: description.trim() === "" ? null : description.trim(),
-      lines: lines.map((l) => ({
+      lines: material.map((l) => ({
         account_id: l.account_id as number,
         amount: l.amount.trim(),
       })),
@@ -171,7 +204,7 @@ export function JournalEntryForm({
 
   const hasZeroLine =
     amountsComplete &&
-    lines.some((l) => {
+    material.some((l) => {
       const n = parseAmount(l.amount);
       return n !== null && Math.abs(n) < BALANCE_EPS;
     });
@@ -221,7 +254,9 @@ export function JournalEntryForm({
         />
       </label>
 
-      <div className={`balance-banner ${balanced && hasMinimumLines ? "balance-ok" : "balance-bad"}`}>
+      <div
+        className={`balance-banner ${balanced && hasMinimumMaterialLines ? "balance-ok" : "balance-bad"}`}
+      >
         <strong>Running total:</strong> {runningSum.toFixed(4)} — {balanceLabel}
       </div>
 

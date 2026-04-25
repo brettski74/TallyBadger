@@ -13,11 +13,14 @@ import { JournalEntryForm, type LineDraft } from "./JournalEntryForm";
 
 const PAGE_SIZE = 50;
 
-function linesFromEntry(lines: { id: number; account_id: number; amount: string }[]): LineDraft[] {
+function linesFromEntry(
+  lines: { id: number; account_id: number; amount: string; account_name: string }[],
+): LineDraft[] {
   return lines.map((l) => ({
     key: `jl-${l.id}`,
     account_id: l.account_id,
     amount: l.amount,
+    account_name: l.account_name,
   }));
 }
 
@@ -228,12 +231,14 @@ export function JournalEntriesPanel({ accounts, accountsLoading, accountsError }
       {!listError && entries.length === 0 && !listLoading && <p>No journal entries in this range.</p>}
 
       {entries.length > 0 && (
-        <table>
+        <table className="journal-entry-list">
           <thead>
             <tr>
               <th>Date</th>
               <th>Description</th>
-              <th>Lines</th>
+              <th>Debit account</th>
+              <th>Credit account</th>
+              <th className="journal-list-amount">Amount</th>
               <th aria-label="actions" />
             </tr>
           </thead>
@@ -242,7 +247,9 @@ export function JournalEntriesPanel({ accounts, accountsLoading, accountsError }
               <tr key={row.id}>
                 <td>{row.entry_date}</td>
                 <td>{row.description ?? "—"}</td>
-                <td>{row.line_count}</td>
+                <td>{row.debit_side_label}</td>
+                <td>{row.credit_side_label}</td>
+                <td className="journal-list-amount">{row.amount}</td>
                 <td>
                   <button type="button" className="button-link" onClick={() => void openEdit(row.id)}>
                     Edit

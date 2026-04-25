@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 
-import hugeLogo from "./assets/branding/TallyBadgerHuge.png";
+import headerLogo from "./assets/branding/TallyBadgerSimple-192.png";
 import { Account, listAccounts } from "./api/accounts";
 import { AccountsSection } from "./components/AccountsSection";
 import { JournalEntriesPanel } from "./components/JournalEntriesPanel";
@@ -37,29 +37,30 @@ function App() {
   return (
     <div className="app-shell">
       <header className="app-header">
-        <img src={hugeLogo} alt="TallyBadger logo" className="logo" />
-        <div>
-          <h1>TallyBadger</h1>
-          <p>Ledger: chart of accounts and journal entries</p>
+        <div className="app-header-main">
+          <img src={headerLogo} alt="TallyBadger" className="app-header-logo" width={192} height={192} />
+          <div className="app-header-text">
+            <h1>TallyBadger</h1>
+            <p>Ledger: chart of accounts and journal entries</p>
+          </div>
         </div>
+        <nav className="app-nav" aria-label="Main">
+          <button
+            type="button"
+            className={tab === "accounts" ? "app-nav-active" : undefined}
+            onClick={() => setTab("accounts")}
+          >
+            Accounts
+          </button>
+          <button
+            type="button"
+            className={tab === "journal" ? "app-nav-active" : undefined}
+            onClick={() => setTab("journal")}
+          >
+            Journal entries
+          </button>
+        </nav>
       </header>
-
-      <nav className="app-nav" aria-label="Main">
-        <button
-          type="button"
-          className={tab === "accounts" ? "app-nav-active" : undefined}
-          onClick={() => setTab("accounts")}
-        >
-          Accounts
-        </button>
-        <button
-          type="button"
-          className={tab === "journal" ? "app-nav-active" : undefined}
-          onClick={() => setTab("journal")}
-        >
-          Journal entries
-        </button>
-      </nav>
 
       <main className="content">
         {tab === "accounts" && (

@@ -3,7 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import type { Account } from "../api/accounts";
-import { JournalEntryForm, isBalanced, type LineDraft } from "./JournalEntryForm";
+import { JournalEntryForm, isBalanced, materialJournalLines, type LineDraft } from "./JournalEntryForm";
 
 const accounts: Account[] = [
   {
@@ -53,6 +53,16 @@ describe("isBalanced", () => {
         { key: "b", account_id: 2, amount: "-100" },
       ]),
     ).toBe(false);
+  });
+
+  it("ignores completely blank rows when balancing", () => {
+    const lines: LineDraft[] = [
+      { key: "a", account_id: 1, amount: "100" },
+      { key: "b", account_id: 2, amount: "-100" },
+      { key: "c", account_id: "", amount: "" },
+    ];
+    expect(materialJournalLines(lines)).toHaveLength(2);
+    expect(isBalanced(lines)).toBe(true);
   });
 });
 

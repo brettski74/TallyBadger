@@ -38,7 +38,7 @@ class StubLedgerService:
             "description": None,
             "created_at": datetime.now(tz=timezone.utc),
             "updated_at": datetime.now(tz=timezone.utc),
-            "lines": [{"id": 1, "account_id": 1, "amount": Decimal("1.00")}],
+            "lines": [{"id": 1, "account_id": 1, "amount": Decimal("1.00"), "account_name": "Cash"}],
         }
 
     def update_entry(self, _entry_id, _payload):

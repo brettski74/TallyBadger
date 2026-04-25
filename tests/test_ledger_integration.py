@@ -15,7 +15,11 @@ from tallybadger.ledger.models import (
     JournalEntryWrite,
     JournalLineIn,
 )
-from tallybadger.ledger.service import LedgerService, LedgerValidationError
+from tallybadger.ledger.service import (
+    JOURNAL_LIST_SPLIT_LABEL,
+    LedgerService,
+    LedgerValidationError,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -181,8 +185,9 @@ def test_list_entries_and_account_lines_with_filters(
         offset=0,
     )
     assert [entry.id for entry in entries] == [newer.id]
-    assert entries[0].line_count == 2
-    assert entries[0].total_amount == Decimal("0")
+    assert entries[0].debit_side_label == "Cash"
+    assert entries[0].credit_side_label == "Rent"
+    assert entries[0].amount == Decimal("110.00")
 
     lines = ledger_service.list_account_lines(
         cash.id,
@@ -192,3 +197,69 @@ def test_list_entries_and_account_lines_with_filters(
         offset=0,
     )
     assert [line.entry_id for line in lines] == [newer.id, older.id]
+
+
+def test_list_entries_shows_split_label_when_multiple_lines_on_one_side(
+    ledger_service: LedgerService,
+) -> None:
+    cash = ledger_service.create_account(AccountCreate(name="Cash", type="asset"))
+    escrow = ledger_service.create_account(AccountCreate(name="Escrow", type="asset"))
+    liability = ledger_service.create_account(AccountCreate(name="Due To", type="liability"))
+
+    ledger_service.create_entry(
+        JournalEntryWrite(
+            entry_date=date(2026, 5, 1),
+            description="two debits",
+            lines=[
+                JournalLineIn(account_id=cash.id, amount=Decimal("30.00")),
+                JournalLineIn(account_id=escrow.id, amount=Decimal("70.00")),
+                JournalLineIn(account_id=liability.id, amount=Decimal("-100.00")),
+            ],
+        )
+    )
+
+    entries = ledger_service.list_entries(from_date=date(2026, 5, 1), limit=10, offset=0)
+    assert len(entries) == 1
+    assert entries[0].debit_side_label == JOURNAL_LIST_SPLIT_LABEL
+    assert entries[0].credit_side_label == "Due To"
+    assert entries[0].amount == Decimal("100.00")
+
+    repairs = ledger_service.create_account(AccountCreate(name="Repairs", type="expense"))
+    fees = ledger_service.create_account(AccountCreate(name="Fees", type="expense"))
+    bank = ledger_service.create_account(AccountCreate(name="Bank", type="asset"))
+
+    ledger_service.create_entry(
+        JournalEntryWrite(
+            entry_date=date(2026, 5, 2),
+            description="two credits",
+            lines=[
+                JournalLineIn(account_id=bank.id, amount=Decimal("200.00")),
+                JournalLineIn(account_id=repairs.id, amount=Decimal("-120.00")),
+                JournalLineIn(account_id=fees.id, amount=Decimal("-80.00")),
+            ],
+        )
+    )
+
+    entries2 = ledger_service.list_entries(from_date=date(2026, 5, 1), limit=10, offset=0)
+    assert len(entries2) == 2
+    newer = next(e for e in entries2 if e.description == "two credits")
+    assert newer.debit_side_label == "Bank"
+    assert newer.credit_side_label == JOURNAL_LIST_SPLIT_LABEL
+    assert newer.amount == Decimal("200.00")
+
+
+def test_get_entry_includes_account_name_on_each_line(ledger_service: LedgerService) -> None:
+    cash = ledger_service.create_account(AccountCreate(name="Cash", type="asset"))
+    revenue = ledger_service.create_account(AccountCreate(name="Rent", type="revenue"))
+    entry = ledger_service.create_entry(
+        JournalEntryWrite(
+            entry_date=date(2026, 6, 1),
+            description="with names",
+            lines=[
+                JournalLineIn(account_id=cash.id, amount=Decimal("15.00")),
+                JournalLineIn(account_id=revenue.id, amount=Decimal("-15.00")),
+            ],
+        )
+    )
+    loaded = ledger_service.get_entry(entry.id)
+    assert [ln.account_name for ln in loaded.lines] == ["Cash", "Rent"]

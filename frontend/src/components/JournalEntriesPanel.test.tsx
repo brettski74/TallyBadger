@@ -37,8 +37,9 @@ describe("JournalEntriesPanel", () => {
         description: "Test",
         created_at: "2026-04-01T00:00:00Z",
         updated_at: "2026-04-01T00:00:00Z",
-        line_count: 2,
-        total_amount: "0",
+        debit_side_label: "Cash",
+        credit_side_label: "Income",
+        amount: "25.00",
       },
     ];
     const entryPayload = {
@@ -48,8 +49,8 @@ describe("JournalEntriesPanel", () => {
       created_at: "2026-04-01T00:00:00Z",
       updated_at: "2026-04-01T00:00:00Z",
       lines: [
-        { id: 10, account_id: 1, amount: "25.00" },
-        { id: 11, account_id: 2, amount: "-25.00" },
+        { id: 10, account_id: 1, amount: "25.00", account_name: "Cash" },
+        { id: 11, account_id: 2, amount: "-25.00", account_name: "Income" },
       ],
     };
 

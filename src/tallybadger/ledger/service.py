@@ -1,3 +1,4 @@
+from collections import defaultdict
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from decimal import Decimal
@@ -17,13 +18,46 @@ from tallybadger.ledger.models import (
     JournalLineOut,
 )
 
-
 class LedgerError(Exception):
     """Base ledger service error."""
 
 
 class LedgerValidationError(LedgerError):
     """Raised when business invariants are violated."""
+
+
+JOURNAL_LIST_SPLIT_LABEL = "-- Split --"
+
+
+def labels_and_amount_for_journal_list_lines(
+    lines: list[tuple[Decimal, str]],
+) -> tuple[str, str, Decimal]:
+    """Build debit column, credit column, and display amount from signed lines (+ debit, − credit)."""
+    for _amt, name in lines:
+        stripped = (name or "").strip()
+        if not stripped:
+            raise LedgerValidationError("journal line is missing account name for list display")
+
+    debits = [(amt, name.strip()) for amt, name in lines if amt > 0]
+    credits = [(amt, name.strip()) for amt, name in lines if amt < 0]
+    if len(debits) == 1:
+        debit_label = debits[0][1]
+    elif len(debits) > 1:
+        debit_label = JOURNAL_LIST_SPLIT_LABEL
+    else:
+        debit_label = "—"
+
+    if len(credits) == 1:
+        credit_label = credits[0][1]
+    elif len(credits) > 1:
+        credit_label = JOURNAL_LIST_SPLIT_LABEL
+    else:
+        credit_label = "—"
+
+    debit_total = sum((amt for amt, _ in debits), Decimal("0"))
+    if debit_total == 0 and credits:
+        debit_total = sum((-amt for amt, _ in credits), Decimal("0"))
+    return debit_label, credit_label, debit_total
 
 
 class LedgerConflictError(LedgerError):
@@ -122,30 +156,62 @@ class LedgerService:
             params.append(to_date)
 
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-        params.extend([limit, offset])
+        list_params = [*params, limit, offset]
         with self._connection_factory() as conn:
             with conn.cursor(row_factory=dict_row) as cur:
                 cur.execute(
                     f"""
-                    SELECT
-                        je.id,
-                        je.entry_date,
-                        je.description,
-                        je.created_at,
-                        je.updated_at,
-                        COUNT(jl.id) AS line_count,
-                        COALESCE(SUM(jl.amount), 0) AS total_amount
+                    SELECT je.id, je.entry_date, je.description, je.created_at, je.updated_at
                     FROM journal_entries je
-                    JOIN journal_lines jl ON jl.entry_id = je.id
-                    {where_clause}
-                    GROUP BY je.id
+                    WHERE EXISTS (SELECT 1 FROM journal_lines jl WHERE jl.entry_id = je.id)
+                    {where_clause.replace("WHERE", "AND") if where_clause else ""}
                     ORDER BY je.entry_date DESC, je.id DESC
                     LIMIT %s OFFSET %s
                     """,
-                    params,
+                    list_params,
                 )
-                rows = cur.fetchall()
-        return [JournalEntryListItem.model_validate(row) for row in rows]
+                headers = cur.fetchall()
+
+                if not headers:
+                    return []
+
+                entry_ids = [row["id"] for row in headers]
+                cur.execute(
+                    """
+                    SELECT jl.entry_id, jl.amount, a.name AS account_name
+                    FROM journal_lines jl
+                    JOIN accounts a ON a.id = jl.account_id
+                    WHERE jl.entry_id = ANY(%s)
+                    ORDER BY jl.entry_id ASC, jl.id ASC
+                    """,
+                    (entry_ids,),
+                )
+                line_rows = cur.fetchall()
+
+        lines_by_entry: dict[int, list[tuple[Decimal, str]]] = defaultdict(list)
+        for row in line_rows:
+            lines_by_entry[row["entry_id"]].append(
+                (Decimal(row["amount"]), row["account_name"]),
+            )
+
+        out: list[JournalEntryListItem] = []
+        for header in headers:
+            entry_id = header["id"]
+            lines = lines_by_entry.get(entry_id, [])
+            debit_label, credit_label, amount = labels_and_amount_for_journal_list_lines(lines)
+            out.append(
+                JournalEntryListItem(
+                    id=entry_id,
+                    entry_date=header["entry_date"],
+                    description=header["description"],
+                    created_at=header["created_at"],
+                    updated_at=header["updated_at"],
+                    debit_side_label=debit_label,
+                    credit_side_label=credit_label,
+                    amount=amount,
+                )
+            )
+        return out
 
     def list_account_lines(
         self,
@@ -199,6 +265,7 @@ class LedgerService:
             with self._connection_factory() as conn:
                 with conn.transaction():
                     with conn.cursor(row_factory=dict_row) as cur:
+                        self._assert_all_line_accounts_exist(cur, payload.lines)
                         cur.execute(
                             """
                             INSERT INTO journal_entries (entry_date, description)
@@ -228,6 +295,7 @@ class LedgerService:
             with self._connection_factory() as conn:
                 with conn.transaction():
                     with conn.cursor(row_factory=dict_row) as cur:
+                        self._assert_all_line_accounts_exist(cur, payload.lines)
                         cur.execute(
                             """
                             UPDATE journal_entries
@@ -287,10 +355,11 @@ class LedgerService:
 
                 cur.execute(
                     """
-                    SELECT id, account_id, amount
-                    FROM journal_lines
-                    WHERE entry_id = %s
-                    ORDER BY id ASC
+                    SELECT jl.id, jl.account_id, jl.amount, a.name AS account_name
+                    FROM journal_lines jl
+                    INNER JOIN accounts a ON a.id = jl.account_id
+                    WHERE jl.entry_id = %s
+                    ORDER BY jl.id ASC
                     """,
                     (entry_id,),
                 )
@@ -304,10 +373,25 @@ class LedgerService:
     def _validate_lines(lines) -> None:
         if len(lines) < 2:
             raise LedgerValidationError("journal entry requires at least two lines")
+        for line in lines:
+            if line.account_id < 1:
+                raise LedgerValidationError("every journal line must reference a valid account")
         if any(line.amount == Decimal("0") for line in lines):
             raise LedgerValidationError("journal line amounts must be non-zero")
         if sum(line.amount for line in lines) != Decimal("0"):
             raise LedgerValidationError("journal entry is not balanced")
+
+    @staticmethod
+    def _assert_all_line_accounts_exist(cur, lines) -> None:
+        account_ids = sorted({line.account_id for line in lines})
+        cur.execute(
+            "SELECT id FROM accounts WHERE id = ANY(%s)",
+            (account_ids,),
+        )
+        found = {row["id"] for row in cur.fetchall()}
+        missing = set(account_ids) - found
+        if missing:
+            raise LedgerValidationError("journal line references unknown account")
 
     @staticmethod
     def _assert_entry_balanced(cur, entry_id: int) -> None:
