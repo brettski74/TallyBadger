@@ -4,14 +4,25 @@ import os
 
 import uvicorn
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from tallybadger import __version__
 from tallybadger.api.routes import health, ledger
+from tallybadger.core.config import get_settings
 
 app = FastAPI(
     title="TallyBadger",
     description="Double-entry accounting API for small rental portfolios.",
     version=__version__,
+)
+
+settings = get_settings()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_allowed_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 app.include_router(health.router)
