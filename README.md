@@ -65,9 +65,10 @@ source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
 uvicorn tallybadger.main:app --reload --host 127.0.0.1 --port 8080
 
-# apply migrations (new DB)
-psql "$TALLYBADGER_DATABASE_URL" -f sql/001_placeholder.sql
-psql "$TALLYBADGER_DATABASE_URL" -f sql/002_ledger_mvp.sql
+# apply migrations
+tallybadger-migrate
+# or
+make db-migrate
 ```
 
 - API: http://127.0.0.1:8080  
@@ -79,7 +80,7 @@ Optional `.env` (or environment variables):
 TALLYBADGER_DATABASE_URL=postgresql://tallybadger:tallybadger@127.0.0.1:5432/tallybadger
 ```
 
-Run tests:
+Run tests (single consolidated report):
 
 ```bash
 pytest
@@ -87,10 +88,18 @@ pytest
 make test
 ```
 
-Test report locations (always regenerated on each run):
+Test report locations:
 
 - `test-results/pytest.xml`
 - `test-results/pytest.html` (open in browser)
+
+Run integration tests against a live PostgreSQL instance:
+
+```bash
+make db-up
+make db-migrate
+TALLYBADGER_TEST_DATABASE_URL=postgresql://tallybadger:tallybadger@127.0.0.1:5432/tallybadger make test
+```
 
 ---
 

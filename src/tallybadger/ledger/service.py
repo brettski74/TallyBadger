@@ -71,59 +71,65 @@ class LedgerService:
 
     def create_entry(self, payload: JournalEntryWrite) -> JournalEntryOut:
         self._validate_lines(payload.lines)
-        with self._connection_factory() as conn:
-            with conn.transaction():
-                with conn.cursor(row_factory=dict_row) as cur:
-                    cur.execute(
-                        """
-                        INSERT INTO journal_entries (entry_date, description)
-                        VALUES (%s, %s)
-                        RETURNING id
-                        """,
-                        (payload.entry_date, payload.description),
-                    )
-                    entry_id = cur.fetchone()["id"]
-                    for line in payload.lines:
+        try:
+            with self._connection_factory() as conn:
+                with conn.transaction():
+                    with conn.cursor(row_factory=dict_row) as cur:
                         cur.execute(
                             """
-                            INSERT INTO journal_lines (entry_id, account_id, amount)
-                            VALUES (%s, %s, %s)
+                            INSERT INTO journal_entries (entry_date, description)
+                            VALUES (%s, %s)
+                            RETURNING id
                             """,
-                            (entry_id, line.account_id, line.amount),
+                            (payload.entry_date, payload.description),
                         )
-                    self._assert_entry_balanced(cur, entry_id)
-                return self.get_entry(entry_id, conn=conn)
+                        entry_id = cur.fetchone()["id"]
+                        for line in payload.lines:
+                            cur.execute(
+                                """
+                                INSERT INTO journal_lines (entry_id, account_id, amount)
+                                VALUES (%s, %s, %s)
+                                """,
+                                (entry_id, line.account_id, line.amount),
+                            )
+                        self._assert_entry_balanced(cur, entry_id)
+                    return self.get_entry(entry_id, conn=conn)
+        except errors.ForeignKeyViolation as exc:
+            raise LedgerValidationError("journal line references unknown account") from exc
 
     def update_entry(self, entry_id: int, payload: JournalEntryWrite) -> JournalEntryOut:
         self._validate_lines(payload.lines)
-        with self._connection_factory() as conn:
-            with conn.transaction():
-                with conn.cursor(row_factory=dict_row) as cur:
-                    cur.execute(
-                        """
-                        UPDATE journal_entries
-                        SET entry_date = %s, description = %s, updated_at = NOW()
-                        WHERE id = %s
-                        """,
-                        (payload.entry_date, payload.description, entry_id),
-                    )
-                    if cur.rowcount == 0:
-                        raise LedgerNotFoundError(f"journal entry {entry_id} not found")
-
-                    cur.execute(
-                        "DELETE FROM journal_lines WHERE entry_id = %s",
-                        (entry_id,),
-                    )
-                    for line in payload.lines:
+        try:
+            with self._connection_factory() as conn:
+                with conn.transaction():
+                    with conn.cursor(row_factory=dict_row) as cur:
                         cur.execute(
                             """
-                            INSERT INTO journal_lines (entry_id, account_id, amount)
-                            VALUES (%s, %s, %s)
+                            UPDATE journal_entries
+                            SET entry_date = %s, description = %s, updated_at = NOW()
+                            WHERE id = %s
                             """,
-                            (entry_id, line.account_id, line.amount),
+                            (payload.entry_date, payload.description, entry_id),
                         )
-                    self._assert_entry_balanced(cur, entry_id)
-                return self.get_entry(entry_id, conn=conn)
+                        if cur.rowcount == 0:
+                            raise LedgerNotFoundError(f"journal entry {entry_id} not found")
+
+                        cur.execute(
+                            "DELETE FROM journal_lines WHERE entry_id = %s",
+                            (entry_id,),
+                        )
+                        for line in payload.lines:
+                            cur.execute(
+                                """
+                                INSERT INTO journal_lines (entry_id, account_id, amount)
+                                VALUES (%s, %s, %s)
+                                """,
+                                (entry_id, line.account_id, line.amount),
+                            )
+                        self._assert_entry_balanced(cur, entry_id)
+                    return self.get_entry(entry_id, conn=conn)
+        except errors.ForeignKeyViolation as exc:
+            raise LedgerValidationError("journal line references unknown account") from exc
 
     def delete_entry(self, entry_id: int) -> None:
         with self._connection_factory() as conn:

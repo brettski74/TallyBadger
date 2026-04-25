@@ -24,6 +24,7 @@ dev = [
 
 [project.scripts]
 tallybadger-api = "tallybadger.main:run"
+tallybadger-migrate = "tallybadger.db_migrations:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -31,8 +32,6 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
-addopts = [
-  "--junitxml=test-results/pytest.xml",
-  "--html=test-results/pytest.html",
-  "--self-contained-html",
+markers = [
+  "integration: marks tests that require a live PostgreSQL instance",
 ]
