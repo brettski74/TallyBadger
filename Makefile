@@ -3,7 +3,7 @@ PIP := .venv/bin/pip
 PYTEST := .venv/bin/pytest
 UVICORN := .venv/bin/uvicorn
 
-.PHONY: help venv install test test-integration run db-up db-down db-migrate
+.PHONY: help venv install test test-integration run up down restart status logs frontend-install frontend-dev frontend-test db-up db-down db-migrate db-migrate-local
 
 help:
 	@echo "Available targets:"
@@ -11,7 +11,12 @@ help:
 	@echo "  make install   Install project + dev dependencies"
 	@echo "  make test      Run full test suite (single XML + HTML report)"
 	@echo "  make test-integration  Run only Postgres integration tests"
-	@echo "  make run       Run API locally on 127.0.0.1:8080"
+	@echo "  make run       Alias for make up"
+	@echo "  make up        Start DB + API + frontend in background via tbad"
+	@echo "  make down      Stop DB + API + frontend via tbad"
+	@echo "  make restart   Restart DB + API + frontend via tbad"
+	@echo "  make status    Show DB + API + frontend status via tbad"
+	@echo "  make logs      Show API + frontend logs via tbad"
 	@echo "  make frontend-install  Install frontend dependencies"
 	@echo "  make frontend-dev      Run frontend dev server on 127.0.0.1:5173"
 	@echo "  make frontend-test     Run frontend Vitest suite"
@@ -31,8 +36,22 @@ test:
 test-integration:
 	TALLYBADGER_TEST_DATABASE_URL=$${TALLYBADGER_TEST_DATABASE_URL:-postgresql://tallybadger:tallybadger@127.0.0.1:5432/tallybadger} $(PYTEST) -m integration --junitxml=test-results/pytest.xml --html=test-results/pytest.html --self-contained-html
 
-run:
-	$(UVICORN) tallybadger.main:app --reload --host 127.0.0.1 --port 8080
+run: up
+
+up: db-migrate-local
+	PYTHONPATH=src $(PYTHON) -m tallybadger.tbad up
+
+down:
+	PYTHONPATH=src $(PYTHON) -m tallybadger.tbad down
+
+restart:
+	PYTHONPATH=src $(PYTHON) -m tallybadger.tbad restart
+
+status:
+	PYTHONPATH=src $(PYTHON) -m tallybadger.tbad status
+
+logs:
+	PYTHONPATH=src $(PYTHON) -m tallybadger.tbad logs
 
 frontend-install:
 	npm --prefix frontend install
@@ -49,6 +68,9 @@ db-up:
 
 db-down:
 	docker compose down
+
+db-migrate-local: db-up
+	PYTHONPATH=src $(PYTHON) -m tallybadger.db_migrations
 
 db-migrate:
 	PYTHONPATH=src $(PYTHON) -m tallybadger.db_migrations
