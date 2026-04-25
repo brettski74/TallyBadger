@@ -13,10 +13,17 @@ class Settings(BaseSettings):
     database_url: str = (
         "postgresql://tallybadger:tallybadger@127.0.0.1:5432/tallybadger"
     )
-    cors_allowed_origins: list[str] = [
-        "http://127.0.0.1:5173",
-        "http://localhost:5173",
-    ]
+    frontend_host: str = "127.0.0.1"
+    frontend_port: int = 5173
+    cors_allowed_origins: list[str] = []
+
+    def resolved_cors_allowed_origins(self) -> list[str]:
+        if self.cors_allowed_origins:
+            return self.cors_allowed_origins
+        return [
+            f"http://{self.frontend_host}:{self.frontend_port}",
+            f"http://localhost:{self.frontend_port}",
+        ]
 
 
 @lru_cache

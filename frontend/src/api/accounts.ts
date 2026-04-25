@@ -15,7 +15,10 @@ export interface CreateAccountInput {
   is_active: boolean;
 }
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8080";
+const API_PORT = import.meta.env.VITE_API_PORT ?? "8080";
+const API_BASE =
+  import.meta.env.VITE_API_BASE_URL ??
+  `${window.location.protocol}//${window.location.hostname}:${API_PORT}`;
 
 export async function listAccounts(): Promise<Account[]> {
   const response = await fetch(`${API_BASE}/accounts`);
