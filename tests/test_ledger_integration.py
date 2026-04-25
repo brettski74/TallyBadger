@@ -9,7 +9,12 @@ from psycopg import connect
 from psycopg.rows import dict_row
 
 from tallybadger.db_migrations import apply_sql_migrations
-from tallybadger.ledger.models import AccountCreate, JournalEntryWrite, JournalLineIn
+from tallybadger.ledger.models import (
+    AccountCreate,
+    AccountUpdate,
+    JournalEntryWrite,
+    JournalLineIn,
+)
 from tallybadger.ledger.service import LedgerService, LedgerValidationError
 
 pytestmark = pytest.mark.integration
@@ -117,3 +122,73 @@ def test_update_entry_rolls_back_to_existing_lines_on_fk_error(
         Decimal("120.00"),
         Decimal("-120.00"),
     ]
+
+
+def test_deactivated_account_cannot_be_posted_to(ledger_service: LedgerService) -> None:
+    cash = ledger_service.create_account(AccountCreate(name="Cash", type="asset"))
+    revenue = ledger_service.create_account(AccountCreate(name="Rent", type="revenue"))
+    ledger_service.update_account(revenue.id, AccountUpdate(is_active=False))
+
+    with pytest.raises(LedgerValidationError, match="deactivated"):
+        ledger_service.create_entry(
+            JournalEntryWrite(
+                entry_date=date(2026, 5, 1),
+                description="blocked by deactivated account",
+                lines=[
+                    JournalLineIn(account_id=cash.id, amount=Decimal("100.00")),
+                    JournalLineIn(account_id=revenue.id, amount=Decimal("-100.00")),
+                ],
+            )
+        )
+
+    with connect(os.environ["TALLYBADGER_TEST_DATABASE_URL"], row_factory=dict_row) as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute("SELECT COUNT(*) AS count FROM journal_entries")
+            assert cur.fetchone()["count"] == 0
+
+
+def test_list_entries_and_account_lines_with_filters(
+    ledger_service: LedgerService,
+) -> None:
+    cash = ledger_service.create_account(AccountCreate(name="Cash", type="asset"))
+    revenue = ledger_service.create_account(AccountCreate(name="Rent", type="revenue"))
+
+    older = ledger_service.create_entry(
+        JournalEntryWrite(
+            entry_date=date(2026, 4, 1),
+            description="older",
+            lines=[
+                JournalLineIn(account_id=cash.id, amount=Decimal("90.00")),
+                JournalLineIn(account_id=revenue.id, amount=Decimal("-90.00")),
+            ],
+        )
+    )
+    newer = ledger_service.create_entry(
+        JournalEntryWrite(
+            entry_date=date(2026, 4, 20),
+            description="newer",
+            lines=[
+                JournalLineIn(account_id=cash.id, amount=Decimal("110.00")),
+                JournalLineIn(account_id=revenue.id, amount=Decimal("-110.00")),
+            ],
+        )
+    )
+
+    entries = ledger_service.list_entries(
+        from_date=date(2026, 4, 10),
+        to_date=date(2026, 4, 30),
+        limit=10,
+        offset=0,
+    )
+    assert [entry.id for entry in entries] == [newer.id]
+    assert entries[0].line_count == 2
+    assert entries[0].total_amount == Decimal("0")
+
+    lines = ledger_service.list_account_lines(
+        cash.id,
+        from_date=date(2026, 4, 1),
+        to_date=date(2026, 4, 30),
+        limit=10,
+        offset=0,
+    )
+    assert [line.entry_id for line in lines] == [newer.id, older.id]

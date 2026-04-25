@@ -13,6 +13,11 @@ class AccountCreate(BaseModel):
     is_active: bool = True
 
 
+class AccountUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    is_active: bool | None = None
+
+
 class AccountOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -52,3 +57,25 @@ class JournalEntryOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     lines: list[JournalLineOut]
+
+
+class JournalEntryListItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    entry_date: date
+    description: str | None
+    created_at: datetime
+    updated_at: datetime
+    line_count: int
+    total_amount: Decimal
+
+
+class AccountLedgerLineOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    line_id: int
+    entry_id: int
+    entry_date: date
+    description: str | None
+    amount: Decimal

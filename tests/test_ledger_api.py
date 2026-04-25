@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from tallybadger.api.routes.ledger import get_ledger_service
 from tallybadger.ledger.service import (
     LedgerConflictError,
+    LedgerNotFoundError,
     LedgerValidationError,
 )
 from tallybadger.main import app
@@ -18,8 +19,17 @@ class StubLedgerService:
     def create_account(self, _payload):
         raise LedgerConflictError("account name already exists")
 
+    def update_account(self, _account_id, _payload):
+        raise LedgerValidationError("at least one account field must be updated")
+
+    def list_entries(self, **_kwargs):
+        return []
+
     def create_entry(self, _payload):
         raise LedgerValidationError("journal entry is not balanced")
+
+    def list_account_lines(self, _account_id, **_kwargs):
+        raise LedgerNotFoundError("account 999 not found")
 
     def get_entry(self, _entry_id):
         return {
@@ -70,4 +80,45 @@ def test_create_journal_entry_validation_maps_to_422() -> None:
 
     assert response.status_code == 422
     assert response.json()["detail"] == "journal entry is not balanced"
+    app.dependency_overrides.clear()
+
+
+def test_update_account_validation_maps_to_422() -> None:
+    app.dependency_overrides[get_ledger_service] = StubLedgerService
+    client = TestClient(app)
+
+    response = client.patch("/accounts/1", json={})
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "at least one account field must be updated"
+    app.dependency_overrides.clear()
+
+
+def test_list_journal_entries_uses_query_params() -> None:
+    app.dependency_overrides[get_ledger_service] = StubLedgerService
+    client = TestClient(app)
+
+    response = client.get(
+        "/journal-entries",
+        params={
+            "from_date": "2026-04-01",
+            "to_date": "2026-04-30",
+            "limit": 25,
+            "offset": 5,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == []
+    app.dependency_overrides.clear()
+
+
+def test_list_account_lines_not_found_maps_to_404() -> None:
+    app.dependency_overrides[get_ledger_service] = StubLedgerService
+    client = TestClient(app)
+
+    response = client.get("/accounts/999/lines")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "account 999 not found"
     app.dependency_overrides.clear()
