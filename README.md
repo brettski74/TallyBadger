@@ -4,7 +4,7 @@ Double-entry accounting for a **small set of rental properties**: journals, char
 
 **Stack today:** Python 3.11+, [FastAPI](https://fastapi.tiangolo.com/), PostgreSQL, Docker Compose, and a React + TypeScript + Vite frontend under `frontend/`.
 
-**Not built yet (honest inventory):** auth, bank CSV ingestion, MCP tools, and advanced frontend workflows beyond account management.
+**Not built yet (honest inventory):** auth, bank CSV ingestion, MCP tools, and simplified non-accountant flows (#7).
 
 ---
 
@@ -17,7 +17,7 @@ Double-entry accounting for a **small set of rental properties**: journals, char
 | Database | PostgreSQL in Compose; `sql/002_ledger_mvp.sql` adds accounts + journal tables |
 | Tests | `pytest` + `TestClient` (health + ledger service/API tests) |
 | Container | `Dockerfile` + `docker-compose.yml` (`api` + `db`) |
-| Front end | React + TypeScript + Vite shell with account list/create page |
+| Front end | React + TypeScript + Vite: chart of accounts plus expert-mode journal entry list/create/edit |
 
 ---
 

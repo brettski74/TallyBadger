@@ -1,12 +1,26 @@
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
   font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+
+  --bg-page: #ffffff;
+  --bg-subtle: #f1f5f9;
+  --bg-card: #ffffff;
+  --border: #e2e8f0;
+  --border-input: #cbd5e1;
+  --text: #0f172a;
+  --text-muted: #475569;
+  --primary: #0284c7;
+  --primary-text: #ffffff;
+  --nav-idle-bg: #e2e8f0;
+  --nav-idle-text: #1e293b;
+  --error: #b91c1c;
+  --link: #0369a1;
 }
 
 body {
   margin: 0;
-  background: #0f172a;
-  color: #e2e8f0;
+  background: var(--bg-page);
+  color: var(--text);
 }
 
 .app-shell {
@@ -16,23 +30,45 @@ body {
 
 .app-header {
   display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.app-header-main {
+  display: flex;
   align-items: center;
-  gap: 1rem;
-  margin-bottom: 1.25rem;
+  gap: 1.5rem;
+  min-width: 0;
+  flex: 1;
 }
 
 .app-header h1 {
   margin: 0;
+  font-size: clamp(1.85rem, 4vw, 2.65rem);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  color: var(--text);
 }
 
 .app-header p {
-  margin: 0.25rem 0 0 0;
-  opacity: 0.85;
+  margin: 0.4rem 0 0 0;
+  font-size: clamp(1.05rem, 2vw, 1.25rem);
+  line-height: 1.35;
+  color: var(--text-muted);
 }
 
-.logo {
-  width: 56px;
-  height: 56px;
+.app-header-text {
+  min-width: 0;
+}
+
+.app-header-logo {
+  width: 192px;
+  height: 192px;
+  flex-shrink: 0;
+  object-fit: contain;
 }
 
 .content {
@@ -42,15 +78,22 @@ body {
 }
 
 .card {
-  background: #111827;
-  border: 1px solid #1f2937;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
   border-radius: 12px;
   padding: 1rem;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.card h2,
+.card h3 {
+  color: var(--text);
 }
 
 label {
   display: block;
   margin-bottom: 0.75rem;
+  color: var(--text);
 }
 
 input,
@@ -61,9 +104,16 @@ button {
   margin-top: 0.25rem;
   padding: 0.55rem;
   border-radius: 8px;
-  border: 1px solid #334155;
-  background: #0b1220;
-  color: #e2e8f0;
+  border: 1px solid var(--border-input);
+  background: var(--bg-page);
+  color: var(--text);
+}
+
+input:focus,
+select:focus,
+button:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
 }
 
 .checkbox {
@@ -80,13 +130,14 @@ button {
 button {
   margin-top: 0.25rem;
   cursor: pointer;
-  background: #0284c7;
+  background: var(--primary);
+  color: var(--primary-text);
   border: none;
   font-weight: 600;
 }
 
 button:disabled {
-  opacity: 0.7;
+  opacity: 0.65;
   cursor: not-allowed;
 }
 
@@ -97,11 +148,162 @@ table {
 
 th,
 td {
-  border-bottom: 1px solid #1f2937;
+  border-bottom: 1px solid var(--border);
   text-align: left;
   padding: 0.55rem 0.4rem;
 }
 
+th {
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 0.875rem;
+}
+
 .error {
-  color: #fca5a5;
+  color: var(--error);
+}
+
+.muted {
+  color: var(--text-muted);
+  font-size: 0.95rem;
+}
+
+.banner-info {
+  margin-top: 0;
+  padding: 0.65rem 0.75rem;
+  border-radius: 8px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+.app-nav {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: flex-start;
+  gap: 0.5rem;
+  flex-shrink: 0;
+  padding-top: 0.15rem;
+}
+
+.app-nav button {
+  width: auto;
+  margin: 0;
+  background: var(--nav-idle-bg);
+  color: var(--nav-idle-text);
+  white-space: nowrap;
+}
+
+.app-nav button.app-nav-active {
+  background: var(--primary);
+  color: var(--primary-text);
+}
+
+.journal-entry-list {
+  table-layout: auto;
+}
+
+.journal-entry-list .journal-list-amount {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.journal-card-wide {
+  grid-column: 1 / -1;
+}
+
+.journal-list-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.journal-list-toolbar h2 {
+  margin: 0;
+}
+
+.journal-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.journal-filters label {
+  margin: 0;
+  min-width: 140px;
+}
+
+.journal-form-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.journal-form-header h2 {
+  margin: 0;
+}
+
+.journal-lines-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 1rem 0 0.5rem 0;
+}
+
+.journal-lines-header h3 {
+  margin: 0;
+}
+
+.balance-banner {
+  padding: 0.65rem 0.75rem;
+  border-radius: 8px;
+  margin: 0.75rem 0;
+  font-size: 0.95rem;
+  color: var(--text);
+}
+
+.balance-banner.balance-ok {
+  border: 1px solid #16a34a;
+  background: #ecfdf5;
+}
+
+.balance-banner.balance-bad {
+  border: 1px solid #d97706;
+  background: #fffbeb;
+}
+
+.journal-lines th:last-child,
+.journal-lines td:last-child {
+  width: 6rem;
+}
+
+.button-secondary {
+  background: #64748b;
+  color: var(--primary-text);
+}
+
+.button-link {
+  width: auto;
+  margin: 0;
+  padding: 0.25rem 0.5rem;
+  background: transparent;
+  color: var(--link);
+  text-decoration: underline;
+  border: none;
+}
+
+.button-link:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.button-link:disabled {
+  opacity: 0.5;
 }

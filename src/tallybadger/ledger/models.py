@@ -39,6 +39,7 @@ class JournalLineOut(BaseModel):
 
     id: int
     account_id: int
+    account_name: str
     amount: Decimal
 
 
@@ -67,8 +68,9 @@ class JournalEntryListItem(BaseModel):
     description: str | None
     created_at: datetime
     updated_at: datetime
-    line_count: int
-    total_amount: Decimal
+    debit_side_label: str
+    credit_side_label: str
+    amount: Decimal
 
 
 class AccountLedgerLineOut(BaseModel):

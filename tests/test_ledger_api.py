@@ -38,7 +38,7 @@ class StubLedgerService:
             "description": None,
             "created_at": datetime.now(tz=timezone.utc),
             "updated_at": datetime.now(tz=timezone.utc),
-            "lines": [{"id": 1, "account_id": 1, "amount": Decimal("1.00")}],
+            "lines": [{"id": 1, "account_id": 1, "amount": Decimal("1.00"), "account_name": "Cash"}],
         }
 
     def update_entry(self, _entry_id, _payload):
@@ -80,6 +80,31 @@ def test_create_journal_entry_validation_maps_to_422() -> None:
 
     assert response.status_code == 422
     assert response.json()["detail"] == "journal entry is not balanced"
+    app.dependency_overrides.clear()
+
+
+def test_create_journal_entry_deactivated_account_maps_to_422() -> None:
+    class StubDeactivatedPosting(StubLedgerService):
+        def create_entry(self, _payload):
+            raise LedgerValidationError("account 3 is deactivated; reactivate before posting")
+
+    app.dependency_overrides[get_ledger_service] = StubDeactivatedPosting
+    client = TestClient(app)
+
+    response = client.post(
+        "/journal-entries",
+        json={
+            "entry_date": "2026-04-24",
+            "description": "blocked",
+            "lines": [
+                {"account_id": 3, "amount": "10.00"},
+                {"account_id": 2, "amount": "-10.00"},
+            ],
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "account 3 is deactivated; reactivate before posting"
     app.dependency_overrides.clear()
 
 

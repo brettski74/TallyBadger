@@ -1,3 +1,6 @@
+import { getApiBase } from "./baseUrl";
+import { readApiErrorMessage } from "./errors";
+
 export type AccountType = "asset" | "liability" | "equity" | "revenue" | "expense";
 
 export interface Account {
@@ -15,33 +18,23 @@ export interface CreateAccountInput {
   is_active: boolean;
 }
 
-const API_PORT = import.meta.env.VITE_API_PORT ?? "8080";
-const API_BASE =
-  import.meta.env.VITE_API_BASE_URL ??
-  `${window.location.protocol}//${window.location.hostname}:${API_PORT}`;
-
 export async function listAccounts(): Promise<Account[]> {
-  const response = await fetch(`${API_BASE}/accounts`);
+  const response = await fetch(`${getApiBase()}/accounts`);
   if (!response.ok) {
-    throw new Error("Failed to load accounts");
+    throw new Error(await readApiErrorMessage(response));
   }
   return response.json();
 }
 
 export async function createAccount(payload: CreateAccountInput): Promise<Account> {
-  const response = await fetch(`${API_BASE}/accounts`, {
+  const response = await fetch(`${getApiBase()}/accounts`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
 
-  if (response.status === 409) {
-    const data = await response.json();
-    throw new Error(data.detail ?? "Account already exists");
-  }
-
   if (!response.ok) {
-    throw new Error("Failed to create account");
+    throw new Error(await readApiErrorMessage(response));
   }
 
   return response.json();
