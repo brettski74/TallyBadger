@@ -8,6 +8,9 @@ AccountType = Literal["asset", "liability", "equity", "revenue", "expense"]
 PartyRole = Literal["customer", "vendor", "both", "other"]
 AccrualDirection = Literal["revenue", "expense"]
 AccrualFrequency = Literal["weekly", "monthly_day", "yearly"]
+ObligationType = Literal["receivable", "payable", "unearned"]
+ObligationStatus = Literal["open", "partially_settled", "settled", "reconciled"]
+SettlementType = Literal["receipt", "payment"]
 
 
 class AccountCreate(BaseModel):
@@ -196,3 +199,72 @@ class AccrualPreviewItem(BaseModel):
     summary: str
     description: str | None
     lines: list[JournalLineIn]
+
+
+class LedgerSettingsUpdate(BaseModel):
+    accounts_receivable_account_id: int | None = Field(default=None, gt=0)
+    accounts_payable_account_id: int | None = Field(default=None, gt=0)
+    unearned_revenue_account_id: int | None = Field(default=None, gt=0)
+
+
+class LedgerSettingsOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    accounts_receivable_account_id: int | None
+    accounts_payable_account_id: int | None
+    unearned_revenue_account_id: int | None
+    updated_at: datetime
+
+
+class AccrualObligationOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    party_id: int
+    accrual_plan_id: int | None
+    source_entry_id: int | None
+    source_entry_date: date | None
+    source_entry_summary: str | None
+    source_line_id: int | None
+    obligation_type: ObligationType
+    status: ObligationStatus
+    original_amount: Decimal
+    open_amount: Decimal
+    created_at: datetime
+    updated_at: datetime
+
+
+class ManualObligationCreate(BaseModel):
+    party_id: int = Field(gt=0)
+    source_entry_id: int = Field(gt=0)
+    source_line_id: int = Field(gt=0)
+    obligation_type: ObligationType
+    amount: Decimal = Field(gt=Decimal("0"))
+
+
+class SettlementAllocationIn(BaseModel):
+    obligation_id: int = Field(gt=0)
+    amount: Decimal = Field(gt=Decimal("0"))
+
+
+class SettlementWrite(BaseModel):
+    party_id: int = Field(gt=0)
+    settlement_type: SettlementType
+    event_date: date
+    amount: Decimal = Field(gt=Decimal("0"))
+    cash_account_id: int = Field(gt=0)
+    allocations: list[SettlementAllocationIn] = Field(min_length=1)
+    note: str | None = Field(default=None, max_length=300)
+
+
+class SettlementOut(BaseModel):
+    event_id: int
+    entry_id: int
+    allocated_amount: Decimal
+    unapplied_amount: Decimal
+
+
+class ObligationStatusUpdate(BaseModel):
+    status: ObligationStatus
+    force_override: bool = False
+    audit_note: str | None = Field(default=None, max_length=300)

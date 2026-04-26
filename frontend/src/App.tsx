@@ -7,8 +7,9 @@ import { AccrualPlansSection } from "./components/AccrualPlansSection";
 import { AccountsSection } from "./components/AccountsSection";
 import { JournalEntriesPanel } from "./components/JournalEntriesPanel";
 import { PartiesSection } from "./components/PartiesSection";
+import { SettlementsSection } from "./components/SettlementsSection";
 
-type MainTab = "accounts" | "journal" | "parties" | "accruals";
+type MainTab = "accounts" | "journal" | "parties" | "accruals" | "settlements";
 
 function App() {
   const [tab, setTab] = useState<MainTab>("accounts");
@@ -88,6 +89,13 @@ function App() {
           >
             Accrual plans
           </button>
+          <button
+            type="button"
+            className={tab === "settlements" ? "app-nav-active" : undefined}
+            onClick={() => setTab("settlements")}
+          >
+            Settlements
+          </button>
         </nav>
       </header>
 
@@ -118,6 +126,7 @@ function App() {
           />
         )}
         {tab === "accruals" && <AccrualPlansSection accounts={accounts} parties={parties} />}
+        {tab === "settlements" && <SettlementsSection accounts={accounts} parties={parties} />}
       </main>
     </div>
   );

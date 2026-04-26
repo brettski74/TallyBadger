@@ -132,4 +132,28 @@ describe("App", () => {
 
     expect(await screen.findByRole("heading", { name: "Accrual plans" })).toBeInTheDocument();
   });
+
+  it("shows settlements tab and loads role settings", async () => {
+    mockFetchImplementation([
+      () => new Response(JSON.stringify([]), { status: 200 }),
+      () => new Response(JSON.stringify([]), { status: 200 }),
+      () =>
+        new Response(
+          JSON.stringify({
+            accounts_receivable_account_id: null,
+            accounts_payable_account_id: null,
+            unearned_revenue_account_id: null,
+            updated_at: "2026-04-01T00:00:00Z",
+          }),
+          { status: 200 },
+        ),
+    ]);
+
+    render(<App />);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Settlements" }));
+
+    expect(await screen.findByRole("heading", { name: "Settlement account roles" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Post settlement" })).toBeInTheDocument();
+  });
 });
