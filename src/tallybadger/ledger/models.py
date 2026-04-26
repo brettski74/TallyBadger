@@ -234,14 +234,6 @@ class AccrualObligationOut(BaseModel):
     updated_at: datetime
 
 
-class ManualObligationCreate(BaseModel):
-    party_id: int = Field(gt=0)
-    source_entry_id: int = Field(gt=0)
-    source_line_id: int = Field(gt=0)
-    obligation_type: ObligationType
-    amount: Decimal = Field(gt=Decimal("0"))
-
-
 class SettlementAllocationIn(BaseModel):
     obligation_id: int = Field(gt=0)
     amount: Decimal = Field(gt=Decimal("0"))
@@ -267,4 +259,3 @@ class SettlementOut(BaseModel):
 class ObligationStatusUpdate(BaseModel):
     status: ObligationStatus
     force_override: bool = False
-    audit_note: str | None = Field(default=None, max_length=300)

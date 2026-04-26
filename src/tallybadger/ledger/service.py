@@ -21,7 +21,6 @@ from tallybadger.ledger.models import (
     AccrualPreviewItem,
     LedgerSettingsOut,
     LedgerSettingsUpdate,
-    ManualObligationCreate,
     ObligationStatusUpdate,
     PartyCreate,
     PartyOut,
@@ -465,46 +464,6 @@ class LedgerService:
                 )
                 rows = cur.fetchall()
         return [AccrualObligationOut.model_validate(row) for row in rows]
-
-    def create_manual_obligation(self, payload: ManualObligationCreate) -> AccrualObligationOut:
-        with self._connection_factory() as conn:
-            with conn.transaction():
-                with conn.cursor(row_factory=dict_row) as cur:
-                    self._assert_party_active(cur, payload.party_id)
-                    cur.execute(
-                        """
-                        SELECT id, party_id, amount
-                        FROM journal_lines
-                        WHERE id = %s AND entry_id = %s
-                        """,
-                        (payload.source_line_id, payload.source_entry_id),
-                    )
-                    line = cur.fetchone()
-                    if not line:
-                        raise LedgerValidationError("source line not found on source entry")
-                    if line["party_id"] != payload.party_id:
-                        raise LedgerValidationError("source line party does not match obligation party")
-                    cur.execute(
-                        """
-                        INSERT INTO accrual_obligations (
-                            party_id, accrual_plan_id, source_entry_id, source_line_id,
-                            obligation_type, status, original_amount, open_amount
-                        )
-                        VALUES (%s, NULL, %s, %s, %s, 'open', %s, %s)
-                        RETURNING id, party_id, accrual_plan_id, source_entry_id, source_line_id,
-                                  obligation_type, status, original_amount, open_amount, created_at, updated_at
-                        """,
-                        (
-                            payload.party_id,
-                            payload.source_entry_id,
-                            payload.source_line_id,
-                            payload.obligation_type,
-                            payload.amount,
-                            payload.amount,
-                        ),
-                    )
-                    row = cur.fetchone()
-        return AccrualObligationOut.model_validate(row)
 
     def update_obligation_status(
         self, obligation_id: int, payload: ObligationStatusUpdate

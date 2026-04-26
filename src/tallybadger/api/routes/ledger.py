@@ -16,7 +16,6 @@ from tallybadger.ledger.models import (
     AccrualPreviewItem,
     LedgerSettingsOut,
     LedgerSettingsUpdate,
-    ManualObligationCreate,
     ObligationStatusUpdate,
     PartyCreate,
     PartyOut,
@@ -179,17 +178,6 @@ def list_open_obligations(
     service: LedgerService = Depends(get_ledger_service),
 ) -> list[AccrualObligationOut]:
     return service.list_open_obligations(party_id)
-
-
-@router.post("/obligations/manual", response_model=AccrualObligationOut, status_code=status.HTTP_201_CREATED)
-def create_manual_obligation(
-    payload: ManualObligationCreate,
-    service: LedgerService = Depends(get_ledger_service),
-) -> AccrualObligationOut:
-    try:
-        return service.create_manual_obligation(payload)
-    except LedgerValidationError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.patch("/obligations/{obligation_id}/status", response_model=AccrualObligationOut)
