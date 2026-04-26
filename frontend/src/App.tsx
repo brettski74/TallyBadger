@@ -3,11 +3,12 @@ import { useCallback, useEffect, useState } from "react";
 import headerLogo from "./assets/branding/TallyBadgerSimple-192.png";
 import { Account, listAccounts } from "./api/accounts";
 import { Party, listParties } from "./api/parties";
+import { AccrualPlansSection } from "./components/AccrualPlansSection";
 import { AccountsSection } from "./components/AccountsSection";
 import { JournalEntriesPanel } from "./components/JournalEntriesPanel";
 import { PartiesSection } from "./components/PartiesSection";
 
-type MainTab = "accounts" | "journal" | "parties";
+type MainTab = "accounts" | "journal" | "parties" | "accruals";
 
 function App() {
   const [tab, setTab] = useState<MainTab>("accounts");
@@ -80,6 +81,13 @@ function App() {
           >
             Parties
           </button>
+          <button
+            type="button"
+            className={tab === "accruals" ? "app-nav-active" : undefined}
+            onClick={() => setTab("accruals")}
+          >
+            Accrual plans
+          </button>
         </nav>
       </header>
 
@@ -109,6 +117,7 @@ function App() {
             onPartyUpdated={handlePartyUpdated}
           />
         )}
+        {tab === "accruals" && <AccrualPlansSection accounts={accounts} parties={parties} />}
       </main>
     </div>
   );

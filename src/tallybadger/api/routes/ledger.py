@@ -9,6 +9,10 @@ from tallybadger.ledger.models import (
     AccountLedgerLineOut,
     AccountOut,
     AccountUpdate,
+    AccrualPlanCreate,
+    AccrualPlanOut,
+    AccrualPlanUpdate,
+    AccrualPreviewItem,
     PartyCreate,
     PartyOut,
     PartyUpdate,
@@ -87,6 +91,57 @@ def update_party(
 ) -> PartyOut:
     try:
         return service.update_party(party_id, payload)
+    except LedgerNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except LedgerConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except LedgerValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/accrual-plans", response_model=list[AccrualPlanOut])
+def list_accrual_plans(
+    service: LedgerService = Depends(get_ledger_service),
+) -> list[AccrualPlanOut]:
+    return service.list_accrual_plans()
+
+
+@router.post("/accrual-plans/preview", response_model=list[AccrualPreviewItem])
+def preview_accrual_plan(
+    payload: AccrualPlanCreate,
+    service: LedgerService = Depends(get_ledger_service),
+) -> list[AccrualPreviewItem]:
+    try:
+        return service.preview_accrual_plan(payload)
+    except LedgerValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post(
+    "/accrual-plans",
+    response_model=AccrualPlanOut,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_accrual_plan(
+    payload: AccrualPlanCreate,
+    service: LedgerService = Depends(get_ledger_service),
+) -> AccrualPlanOut:
+    try:
+        return service.create_accrual_plan(payload)
+    except LedgerConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except LedgerValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.patch("/accrual-plans/{plan_id}", response_model=AccrualPlanOut)
+def update_accrual_plan(
+    plan_id: int,
+    payload: AccrualPlanUpdate,
+    service: LedgerService = Depends(get_ledger_service),
+) -> AccrualPlanOut:
+    try:
+        return service.update_accrual_plan(plan_id, payload)
     except LedgerNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except LedgerConflictError as exc:

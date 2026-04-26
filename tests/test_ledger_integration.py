@@ -12,8 +12,11 @@ from tallybadger.db_migrations import apply_sql_migrations
 from tallybadger.ledger.models import (
     AccountCreate,
     AccountUpdate,
+    AccrualPlanCreate,
+    AccrualPlanUpdate,
     JournalEntryWrite,
     JournalLineIn,
+    PartyCreate,
 )
 from tallybadger.ledger.service import (
     JOURNAL_LIST_SPLIT_LABEL,
@@ -44,7 +47,7 @@ def clean_database(integration_db_url: str) -> Iterator[None]:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    TRUNCATE TABLE journal_lines, journal_entries, parties, accounts
+                    TRUNCATE TABLE journal_lines, journal_entries, accrual_plans, parties, accounts
                     RESTART IDENTITY CASCADE
                     """
                 )
@@ -272,3 +275,37 @@ def test_get_entry_includes_account_name_on_each_line(ledger_service: LedgerServ
     )
     loaded = ledger_service.get_entry(entry.id)
     assert [ln.account_name for ln in loaded.lines] == ["Cash", "Rent"]
+
+
+def test_accrual_plan_create_and_guarded_update(ledger_service: LedgerService) -> None:
+    ar = ledger_service.create_account(AccountCreate(name="Accounts Receivable", type="asset"))
+    rent = ledger_service.create_account(AccountCreate(name="Rent Revenue", type="revenue"))
+    party = ledger_service.create_party(
+        PartyCreate(name="Acme Yard Maintenance", role="customer", is_active=True)
+    )
+    plan = ledger_service.create_accrual_plan(
+        AccrualPlanCreate(
+            name="Rent Plan 2026",
+            direction="revenue",
+            party_id=party.id,
+            target_account_id=rent.id,
+            bridge_account_id=ar.id,
+            frequency="monthly_day",
+            start_date=date(2026, 1, 1),
+            end_date=date(2026, 2, 28),
+            amount=Decimal("1200.00"),
+            summary_template="{plan} {month}",
+            day_of_month=1,
+        )
+    )
+    assert plan.name == "Rent Plan 2026"
+
+    entries = ledger_service.list_entries(from_date=date(2026, 1, 1), to_date=date(2026, 2, 28))
+    assert len(entries) == 2
+    assert all(entry.summary.startswith("Rent Plan 2026") for entry in entries)
+
+    with pytest.raises(LedgerValidationError, match="force_override=true"):
+        ledger_service.update_accrual_plan(
+            plan.id,
+            AccrualPlanUpdate(name="Revised rent plan"),
+        )

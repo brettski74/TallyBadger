@@ -4,7 +4,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from tallybadger.ledger.models import JournalEntryWrite, JournalLineIn
+from tallybadger.ledger.models import (
+    AccrualPlanCreate,
+    AccrualPlanUpdate,
+    JournalEntryWrite,
+    JournalLineIn,
+)
 from tallybadger.ledger.service import (
     JOURNAL_LIST_SPLIT_LABEL,
     LedgerService,
@@ -179,3 +184,114 @@ def test_journal_list_labels_split_credit() -> None:
 def test_journal_list_labels_reject_blank_account_name() -> None:
     with pytest.raises(LedgerValidationError, match="missing account name"):
         labels_and_amount_for_journal_list_lines([(Decimal("1.00"), "   ")])
+
+
+def test_preview_accrual_plan_monthly_generates_balanced_lines() -> None:
+    service, _conn, _cur = _build_service_with_mocks()
+    payload = AccrualPlanCreate(
+        name="Rent 2026",
+        direction="revenue",
+        party_id=10,
+        target_account_id=2,
+        bridge_account_id=1,
+        frequency="monthly_day",
+        start_date=date(2026, 1, 1),
+        end_date=date(2026, 3, 31),
+        amount=Decimal("100.00"),
+        summary_template="{plan} {month}",
+        description_template="Generated on {date}",
+        day_of_month=1,
+    )
+    items = service.preview_accrual_plan(payload)
+    assert [i.entry_date.isoformat() for i in items] == ["2026-01-01", "2026-02-01", "2026-03-01"]
+    assert items[0].summary == "Rent 2026 2026-01"
+    assert sum(line.amount for line in items[0].lines) == Decimal("0")
+
+
+def test_preview_accrual_plan_monthly_business_day_adjust_rolls_weekend_forward() -> None:
+    service, _conn, _cur = _build_service_with_mocks()
+    payload = AccrualPlanCreate(
+        name="Rent 2026",
+        direction="revenue",
+        party_id=10,
+        target_account_id=2,
+        bridge_account_id=1,
+        frequency="monthly_day",
+        start_date=date(2026, 8, 1),
+        end_date=date(2026, 8, 31),
+        amount=Decimal("100.00"),
+        summary_template="{plan} {month}",
+        day_of_month=1,
+        business_day_adjust=True,
+    )
+    items = service.preview_accrual_plan(payload)
+    assert [i.entry_date.isoformat() for i in items] == ["2026-08-03"]
+
+
+def test_preview_accrual_plan_yearly_business_day_adjust_rolls_weekend_forward() -> None:
+    service, _conn, _cur = _build_service_with_mocks()
+    payload = AccrualPlanCreate(
+        name="Annual plan",
+        direction="expense",
+        party_id=10,
+        target_account_id=2,
+        bridge_account_id=1,
+        frequency="yearly",
+        start_date=date(2027, 7, 1),
+        end_date=date(2027, 7, 31),
+        amount=Decimal("100.00"),
+        summary_template="{plan} {month}",
+        month_of_year=7,
+        day_of_month=4,
+        business_day_adjust=True,
+    )
+    items = service.preview_accrual_plan(payload)
+    assert [i.entry_date.isoformat() for i in items] == ["2027-07-05"]
+
+
+def test_weekly_rejects_business_day_adjust() -> None:
+    with pytest.raises(ValueError, match="monthly/yearly"):
+        AccrualPlanCreate(
+            name="Weekly plan",
+            direction="revenue",
+            party_id=1,
+            target_account_id=2,
+            bridge_account_id=3,
+            frequency="weekly",
+            start_date=date(2026, 1, 1),
+            end_date=date(2026, 1, 31),
+            amount=Decimal("10.00"),
+            summary_template="{plan}",
+            day_of_week=0,
+            business_day_adjust=True,
+        )
+
+
+def test_update_accrual_plan_guard_requires_force_override() -> None:
+    service, _conn, cur = _build_service_with_mocks()
+    cur.fetchone.side_effect = [{"id": 1}]
+    with pytest.raises(LedgerValidationError, match="force_override=true"):
+        service.update_accrual_plan(1, AccrualPlanUpdate(name="Updated"))
+
+
+def test_expense_plan_target_account_must_be_expense() -> None:
+    service, _conn, cur = _build_service_with_mocks()
+    cur.fetchall.return_value = [
+        {"id": 10, "type": "asset"},
+        {"id": 11, "type": "liability"},
+    ]
+    payload = AccrualPlanCreate(
+        name="Expense Plan",
+        direction="expense",
+        party_id=1,
+        target_account_id=10,
+        bridge_account_id=11,
+        frequency="monthly_day",
+        start_date=date(2026, 1, 1),
+        end_date=date(2026, 1, 31),
+        amount=Decimal("50.00"),
+        summary_template="{plan}",
+        day_of_month=1,
+    )
+    with pytest.raises(LedgerValidationError, match="type expense"):
+        service._assert_plan_account_direction_rules(cur, payload)
