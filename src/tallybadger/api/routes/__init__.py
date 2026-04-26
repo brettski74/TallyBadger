@@ -1,5 +1,5 @@
 """Route modules."""
 
-from tallybadger.api.routes import health, ledger
+from tallybadger.api.routes import health, import_rules, ledger
 
-__all__ = ["health", "ledger"]
+__all__ = ["health", "import_rules", "ledger"]

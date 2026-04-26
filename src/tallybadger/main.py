@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from tallybadger import __version__
-from tallybadger.api.routes import health, ledger
+from tallybadger.api.routes import health, import_rules, ledger
 from tallybadger.core.config import get_settings
 
 app = FastAPI(
@@ -26,6 +26,7 @@ app.add_middleware(
 )
 
 app.include_router(health.router)
+app.include_router(import_rules.router)
 app.include_router(ledger.router)
 
 
