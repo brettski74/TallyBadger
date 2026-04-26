@@ -12,6 +12,9 @@ from tallybadger.ledger.models import (
     AccountOut,
     AccountLedgerLineOut,
     AccountUpdate,
+    PartyCreate,
+    PartyOut,
+    PartyUpdate,
     JournalEntryOut,
     JournalEntryListItem,
     JournalEntryWrite,
@@ -106,6 +109,72 @@ class LedgerService:
                 raise LedgerConflictError("account name already exists") from exc
         return AccountOut.model_validate(row)
 
+    def list_parties(self) -> list[PartyOut]:
+        with self._connection_factory() as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(
+                    """
+                    SELECT id, name, role, is_active, created_at, updated_at
+                    FROM parties
+                    ORDER BY name ASC
+                    """
+                )
+                rows = cur.fetchall()
+        return [PartyOut.model_validate(row) for row in rows]
+
+    def create_party(self, party: PartyCreate) -> PartyOut:
+        with self._connection_factory() as conn:
+            try:
+                with conn.transaction():
+                    with conn.cursor(row_factory=dict_row) as cur:
+                        cur.execute(
+                            """
+                            INSERT INTO parties (name, role, is_active)
+                            VALUES (%s, %s, %s)
+                            RETURNING id, name, role, is_active, created_at, updated_at
+                            """,
+                            (party.name.strip(), party.role, party.is_active),
+                        )
+                        row = cur.fetchone()
+            except errors.UniqueViolation as exc:
+                raise LedgerConflictError("party name already exists") from exc
+        return PartyOut.model_validate(row)
+
+    def update_party(self, party_id: int, payload: PartyUpdate) -> PartyOut:
+        if payload.name is None and payload.role is None and payload.is_active is None:
+            raise LedgerValidationError("at least one party field must be updated")
+
+        updates: list[str] = []
+        params: list[object] = []
+        if payload.name is not None:
+            updates.append("name = %s")
+            params.append(payload.name.strip())
+        if payload.role is not None:
+            updates.append("role = %s")
+            params.append(payload.role)
+        if payload.is_active is not None:
+            updates.append("is_active = %s")
+            params.append(payload.is_active)
+        params.append(party_id)
+
+        query = f"""
+            UPDATE parties
+            SET {", ".join(updates)}, updated_at = NOW()
+            WHERE id = %s
+            RETURNING id, name, role, is_active, created_at, updated_at
+        """
+        with self._connection_factory() as conn:
+            try:
+                with conn.transaction():
+                    with conn.cursor(row_factory=dict_row) as cur:
+                        cur.execute(query, params)
+                        row = cur.fetchone()
+                        if not row:
+                            raise LedgerNotFoundError(f"party {party_id} not found")
+            except errors.UniqueViolation as exc:
+                raise LedgerConflictError("party name already exists") from exc
+        return PartyOut.model_validate(row)
+
     def update_account(self, account_id: int, payload: AccountUpdate) -> AccountOut:
         if payload.name is None and payload.is_active is None:
             raise LedgerValidationError("at least one account field must be updated")
@@ -161,7 +230,7 @@ class LedgerService:
             with conn.cursor(row_factory=dict_row) as cur:
                 cur.execute(
                     f"""
-                    SELECT je.id, je.entry_date, je.description, je.created_at, je.updated_at
+                    SELECT je.id, je.entry_date, je.summary, je.description, je.created_at, je.updated_at
                     FROM journal_entries je
                     WHERE EXISTS (SELECT 1 FROM journal_lines jl WHERE jl.entry_id = je.id)
                     {where_clause.replace("WHERE", "AND") if where_clause else ""}
@@ -178,9 +247,10 @@ class LedgerService:
                 entry_ids = [row["id"] for row in headers]
                 cur.execute(
                     """
-                    SELECT jl.entry_id, jl.amount, a.name AS account_name
+                    SELECT jl.entry_id, jl.amount, a.name AS account_name, p.name AS party_name
                     FROM journal_lines jl
                     JOIN accounts a ON a.id = jl.account_id
+                    LEFT JOIN parties p ON p.id = jl.party_id
                     WHERE jl.entry_id = ANY(%s)
                     ORDER BY jl.entry_id ASC, jl.id ASC
                     """,
@@ -189,25 +259,32 @@ class LedgerService:
                 line_rows = cur.fetchall()
 
         lines_by_entry: dict[int, list[tuple[Decimal, str]]] = defaultdict(list)
+        parties_by_entry: dict[int, list[str]] = defaultdict(list)
         for row in line_rows:
             lines_by_entry[row["entry_id"]].append(
                 (Decimal(row["amount"]), row["account_name"]),
             )
+            party_name = row["party_name"]
+            if party_name and party_name not in parties_by_entry[row["entry_id"]]:
+                parties_by_entry[row["entry_id"]].append(party_name)
 
         out: list[JournalEntryListItem] = []
         for header in headers:
             entry_id = header["id"]
             lines = lines_by_entry.get(entry_id, [])
             debit_label, credit_label, amount = labels_and_amount_for_journal_list_lines(lines)
+            party_labels = ", ".join(parties_by_entry.get(entry_id, [])) or "—"
             out.append(
                 JournalEntryListItem(
                     id=entry_id,
                     entry_date=header["entry_date"],
+                    summary=header["summary"],
                     description=header["description"],
                     created_at=header["created_at"],
                     updated_at=header["updated_at"],
                     debit_side_label=debit_label,
                     credit_side_label=credit_label,
+                    party_labels=party_labels,
                     amount=amount,
                 )
             )
@@ -260,29 +337,32 @@ class LedgerService:
         return [AccountLedgerLineOut.model_validate(row) for row in rows]
 
     def create_entry(self, payload: JournalEntryWrite) -> JournalEntryOut:
+        self._validate_summary(payload.summary)
         self._validate_lines(payload.lines)
         try:
             with self._connection_factory() as conn:
                 with conn.transaction():
                     with conn.cursor(row_factory=dict_row) as cur:
                         self._assert_all_line_accounts_exist(cur, payload.lines)
+                        self._assert_all_line_parties_exist(cur, payload.lines)
                         cur.execute(
                             """
-                            INSERT INTO journal_entries (entry_date, description)
-                            VALUES (%s, %s)
+                            INSERT INTO journal_entries (entry_date, summary, description)
+                            VALUES (%s, %s, %s)
                             RETURNING id
                             """,
-                            (payload.entry_date, payload.description),
+                            (payload.entry_date, payload.summary.strip(), payload.description),
                         )
                         entry_id = cur.fetchone()["id"]
                         for line in payload.lines:
                             self._assert_account_active(cur, line.account_id)
+                            self._assert_party_active(cur, line.party_id)
                             cur.execute(
                                 """
-                                INSERT INTO journal_lines (entry_id, account_id, amount)
-                                VALUES (%s, %s, %s)
+                                INSERT INTO journal_lines (entry_id, account_id, party_id, amount)
+                                VALUES (%s, %s, %s, %s)
                                 """,
-                                (entry_id, line.account_id, line.amount),
+                                (entry_id, line.account_id, line.party_id, line.amount),
                             )
                         self._assert_entry_balanced(cur, entry_id)
                     return self.get_entry(entry_id, conn=conn)
@@ -290,19 +370,21 @@ class LedgerService:
             raise LedgerValidationError("journal line references unknown account") from exc
 
     def update_entry(self, entry_id: int, payload: JournalEntryWrite) -> JournalEntryOut:
+        self._validate_summary(payload.summary)
         self._validate_lines(payload.lines)
         try:
             with self._connection_factory() as conn:
                 with conn.transaction():
                     with conn.cursor(row_factory=dict_row) as cur:
                         self._assert_all_line_accounts_exist(cur, payload.lines)
+                        self._assert_all_line_parties_exist(cur, payload.lines)
                         cur.execute(
                             """
                             UPDATE journal_entries
-                            SET entry_date = %s, description = %s, updated_at = NOW()
+                            SET entry_date = %s, summary = %s, description = %s, updated_at = NOW()
                             WHERE id = %s
                             """,
-                            (payload.entry_date, payload.description, entry_id),
+                            (payload.entry_date, payload.summary.strip(), payload.description, entry_id),
                         )
                         if cur.rowcount == 0:
                             raise LedgerNotFoundError(f"journal entry {entry_id} not found")
@@ -313,12 +395,13 @@ class LedgerService:
                         )
                         for line in payload.lines:
                             self._assert_account_active(cur, line.account_id)
+                            self._assert_party_active(cur, line.party_id)
                             cur.execute(
                                 """
-                                INSERT INTO journal_lines (entry_id, account_id, amount)
-                                VALUES (%s, %s, %s)
+                                INSERT INTO journal_lines (entry_id, account_id, party_id, amount)
+                                VALUES (%s, %s, %s, %s)
                                 """,
-                                (entry_id, line.account_id, line.amount),
+                                (entry_id, line.account_id, line.party_id, line.amount),
                             )
                         self._assert_entry_balanced(cur, entry_id)
                     return self.get_entry(entry_id, conn=conn)
@@ -343,7 +426,7 @@ class LedgerService:
             with conn.cursor(row_factory=dict_row) as cur:
                 cur.execute(
                     """
-                    SELECT id, entry_date, description, created_at, updated_at
+                    SELECT id, entry_date, summary, description, created_at, updated_at
                     FROM journal_entries
                     WHERE id = %s
                     """,
@@ -355,9 +438,16 @@ class LedgerService:
 
                 cur.execute(
                     """
-                    SELECT jl.id, jl.account_id, jl.amount, a.name AS account_name
+                    SELECT
+                        jl.id,
+                        jl.account_id,
+                        jl.party_id,
+                        jl.amount,
+                        a.name AS account_name,
+                        p.name AS party_name
                     FROM journal_lines jl
                     INNER JOIN accounts a ON a.id = jl.account_id
+                    LEFT JOIN parties p ON p.id = jl.party_id
                     WHERE jl.entry_id = %s
                     ORDER BY jl.id ASC
                     """,
@@ -382,6 +472,11 @@ class LedgerService:
             raise LedgerValidationError("journal entry is not balanced")
 
     @staticmethod
+    def _validate_summary(summary: str) -> None:
+        if not summary.strip():
+            raise LedgerValidationError("journal entry summary is required")
+
+    @staticmethod
     def _assert_all_line_accounts_exist(cur, lines) -> None:
         account_ids = sorted({line.account_id for line in lines})
         cur.execute(
@@ -392,6 +487,20 @@ class LedgerService:
         missing = set(account_ids) - found
         if missing:
             raise LedgerValidationError("journal line references unknown account")
+
+    @staticmethod
+    def _assert_all_line_parties_exist(cur, lines) -> None:
+        party_ids = sorted({line.party_id for line in lines if line.party_id is not None})
+        if not party_ids:
+            return
+        cur.execute(
+            "SELECT id FROM parties WHERE id = ANY(%s)",
+            (party_ids,),
+        )
+        found = {row["id"] for row in cur.fetchall()}
+        missing = set(party_ids) - found
+        if missing:
+            raise LedgerValidationError("journal line references unknown party")
 
     @staticmethod
     def _assert_entry_balanced(cur, entry_id: int) -> None:
@@ -421,4 +530,20 @@ class LedgerService:
         if not row["is_active"]:
             raise LedgerValidationError(
                 f"account {account_id} is deactivated; reactivate before posting"
+            )
+
+    @staticmethod
+    def _assert_party_active(cur, party_id: int | None) -> None:
+        if party_id is None:
+            return
+        cur.execute(
+            "SELECT is_active FROM parties WHERE id = %s",
+            (party_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise LedgerValidationError("journal line references unknown party")
+        if not row["is_active"]:
+            raise LedgerValidationError(
+                f"party {party_id} is inactive; reactivate before posting"
             )

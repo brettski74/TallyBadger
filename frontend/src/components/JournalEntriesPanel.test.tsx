@@ -28,29 +28,43 @@ const accounts: Account[] = [
   },
 ];
 
+const parties = [
+  {
+    id: 1,
+    name: "Acme Yard Maintenance",
+    role: "customer",
+    is_active: true,
+    created_at: "2026-04-01T00:00:00Z",
+    updated_at: "2026-04-01T00:00:00Z",
+  },
+];
+
 describe("JournalEntriesPanel", () => {
   it("loads list and completes edit save path", async () => {
     const listPayload = [
       {
         id: 7,
         entry_date: "2026-04-10",
+        summary: "Rent accrual",
         description: "Test",
         created_at: "2026-04-01T00:00:00Z",
         updated_at: "2026-04-01T00:00:00Z",
         debit_side_label: "Cash",
         credit_side_label: "Income",
+        party_labels: "Acme Yard Maintenance",
         amount: "25.00",
       },
     ];
     const entryPayload = {
       id: 7,
       entry_date: "2026-04-10",
+      summary: "Rent accrual",
       description: "Test",
       created_at: "2026-04-01T00:00:00Z",
       updated_at: "2026-04-01T00:00:00Z",
       lines: [
-        { id: 10, account_id: 1, amount: "25.00", account_name: "Cash" },
-        { id: 11, account_id: 2, amount: "-25.00", account_name: "Income" },
+        { id: 10, account_id: 1, party_id: 1, amount: "25.00", account_name: "Cash", party_name: "Acme Yard Maintenance" },
+        { id: 11, account_id: 2, party_id: 1, amount: "-25.00", account_name: "Income", party_name: "Acme Yard Maintenance" },
       ],
     };
 
@@ -59,7 +73,10 @@ describe("JournalEntriesPanel", () => {
       const method = init?.method ?? "GET";
       if (/\/journal-entries\/7\/?$/.test(url)) {
         if (method === "PUT") {
-          return new Response(JSON.stringify({ ...entryPayload, description: "Updated" }), { status: 200 });
+          return new Response(
+            JSON.stringify({ ...entryPayload, summary: "Updated summary", description: "Updated" }),
+            { status: 200 },
+          );
         }
         return new Response(JSON.stringify(entryPayload), { status: 200 });
       }
@@ -69,9 +86,16 @@ describe("JournalEntriesPanel", () => {
       return new Response("not mocked", { status: 500 });
     });
 
-    render(<JournalEntriesPanel accounts={accounts} accountsLoading={false} accountsError={null} />);
+    render(
+      <JournalEntriesPanel
+        accounts={accounts}
+        parties={parties}
+        accountsLoading={false}
+        accountsError={null}
+      />,
+    );
 
-    expect(await screen.findByText("Test")).toBeInTheDocument();
+    expect(await screen.findByText("Rent accrual")).toBeInTheDocument();
 
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Edit" }));
@@ -93,7 +117,14 @@ describe("JournalEntriesPanel", () => {
       new Response(JSON.stringify({ detail: "service unavailable" }), { status: 503 }),
     );
 
-    render(<JournalEntriesPanel accounts={accounts} accountsLoading={false} accountsError={null} />);
+    render(
+      <JournalEntriesPanel
+        accounts={accounts}
+        parties={parties}
+        accountsLoading={false}
+        accountsError={null}
+      />,
+    );
 
     expect(await screen.findByRole("alert")).toHaveTextContent("service unavailable");
   });

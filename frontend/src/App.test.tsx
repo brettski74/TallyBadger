@@ -34,6 +34,7 @@ describe("App", () => {
           ]),
           { status: 200 },
         ),
+      () => new Response(JSON.stringify([]), { status: 200 }),
     ]);
 
     render(<App />);
@@ -44,6 +45,7 @@ describe("App", () => {
 
   it("creates an account successfully", async () => {
     mockFetchImplementation([
+      () => new Response(JSON.stringify([]), { status: 200 }),
       () => new Response(JSON.stringify([]), { status: 200 }),
       (_input, init) => {
         expect(init?.method).toBe("POST");
@@ -74,6 +76,7 @@ describe("App", () => {
   it("shows duplicate-name API error", async () => {
     mockFetchImplementation([
       () => new Response(JSON.stringify([]), { status: 200 }),
+      () => new Response(JSON.stringify([]), { status: 200 }),
       () => new Response(JSON.stringify({ detail: "account name already exists" }), { status: 409 }),
     ]);
 
@@ -86,5 +89,33 @@ describe("App", () => {
     await waitFor(() => {
       expect(screen.getByRole("alert")).toHaveTextContent("account name already exists");
     });
+  });
+
+  it("shows parties tab with loaded parties", async () => {
+    mockFetchImplementation([
+      () => new Response(JSON.stringify([]), { status: 200 }),
+      () =>
+        new Response(
+          JSON.stringify([
+            {
+              id: 1,
+              name: "Acme Yard Maintenance",
+              role: "customer",
+              is_active: true,
+              created_at: "2026-04-01T00:00:00Z",
+              updated_at: "2026-04-01T00:00:00Z",
+            },
+          ]),
+          { status: 200 },
+        ),
+    ]);
+
+    render(<App />);
+
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Parties" }));
+
+    expect(await screen.findByRole("heading", { name: "Create party" })).toBeInTheDocument();
+    expect(screen.getByText("Acme Yard Maintenance")).toBeInTheDocument();
   });
 });

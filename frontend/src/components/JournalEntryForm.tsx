@@ -1,15 +1,18 @@
 import { useMemo, useState } from "react";
 
 import type { Account } from "../api/accounts";
+import type { Party } from "../api/parties";
 import type { JournalEntryWrite } from "../api/journalEntries";
 import { accountsForJournalLinePickers } from "../journal/accountSelect";
 
 export interface LineDraft {
   key: string;
   account_id: number | "";
+  party_id: number | "";
   amount: string;
   /** From GET /journal-entries/:id so the row stays labeled if chart cache is stale. */
   account_name?: string;
+  party_name?: string;
 }
 
 function newLineKey(): string {
@@ -20,6 +23,7 @@ function emptyLines(count: number): LineDraft[] {
   return Array.from({ length: count }, () => ({
     key: newLineKey(),
     account_id: "",
+    party_id: "",
     amount: "",
   }));
 }
@@ -77,7 +81,9 @@ export function isBalanced(lines: LineDraft[]): boolean {
 export interface JournalEntryFormProps {
   mode: "create" | "edit";
   accounts: Account[];
+  parties: Party[];
   initialEntryDate: string;
+  initialSummary: string;
   initialDescription: string;
   initialLines: LineDraft[] | null;
   onSubmit: (payload: JournalEntryWrite) => Promise<void>;
@@ -87,13 +93,16 @@ export interface JournalEntryFormProps {
 export function JournalEntryForm({
   mode,
   accounts,
+  parties,
   initialEntryDate,
+  initialSummary,
   initialDescription,
   initialLines,
   onSubmit,
   onCancel,
 }: JournalEntryFormProps) {
   const [entryDate, setEntryDate] = useState(initialEntryDate);
+  const [summary, setSummary] = useState(initialSummary);
   const [description, setDescription] = useState(initialDescription);
   const [lines, setLines] = useState<LineDraft[]>(() =>
     initialLines && initialLines.length > 0 ? initialLines : emptyLines(2),
@@ -129,20 +138,41 @@ export function JournalEntryForm({
     return Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name));
   }, [accounts, lineAccountIds, lines]);
 
+  const selectableParties = useMemo(() => {
+    const byId = new Map(parties.map((p) => [p.id, p]));
+    for (const line of lines) {
+      const hint = line.party_name?.trim();
+      if (typeof line.party_id === "number" && line.party_id > 0 && hint && !byId.has(line.party_id)) {
+        byId.set(line.party_id, {
+          id: line.party_id,
+          name: hint,
+          role: "other",
+          is_active: true,
+          created_at: "1970-01-01T00:00:00Z",
+          updated_at: "1970-01-01T00:00:00Z",
+        });
+      }
+    }
+    return Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [parties, lines]);
+
   const material = useMemo(() => materialJournalLines(lines), [lines]);
   const { sum: runningSum, complete: amountsComplete } = sumParsedAmounts(lines);
   const balanced = isBalanced(lines);
   const hasMinimumMaterialLines = material.length >= 2;
 
   function addLine() {
-    setLines((prev) => [...prev, { key: newLineKey(), account_id: "", amount: "" }]);
+    setLines((prev) => [...prev, { key: newLineKey(), account_id: "", party_id: "", amount: "" }]);
   }
 
   function removeLine(key: string) {
     setLines((prev) => (prev.length <= 2 ? prev : prev.filter((l) => l.key !== key)));
   }
 
-  function updateLine(key: string, patch: Partial<Pick<LineDraft, "account_id" | "amount">>) {
+  function updateLine(
+    key: string,
+    patch: Partial<Pick<LineDraft, "account_id" | "party_id" | "amount">>,
+  ) {
     setLines((prev) =>
       prev.map((l) => {
         if (l.key !== key) {
@@ -151,6 +181,9 @@ export function JournalEntryForm({
         const next: LineDraft = { ...l, ...patch };
         if ("account_id" in patch && patch.account_id !== l.account_id) {
           delete next.account_name;
+        }
+        if ("party_id" in patch && patch.party_id !== l.party_id) {
+          delete next.party_name;
         }
         return next;
       }),
@@ -174,6 +207,10 @@ export function JournalEntryForm({
       setClientError("Add at least two complete lines (account and amount on each) before posting.");
       return;
     }
+    if (!summary.trim()) {
+      setClientError("Summary is required.");
+      return;
+    }
     if (!amountsComplete) {
       setClientError("Enter a valid non-zero amount on every line that has an account.");
       return;
@@ -185,9 +222,11 @@ export function JournalEntryForm({
 
     const payload: JournalEntryWrite = {
       entry_date: entryDate,
+      summary: summary.trim(),
       description: description.trim() === "" ? null : description.trim(),
       lines: material.map((l) => ({
         account_id: l.account_id as number,
+        party_id: l.party_id === "" ? null : l.party_id,
         amount: l.amount.trim(),
       })),
     };
@@ -244,6 +283,18 @@ export function JournalEntryForm({
       </label>
 
       <label>
+        Summary
+        <input
+          aria-label="Entry summary"
+          value={summary}
+          onChange={(e) => setSummary(e.target.value)}
+          placeholder="e.g. June 2026 Rent Accrual - Acme Yard Maintenance"
+          maxLength={200}
+          required
+        />
+      </label>
+
+      <label>
         Description (optional)
         <input
           aria-label="Entry description"
@@ -271,6 +322,7 @@ export function JournalEntryForm({
         <thead>
           <tr>
             <th>Account</th>
+            <th>Party (optional)</th>
             <th>Amount (+ debit, − credit)</th>
             <th aria-label="actions" />
           </tr>
@@ -294,6 +346,26 @@ export function JournalEntryForm({
                       {!a.is_active ? " (inactive)" : ""}
                     </option>
                   ))}
+                </select>
+              </td>
+              <td>
+                <select
+                  aria-label={`Party for line ${line.key}`}
+                  value={line.party_id === "" ? "" : String(line.party_id)}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    updateLine(line.key, { party_id: v === "" ? "" : Number(v) });
+                  }}
+                >
+                  <option value="">No party</option>
+                  {selectableParties
+                    .filter((p) => p.is_active || p.id === line.party_id)
+                    .map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                        {!p.is_active ? " (inactive)" : ""}
+                      </option>
+                    ))}
                 </select>
               </td>
               <td>

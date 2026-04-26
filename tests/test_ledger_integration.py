@@ -44,7 +44,7 @@ def clean_database(integration_db_url: str) -> Iterator[None]:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    TRUNCATE TABLE journal_lines, journal_entries, accounts
+                    TRUNCATE TABLE journal_lines, journal_entries, parties, accounts
                     RESTART IDENTITY CASCADE
                     """
                 )
@@ -70,6 +70,7 @@ def test_create_entry_rolls_back_when_account_fk_invalid(
         ledger_service.create_entry(
             JournalEntryWrite(
                 entry_date=date(2026, 4, 25),
+                summary="bad fk create",
                 description="bad fk create",
                 lines=[
                     JournalLineIn(account_id=cash.id, amount=Decimal("10.00")),
@@ -98,6 +99,7 @@ def test_update_entry_rolls_back_to_existing_lines_on_fk_error(
     created = ledger_service.create_entry(
         JournalEntryWrite(
             entry_date=date(2026, 4, 25),
+            summary="initial",
             description="initial",
             lines=[
                 JournalLineIn(account_id=cash.id, amount=Decimal("120.00")),
@@ -111,6 +113,7 @@ def test_update_entry_rolls_back_to_existing_lines_on_fk_error(
             created.id,
             JournalEntryWrite(
                 entry_date=date(2026, 4, 26),
+                summary="bad fk update",
                 description="bad fk update",
                 lines=[
                     JournalLineIn(account_id=expense.id, amount=Decimal("50.00")),
@@ -137,6 +140,7 @@ def test_deactivated_account_cannot_be_posted_to(ledger_service: LedgerService) 
         ledger_service.create_entry(
             JournalEntryWrite(
                 entry_date=date(2026, 5, 1),
+                summary="blocked by deactivated account",
                 description="blocked by deactivated account",
                 lines=[
                     JournalLineIn(account_id=cash.id, amount=Decimal("100.00")),
@@ -160,6 +164,7 @@ def test_list_entries_and_account_lines_with_filters(
     older = ledger_service.create_entry(
         JournalEntryWrite(
             entry_date=date(2026, 4, 1),
+            summary="older",
             description="older",
             lines=[
                 JournalLineIn(account_id=cash.id, amount=Decimal("90.00")),
@@ -170,6 +175,7 @@ def test_list_entries_and_account_lines_with_filters(
     newer = ledger_service.create_entry(
         JournalEntryWrite(
             entry_date=date(2026, 4, 20),
+            summary="newer",
             description="newer",
             lines=[
                 JournalLineIn(account_id=cash.id, amount=Decimal("110.00")),
@@ -209,6 +215,7 @@ def test_list_entries_shows_split_label_when_multiple_lines_on_one_side(
     ledger_service.create_entry(
         JournalEntryWrite(
             entry_date=date(2026, 5, 1),
+            summary="two debits",
             description="two debits",
             lines=[
                 JournalLineIn(account_id=cash.id, amount=Decimal("30.00")),
@@ -231,6 +238,7 @@ def test_list_entries_shows_split_label_when_multiple_lines_on_one_side(
     ledger_service.create_entry(
         JournalEntryWrite(
             entry_date=date(2026, 5, 2),
+            summary="two credits",
             description="two credits",
             lines=[
                 JournalLineIn(account_id=bank.id, amount=Decimal("200.00")),
@@ -254,6 +262,7 @@ def test_get_entry_includes_account_name_on_each_line(ledger_service: LedgerServ
     entry = ledger_service.create_entry(
         JournalEntryWrite(
             entry_date=date(2026, 6, 1),
+            summary="with names",
             description="with names",
             lines=[
                 JournalLineIn(account_id=cash.id, amount=Decimal("15.00")),
