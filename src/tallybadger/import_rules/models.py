@@ -28,7 +28,7 @@ class RegexGroupRef(BaseModel):
 class SetAttributeAction(BaseModel):
     type: Literal["set_attribute"] = "set_attribute"
     name: str = Field(min_length=1)
-    literal_value: str | None = None
+    literal_value: Any | None = None
     from_attribute: str | None = None
     from_regex_group: RegexGroupRef | None = None
 
@@ -48,7 +48,7 @@ class AppendToAttributeAction(BaseModel):
     type: Literal["append_to_attribute"] = "append_to_attribute"
     name: str = Field(min_length=1)
     separator: str = " "
-    literal_value: str | None = None
+    literal_value: Any | None = None
     from_attribute: str | None = None
     from_regex_group: RegexGroupRef | None = None
 
@@ -192,7 +192,7 @@ class TraceEvent(BaseModel):
 
 
 class EvaluationResult(BaseModel):
-    attributes: dict[str, str]
+    attributes: dict[str, Any]
     dropped: bool = False
     drop_reason: str | None = None
     require_review: bool = False

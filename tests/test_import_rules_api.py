@@ -42,6 +42,27 @@ def test_evaluate_endpoint_happy_path() -> None:
     assert any(e["event"] == "rule_matched" for e in data["trace"])
 
 
+def test_evaluate_preserves_numeric_json_types_in_bag() -> None:
+    body = {
+        "attributes": {"amount": 150.5, "description": "x"},
+        "rule_set": {
+            "rules": [
+                {
+                    "matchers": [
+                        {"type": "numeric_compare", "attribute": "amount", "op": "gt", "value": "100"},
+                    ],
+                    "actions": [{"type": "set_attribute", "name": "big", "literal_value": True}],
+                },
+            ],
+        },
+    }
+    r = client.post("/import-rules/evaluate", json=body)
+    assert r.status_code == 200
+    data = r.json()
+    assert data["attributes"]["amount"] == 150.5
+    assert data["attributes"]["big"] is True
+
+
 def test_evaluate_invalid_regex_group_422() -> None:
     body = {
         "attributes": {"d": "x"},

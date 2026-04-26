@@ -1,5 +1,7 @@
 """Stateless import rules evaluation API (issue #8; persistence in a follow-up)."""
 
+from typing import Any
+
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 
@@ -11,7 +13,9 @@ router = APIRouter(prefix="", tags=["import-rules"])
 
 
 class ImportRulesEvaluateRequest(BaseModel):
-    attributes: dict[str, str] = Field(default_factory=dict)
+    """Bag from the import template: JSON numbers, strings, booleans, nulls, etc."""
+
+    attributes: dict[str, Any] = Field(default_factory=dict)
     rule_set: RuleSet
 
 

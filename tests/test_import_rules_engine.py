@@ -1,5 +1,8 @@
 """Unit tests for the import rules engine (#8)."""
 
+from datetime import date
+from decimal import Decimal
+
 import pytest
 
 from tallybadger.import_rules.engine import evaluate
@@ -212,6 +215,62 @@ def test_numeric_compare() -> None:
     assert evaluate(rs, {"amount": "50"}).attributes.get("big") is None
 
 
+def test_numeric_compare_preserves_int_in_bag() -> None:
+    rs = RuleSet(
+        rules=[
+            Rule(
+                matchers=[NumericCompareMatcher(attribute="amount", op="gt", value="0")],
+                actions=[SetAttributeAction(name="flag", literal_value=1)],
+            ),
+        ],
+    )
+    out = evaluate(rs, {"amount": 250})
+    assert out.attributes["amount"] == 250
+    assert out.attributes["flag"] == 1
+
+
+def test_equals_matcher_coerces_numeric_string_to_typed_value() -> None:
+    rs = RuleSet(
+        rules=[
+            Rule(
+                matchers=[EqualsMatcher(attribute="qty", value="100")],
+                actions=[SetAttributeAction(name="ok", literal_value="yes")],
+            ),
+        ],
+    )
+    assert evaluate(rs, {"qty": 100}).attributes.get("ok") == "yes"
+    assert evaluate(rs, {"qty": Decimal("100")}).attributes.get("ok") == "yes"
+
+
+def test_append_builds_string_from_date_and_regex_capture() -> None:
+    rs = RuleSet(
+        rules=[
+            Rule(
+                matchers=[RegexMatcher(attribute="memo", pattern=r"Tenant:\s*(?P<t>\w+)")],
+                actions=[
+                    AppendToAttributeAction(
+                        name="rent_label",
+                        from_regex_group=RegexGroupRef(matcher_index=0, group="t"),
+                        separator="",
+                    ),
+                    AppendToAttributeAction(
+                        name="rent_label",
+                        from_attribute="posted_on",
+                        separator=" ",
+                    ),
+                    AppendToAttributeAction(
+                        name="rent_label",
+                        literal_value="Rent",
+                        separator=" ",
+                    ),
+                ],
+            ),
+        ],
+    )
+    out = evaluate(rs, {"memo": "Tenant:ACME", "posted_on": date(2026, 4, 1)})
+    assert out.attributes["rent_label"] == "ACME 2026-04-01 Rent"
+
+
 def test_in_set_and_not_equals() -> None:
     rs = RuleSet(
         rules=[
@@ -238,6 +297,7 @@ def test_day_of_month_matcher() -> None:
         ],
     )
     assert evaluate(rs, {"posted_on": "2026-04-15"}).attributes.get("payroll_window") == "yes"
+    assert evaluate(rs, {"posted_on": date(2026, 4, 15)}).attributes.get("payroll_window") == "yes"
     assert evaluate(rs, {"posted_on": "2026-04-16"}).attributes.get("payroll_window") is None
 
 

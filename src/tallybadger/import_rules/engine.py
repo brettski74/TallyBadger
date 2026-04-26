@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import re
-from datetime import date
+from copy import copy
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -30,6 +31,82 @@ from tallybadger.import_rules.models import (
 )
 
 
+def _as_decimal(raw: Any) -> Decimal | None:
+    """Parse a numeric attribute for comparisons; bool is not treated as a number."""
+    if raw is None or isinstance(raw, bool):
+        return None
+    if isinstance(raw, Decimal):
+        return raw
+    if isinstance(raw, int):
+        return Decimal(raw)
+    if isinstance(raw, float):
+        return Decimal(str(raw))
+    if isinstance(raw, str):
+        s = raw.strip()
+        if not s:
+            return None
+        try:
+            return Decimal(s)
+        except (InvalidOperation, ValueError):
+            return None
+    return None
+
+
+def _as_date(raw: Any) -> date | None:
+    if raw is None:
+        return None
+    if isinstance(raw, datetime):
+        return raw.date()
+    if isinstance(raw, date):
+        return raw
+    if isinstance(raw, str):
+        try:
+            return date.fromisoformat(raw.strip())
+        except ValueError:
+            return None
+    return None
+
+
+def _scalar_equals(raw: Any, expected: str, case_insensitive: bool) -> bool:
+    """Match rule string `expected` to a possibly typed attribute (decimal, date, str, …)."""
+    if raw is None:
+        return expected.strip() == ""
+    exp = expected.strip()
+    if case_insensitive and isinstance(raw, str):
+        return raw.strip().casefold() == exp.casefold()
+    left_d = _as_decimal(raw)
+    right_d = _as_decimal(exp)
+    if left_d is not None and right_d is not None:
+        return left_d == right_d
+    left_dt = _as_date(raw)
+    if left_dt is not None:
+        right_dt = _as_date(exp)
+        if right_dt is not None:
+            return left_dt == right_dt
+    if case_insensitive:
+        return str(raw).strip().casefold() == exp.casefold()
+    return str(raw) == expected
+
+
+def _display_for_concat(raw: Any) -> str:
+    """Build a string fragment for append_to_attribute (dates as ISO date, decimals plain, etc.)."""
+    if raw is None:
+        return ""
+    if isinstance(raw, bool):
+        return "true" if raw else "false"
+    if isinstance(raw, datetime):
+        return raw.date().isoformat()
+    if isinstance(raw, date):
+        return raw.isoformat()
+    if isinstance(raw, Decimal):
+        return format(raw, "f")
+    if isinstance(raw, float):
+        return str(raw)
+    if isinstance(raw, int):
+        return str(raw)
+    return str(raw)
+
+
 def _rule_label(rule: Rule, index: int) -> str:
     if rule.id:
         return rule.id
@@ -52,7 +129,7 @@ def _compile_regex_flags(names: list[str]) -> int:
 
 def _try_match(
     matcher: Matcher,
-    bag: dict[str, str],
+    bag: dict[str, Any],
 ) -> tuple[bool, re.Match[str] | None]:
     if isinstance(matcher, RegexMatcher):
         raw = bag.get(matcher.attribute)
@@ -66,22 +143,12 @@ def _try_match(
 
     if isinstance(matcher, EqualsMatcher):
         raw = bag.get(matcher.attribute)
-        left = "" if raw is None else str(raw)
-        right = matcher.value
-        if matcher.case_insensitive:
-            ok = left.strip().casefold() == right.strip().casefold()
-        else:
-            ok = left == right
+        ok = _scalar_equals(raw, matcher.value, matcher.case_insensitive)
         return (ok, None)
 
     if isinstance(matcher, NotEqualsMatcher):
         raw = bag.get(matcher.attribute)
-        left = "" if raw is None else str(raw)
-        right = matcher.value
-        if matcher.case_insensitive:
-            ok = left.strip().casefold() != right.strip().casefold()
-        else:
-            ok = left != right
+        ok = not _scalar_equals(raw, matcher.value, matcher.case_insensitive)
         return (ok, None)
 
     if isinstance(matcher, ContainsMatcher):
@@ -96,12 +163,12 @@ def _try_match(
 
     if isinstance(matcher, NumericCompareMatcher):
         raw = bag.get(matcher.attribute)
-        if raw is None or not str(raw).strip():
-            return (False, None)
+        left = _as_decimal(raw)
         try:
-            left = Decimal(str(raw).strip())
             right = Decimal(str(matcher.value).strip())
         except (InvalidOperation, ValueError):
+            return (False, None)
+        if left is None:
             return (False, None)
         op = matcher.op
         if op == "lt":
@@ -118,28 +185,21 @@ def _try_match(
 
     if isinstance(matcher, InSetMatcher):
         raw = bag.get(matcher.attribute)
-        val = "" if raw is None else str(raw)
-        ok = val in matcher.values
+        ok = any(_scalar_equals(raw, v, False) for v in matcher.values)
         return (ok, None)
 
     if isinstance(matcher, DayOfMonthMatcher):
         raw = bag.get(matcher.attribute)
-        if raw is None or not str(raw).strip():
-            return (False, None)
-        try:
-            d = date.fromisoformat(str(raw).strip())
-        except ValueError:
+        d = _as_date(raw)
+        if d is None:
             return (False, None)
         ok = d.day in matcher.days
         return (ok, None)
 
     if isinstance(matcher, DayOfWeekMatcher):
         raw = bag.get(matcher.attribute)
-        if raw is None or not str(raw).strip():
-            return (False, None)
-        try:
-            d = date.fromisoformat(str(raw).strip())
-        except ValueError:
+        d = _as_date(raw)
+        if d is None:
             return (False, None)
         ok = d.weekday() in matcher.weekdays
         return (ok, None)
@@ -168,39 +228,48 @@ def _resolve_value_from_regex_group(
     return "" if got is None else str(got)
 
 
-def _resolve_fragment(
-    bag: dict[str, str],
+def _resolve_append_fragment(
+    bag: dict[str, Any],
     refs: list[re.Match[str] | None],
-    literal_value: str | None,
+    literal_value: Any | None,
     from_attribute: str | None,
     from_regex_group: RegexGroupRef | None,
 ) -> str:
     if literal_value is not None:
-        return literal_value
+        return _display_for_concat(literal_value)
     if from_attribute is not None:
-        raw = bag.get(from_attribute)
-        return "" if raw is None else str(raw)
+        return _display_for_concat(bag.get(from_attribute))
     if from_regex_group is not None:
         return _resolve_value_from_regex_group(refs, from_regex_group)
     raise ImportRulesError("internal: no value source for fragment")
 
 
+def _resolve_set_value(
+    action: SetAttributeAction,
+    bag: dict[str, Any],
+    refs: list[re.Match[str] | None],
+) -> Any:
+    if action.literal_value is not None:
+        v = action.literal_value
+        return copy(v) if isinstance(v, (list, dict)) else v
+    if action.from_attribute is not None:
+        v = bag.get(action.from_attribute)
+        return copy(v) if isinstance(v, (list, dict)) else v
+    if action.from_regex_group is not None:
+        return _resolve_value_from_regex_group(refs, action.from_regex_group)
+    raise ImportRulesError("internal: no value source for set_attribute")
+
+
 def _apply_action(
     action: Action,
-    bag: dict[str, str],
+    bag: dict[str, Any],
     regex_matches: list[re.Match[str] | None],
     trace: list[TraceEvent],
     rule_label: str,
 ) -> tuple[bool, bool]:
     """Returns (stop_rules, dropped)."""
     if isinstance(action, SetAttributeAction):
-        val = _resolve_fragment(
-            bag,
-            regex_matches,
-            action.literal_value,
-            action.from_attribute,
-            action.from_regex_group,
-        )
+        val = _resolve_set_value(action, bag, regex_matches)
         bag[action.name] = val
         trace.append(
             TraceEvent(
@@ -211,18 +280,18 @@ def _apply_action(
         return (False, False)
 
     if isinstance(action, AppendToAttributeAction):
-        frag = _resolve_fragment(
+        frag = _resolve_append_fragment(
             bag,
             regex_matches,
             action.literal_value,
             action.from_attribute,
             action.from_regex_group,
         )
-        cur = bag.get(action.name, "")
-        if cur:
-            bag[action.name] = cur + action.separator + frag
-        else:
+        cur = bag.get(action.name)
+        if cur is None or cur == "":
             bag[action.name] = frag
+        else:
+            bag[action.name] = _display_for_concat(cur) + action.separator + frag
         trace.append(
             TraceEvent(
                 event="append_to_attribute",
@@ -258,13 +327,18 @@ def _apply_action(
 
 def evaluate(rule_set: RuleSet, attributes: dict[str, Any]) -> EvaluationResult:
     """
-    Run ordered rules against a copy of `attributes` (values coerced to str).
+    Run ordered rules against a shallow copy of ``attributes``.
 
-    Stops processing further rules after ``stop`` or ``drop_row``, or when a rule
-    action requests stop. ``require_review`` sets flags but does not halt rules
-    unless combined with ``stop`` / ``drop_row``.
+    Values keep their types (numbers, strings, ISO dates as ``date`` if the caller
+    passes them—JSON via the API typically yields int/float/str/bool/null).
+
+    ``stop``, ``drop_row``, and ``require_review`` are ordinary actions from the
+    author's perspective; only ``stop`` / ``drop_row`` halt further rules.
+    ``require_review`` sets result flags only and does **not** stop processing.
+
+    Stops processing further rules after ``stop`` or ``drop_row``.
     """
-    bag: dict[str, str] = {k: "" if v is None else str(v) for k, v in attributes.items()}
+    bag: dict[str, Any] = {k: copy(v) if isinstance(v, (list, dict)) else v for k, v in attributes.items()}
     trace: list[TraceEvent] = []
     dropped = False
     drop_reason: str | None = None
