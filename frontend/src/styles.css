@@ -284,6 +284,13 @@ th {
   width: 6rem;
 }
 
+.form-actions-inline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
 .button-secondary {
   background: #64748b;
   color: var(--primary-text);

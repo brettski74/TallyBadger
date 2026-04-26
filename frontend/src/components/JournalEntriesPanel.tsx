@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import type { Account } from "../api/accounts";
+import type { Party } from "../api/parties";
 import {
   createJournalEntry,
   getJournalEntry,
@@ -14,23 +15,38 @@ import { JournalEntryForm, type LineDraft } from "./JournalEntryForm";
 const PAGE_SIZE = 50;
 
 function linesFromEntry(
-  lines: { id: number; account_id: number; amount: string; account_name: string }[],
+  lines: {
+    id: number;
+    account_id: number;
+    amount: string;
+    account_name: string;
+    party_id?: number | null;
+    party_name?: string | null;
+  }[],
 ): LineDraft[] {
   return lines.map((l) => ({
     key: `jl-${l.id}`,
     account_id: l.account_id,
+    party_id: l.party_id ?? "",
     amount: l.amount,
     account_name: l.account_name,
+    party_name: l.party_name ?? undefined,
   }));
 }
 
 interface JournalEntriesPanelProps {
   accounts: Account[];
+  parties: Party[];
   accountsLoading: boolean;
   accountsError: string | null;
 }
 
-export function JournalEntriesPanel({ accounts, accountsLoading, accountsError }: JournalEntriesPanelProps) {
+export function JournalEntriesPanel({
+  accounts,
+  parties,
+  accountsLoading,
+  accountsError,
+}: JournalEntriesPanelProps) {
   const [view, setView] = useState<"list" | "form">("list");
   const [editingId, setEditingId] = useState<number | null>(null);
   const [entries, setEntries] = useState<JournalEntryListItem[]>([]);
@@ -41,6 +57,7 @@ export function JournalEntriesPanel({ accounts, accountsLoading, accountsError }
   const [hasMore, setHasMore] = useState(false);
 
   const [formEntryDate, setFormEntryDate] = useState("");
+  const [formSummary, setFormSummary] = useState("");
   const [formDescription, setFormDescription] = useState("");
   const [formLines, setFormLines] = useState<LineDraft[] | null>(null);
   const [formLoading, setFormLoading] = useState(false);
@@ -94,6 +111,7 @@ export function JournalEntriesPanel({ accounts, accountsLoading, accountsError }
   function openCreate() {
     setEditingId(null);
     setFormEntryDate(new Date().toISOString().slice(0, 10));
+    setFormSummary("");
     setFormDescription("");
     setFormLines(null);
     setFormLoadError(null);
@@ -108,6 +126,7 @@ export function JournalEntriesPanel({ accounts, accountsLoading, accountsError }
     try {
       const entry = await getJournalEntry(id);
       setFormEntryDate(entry.entry_date);
+      setFormSummary(entry.summary);
       setFormDescription(entry.description ?? "");
       setFormLines(linesFromEntry(entry.lines));
     } catch (err) {
@@ -131,6 +150,7 @@ export function JournalEntriesPanel({ accounts, accountsLoading, accountsError }
   function handleCancelForm() {
     setView("list");
     setEditingId(null);
+    setFormSummary("");
     setFormLines(null);
     setFormLoadError(null);
   }
@@ -176,7 +196,9 @@ export function JournalEntriesPanel({ accounts, accountsLoading, accountsError }
           key={editingId ?? "new"}
           mode={editingId == null ? "create" : "edit"}
           accounts={accounts}
+          parties={parties}
           initialEntryDate={formEntryDate}
+          initialSummary={formSummary}
           initialDescription={formDescription}
           initialLines={formLines}
           onSubmit={handleSubmit}
@@ -235,7 +257,8 @@ export function JournalEntriesPanel({ accounts, accountsLoading, accountsError }
           <thead>
             <tr>
               <th>Date</th>
-              <th>Description</th>
+              <th>Summary</th>
+              <th>Parties</th>
               <th>Debit account</th>
               <th>Credit account</th>
               <th className="journal-list-amount">Amount</th>
@@ -246,7 +269,8 @@ export function JournalEntriesPanel({ accounts, accountsLoading, accountsError }
             {entries.map((row) => (
               <tr key={row.id}>
                 <td>{row.entry_date}</td>
-                <td>{row.description ?? "—"}</td>
+                <td>{row.summary}</td>
+                <td>{row.party_labels}</td>
                 <td>{row.debit_side_label}</td>
                 <td>{row.credit_side_label}</td>
                 <td className="journal-list-amount">{row.amount}</td>

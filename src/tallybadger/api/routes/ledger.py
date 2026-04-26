@@ -9,6 +9,9 @@ from tallybadger.ledger.models import (
     AccountLedgerLineOut,
     AccountOut,
     AccountUpdate,
+    PartyCreate,
+    PartyOut,
+    PartyUpdate,
     JournalEntryListItem,
     JournalEntryOut,
     JournalEntryWrite,
@@ -33,6 +36,11 @@ def list_accounts(service: LedgerService = Depends(get_ledger_service)) -> list[
     return service.list_accounts()
 
 
+@router.get("/parties", response_model=list[PartyOut])
+def list_parties(service: LedgerService = Depends(get_ledger_service)) -> list[PartyOut]:
+    return service.list_parties()
+
+
 @router.post("/accounts", response_model=AccountOut, status_code=status.HTTP_201_CREATED)
 def create_account(
     payload: AccountCreate,
@@ -40,6 +48,17 @@ def create_account(
 ) -> AccountOut:
     try:
         return service.create_account(payload)
+    except LedgerConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/parties", response_model=PartyOut, status_code=status.HTTP_201_CREATED)
+def create_party(
+    payload: PartyCreate,
+    service: LedgerService = Depends(get_ledger_service),
+) -> PartyOut:
+    try:
+        return service.create_party(payload)
     except LedgerConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -52,6 +71,22 @@ def update_account(
 ) -> AccountOut:
     try:
         return service.update_account(account_id, payload)
+    except LedgerNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except LedgerConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except LedgerValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.patch("/parties/{party_id}", response_model=PartyOut)
+def update_party(
+    party_id: int,
+    payload: PartyUpdate,
+    service: LedgerService = Depends(get_ledger_service),
+) -> PartyOut:
+    try:
+        return service.update_party(party_id, payload)
     except LedgerNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except LedgerConflictError as exc:

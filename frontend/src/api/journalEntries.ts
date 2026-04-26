@@ -4,13 +4,16 @@ import { readApiErrorMessage } from "./errors";
 export interface JournalLineOut {
   id: number;
   account_id: number;
+  party_id?: number | null;
   account_name: string;
+  party_name?: string | null;
   amount: string;
 }
 
 export interface JournalEntryOut {
   id: number;
   entry_date: string;
+  summary: string;
   description: string | null;
   created_at: string;
   updated_at: string;
@@ -20,21 +23,24 @@ export interface JournalEntryOut {
 export interface JournalEntryListItem {
   id: number;
   entry_date: string;
-  description: string | null;
+  summary: string;
   created_at: string;
   updated_at: string;
   debit_side_label: string;
   credit_side_label: string;
+  party_labels: string;
   amount: string;
 }
 
 export interface JournalLineIn {
   account_id: number;
+  party_id?: number | null;
   amount: string;
 }
 
 export interface JournalEntryWrite {
   entry_date: string;
+  summary: string;
   description: string | null;
   lines: JournalLineIn[];
 }

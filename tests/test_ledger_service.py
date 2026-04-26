@@ -54,6 +54,13 @@ def test_validate_lines_requires_balance_and_non_zero() -> None:
     )
 
 
+def test_validate_summary_requires_non_blank_text() -> None:
+    with pytest.raises(LedgerValidationError, match="summary is required"):
+        LedgerService._validate_summary("   ")
+
+    LedgerService._validate_summary("rent accrual")
+
+
 def test_create_entry_runs_inside_transaction() -> None:
     service, conn, cur = _build_service_with_mocks()
     cur.fetchall.return_value = [{"id": 1}, {"id": 2}]
@@ -76,6 +83,7 @@ def test_create_entry_runs_inside_transaction() -> None:
 
     payload = JournalEntryWrite(
         entry_date=date(2026, 4, 24),
+        summary="rent",
         description="rent",
         lines=[
             JournalLineIn(account_id=1, amount=Decimal("1000.00")),
@@ -109,6 +117,7 @@ def test_update_entry_runs_inside_transaction() -> None:
 
     payload = JournalEntryWrite(
         entry_date=date(2026, 4, 24),
+        summary="update",
         description="update",
         lines=[
             JournalLineIn(account_id=1, amount=Decimal("50")),
