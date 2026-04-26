@@ -7,9 +7,10 @@ alwaysApply: true
 
 ## Git and delivery
 
-- Build **features and bug fixes on a branch**; do not land substantive work by committing straight to `master`.
-- Merge to `master` only through a **pull request** (self-review is OK; the PR is the audit trail and review surface).
-- Use **squash merge** (or equivalent) when merging PRs so `master` stays a linear, readable history unless the team explicitly chooses otherwise.
+- Build **features and bug fixes on a branch**; do not land substantive work by committing straight to the default branch (`main`/`master`).
+- If currently on the default branch (`main` or `master`), create and switch to a feature/bugfix branch **before making any code changes or commits**.
+- Merge to the default branch (`main`/`master`) only through a **pull request** (self-review is OK; the PR is the audit trail and review surface).
+- Use **squash merge** (or equivalent) when merging PRs so the default branch (`main`/`master`) stays a linear, readable history unless the team explicitly chooses otherwise.
 - **Link work to GitHub issues:** in the PR description, reference issues with keywords GitHub understands, e.g. `Fixes #42`, `Closes #42`, or `Refs #42` (see [GitHub linking](https://docs.github.com/en/issues/tracking-your-work-with-issues/linking-a-pull-request-to-an-issue)). Put the primary link in the **PR body** so it survives squash; repeat in commit messages if you like, but the PR body is the reliable place.
 
 ## Testing (ship tests with the change)

@@ -31,6 +31,18 @@ class StubLedgerService:
     def update_party(self, _party_id, _payload):
         raise LedgerValidationError("at least one party field must be updated")
 
+    def list_accrual_plans(self):
+        return []
+
+    def preview_accrual_plan(self, _payload):
+        return []
+
+    def create_accrual_plan(self, _payload):
+        raise LedgerValidationError("plan frequency produced no entries in the date range")
+
+    def update_accrual_plan(self, _plan_id, _payload):
+        raise LedgerValidationError("plan has already posted entries; pass force_override=true to update")
+
     def list_entries(self, **_kwargs):
         return []
 
@@ -200,5 +212,62 @@ def test_create_journal_entry_requires_summary_field() -> None:
         },
     )
 
+    assert response.status_code == 422
+    app.dependency_overrides.clear()
+
+
+def test_preview_accrual_plan_endpoint() -> None:
+    app.dependency_overrides[get_ledger_service] = StubLedgerService
+    client = TestClient(app)
+    response = client.post(
+        "/accrual-plans/preview",
+        json={
+            "name": "Plan 2026",
+            "direction": "revenue",
+            "party_id": 1,
+            "target_account_id": 2,
+            "bridge_account_id": 1,
+            "frequency": "monthly_day",
+            "start_date": "2026-01-01",
+            "end_date": "2026-03-31",
+            "amount": "100.00",
+            "summary_template": "{plan} {month}",
+            "day_of_month": 1,
+        },
+    )
+    assert response.status_code == 200
+    assert response.json() == []
+    app.dependency_overrides.clear()
+
+
+def test_update_accrual_plan_guard_maps_to_422() -> None:
+    app.dependency_overrides[get_ledger_service] = StubLedgerService
+    client = TestClient(app)
+    response = client.patch("/accrual-plans/1", json={"name": "Updated"})
+    assert response.status_code == 422
+    assert "force_override=true" in response.json()["detail"]
+    app.dependency_overrides.clear()
+
+
+def test_preview_accrual_plan_weekly_rejects_business_day_adjust() -> None:
+    app.dependency_overrides[get_ledger_service] = StubLedgerService
+    client = TestClient(app)
+    response = client.post(
+        "/accrual-plans/preview",
+        json={
+            "name": "Weekly Plan",
+            "direction": "revenue",
+            "party_id": 1,
+            "target_account_id": 2,
+            "bridge_account_id": 1,
+            "frequency": "weekly",
+            "start_date": "2026-01-01",
+            "end_date": "2026-03-31",
+            "amount": "100.00",
+            "summary_template": "{plan} {month}",
+            "day_of_week": 0,
+            "business_day_adjust": True,
+        },
+    )
     assert response.status_code == 422
     app.dependency_overrides.clear()

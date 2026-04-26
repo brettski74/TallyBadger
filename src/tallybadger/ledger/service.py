@@ -1,5 +1,7 @@
 from collections import defaultdict
 from collections.abc import Callable
+from datetime import date, timedelta
+import calendar
 from contextlib import AbstractContextManager
 from decimal import Decimal
 
@@ -12,6 +14,10 @@ from tallybadger.ledger.models import (
     AccountOut,
     AccountLedgerLineOut,
     AccountUpdate,
+    AccrualPlanCreate,
+    AccrualPlanOut,
+    AccrualPlanUpdate,
+    AccrualPreviewItem,
     PartyCreate,
     PartyOut,
     PartyUpdate,
@@ -206,6 +212,158 @@ class LedgerService:
             except errors.UniqueViolation as exc:
                 raise LedgerConflictError("account name already exists") from exc
         return AccountOut.model_validate(row)
+
+    def list_accrual_plans(self) -> list[AccrualPlanOut]:
+        with self._connection_factory() as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(
+                    """
+                    SELECT id, name, direction, party_id, target_account_id, bridge_account_id,
+                           frequency, start_date, end_date, amount, summary_template, description_template,
+                           day_of_week, day_of_month, month_of_year, business_day_adjust,
+                           created_at, updated_at
+                    FROM accrual_plans
+                    ORDER BY created_at DESC, id DESC
+                    """
+                )
+                rows = cur.fetchall()
+        return [AccrualPlanOut.model_validate(row) for row in rows]
+
+    def preview_accrual_plan(
+        self, payload: AccrualPlanCreate
+    ) -> list[AccrualPreviewItem]:
+        dates = self._build_frequency_dates(payload)
+        return [self._preview_item_from_payload(payload, dt) for dt in dates]
+
+    def create_accrual_plan(self, payload: AccrualPlanCreate) -> AccrualPlanOut:
+        preview = self.preview_accrual_plan(payload)
+        if not preview:
+            raise LedgerValidationError("plan frequency produced no entries in the date range")
+
+        with self._connection_factory() as conn:
+            with conn.transaction():
+                with conn.cursor(row_factory=dict_row) as cur:
+                    self._assert_all_plan_references_exist(cur, payload)
+                    self._assert_plan_account_direction_rules(cur, payload)
+                    cur.execute(
+                        """
+                        INSERT INTO accrual_plans (
+                            name, direction, party_id, target_account_id, bridge_account_id,
+                            frequency, start_date, end_date, amount, summary_template, description_template,
+                            day_of_week, day_of_month, month_of_year, business_day_adjust
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        RETURNING id, name, direction, party_id, target_account_id, bridge_account_id,
+                                  frequency, start_date, end_date, amount, summary_template, description_template,
+                                  day_of_week, day_of_month, month_of_year, business_day_adjust,
+                                  created_at, updated_at
+                        """,
+                        (
+                            payload.name.strip(),
+                            payload.direction,
+                            payload.party_id,
+                            payload.target_account_id,
+                            payload.bridge_account_id,
+                            payload.frequency,
+                            payload.start_date,
+                            payload.end_date,
+                            payload.amount,
+                            payload.summary_template.strip(),
+                            payload.description_template,
+                            payload.day_of_week,
+                            payload.day_of_month,
+                            payload.month_of_year,
+                            payload.business_day_adjust,
+                        ),
+                    )
+                    plan_row = cur.fetchone()
+                    plan_id = plan_row["id"]
+                    for item in preview:
+                        cur.execute(
+                            """
+                            INSERT INTO journal_entries (entry_date, summary, description, accrual_plan_id)
+                            VALUES (%s, %s, %s, %s)
+                            RETURNING id
+                            """,
+                            (item.entry_date, item.summary, item.description, plan_id),
+                        )
+                        entry_id = cur.fetchone()["id"]
+                        for line in item.lines:
+                            cur.execute(
+                                """
+                                INSERT INTO journal_lines (entry_id, account_id, party_id, amount)
+                                VALUES (%s, %s, %s, %s)
+                                """,
+                                (entry_id, line.account_id, line.party_id, line.amount),
+                            )
+        return AccrualPlanOut.model_validate(plan_row)
+
+    def update_accrual_plan(self, plan_id: int, payload: AccrualPlanUpdate) -> AccrualPlanOut:
+        if (
+            payload.name is None
+            and payload.end_date is None
+            and payload.amount is None
+            and payload.summary_template is None
+            and payload.description_template is None
+        ):
+            raise LedgerValidationError("at least one plan field must be updated")
+
+        with self._connection_factory() as conn:
+            with conn.transaction():
+                with conn.cursor(row_factory=dict_row) as cur:
+                    if not payload.force_override:
+                        cur.execute(
+                            """
+                            SELECT 1
+                            FROM journal_entries
+                            WHERE accrual_plan_id = %s
+                              AND entry_date <= CURRENT_DATE
+                            LIMIT 1
+                            """,
+                            (plan_id,),
+                        )
+                        if cur.fetchone():
+                            raise LedgerValidationError(
+                                "plan has already posted entries; pass force_override=true to update"
+                            )
+
+                    updates: list[str] = []
+                    params: list[object] = []
+                    if payload.name is not None:
+                        updates.append("name = %s")
+                        params.append(payload.name.strip())
+                    if payload.end_date is not None:
+                        updates.append("end_date = %s")
+                        params.append(payload.end_date)
+                    if payload.amount is not None:
+                        if payload.amount <= Decimal("0"):
+                            raise LedgerValidationError("amount must be positive")
+                        updates.append("amount = %s")
+                        params.append(payload.amount)
+                    if payload.summary_template is not None:
+                        updates.append("summary_template = %s")
+                        params.append(payload.summary_template.strip())
+                    if payload.description_template is not None:
+                        updates.append("description_template = %s")
+                        params.append(payload.description_template)
+                    params.append(plan_id)
+
+                    cur.execute(
+                        f"""
+                        UPDATE accrual_plans
+                        SET {", ".join(updates)}, updated_at = NOW()
+                        WHERE id = %s
+                        RETURNING id, name, direction, party_id, target_account_id, bridge_account_id,
+                                  frequency, start_date, end_date, amount, summary_template, description_template,
+                                  day_of_week, day_of_month, month_of_year, business_day_adjust,
+                                  created_at, updated_at
+                        """,
+                        params,
+                    )
+                    row = cur.fetchone()
+                    if not row:
+                        raise LedgerNotFoundError(f"accrual plan {plan_id} not found")
+        return AccrualPlanOut.model_validate(row)
 
     def list_entries(
         self,
@@ -547,3 +705,122 @@ class LedgerService:
             raise LedgerValidationError(
                 f"party {party_id} is inactive; reactivate before posting"
             )
+
+    @staticmethod
+    def _safe_day(year: int, month: int, day_of_month: int) -> date:
+        last = calendar.monthrange(year, month)[1]
+        return date(year, month, min(day_of_month, last))
+
+    def _build_frequency_dates(self, payload: AccrualPlanCreate) -> list[date]:
+        out: list[date] = []
+        current = payload.start_date
+        while current <= payload.end_date:
+            candidate: date | None = None
+            if payload.frequency == "weekly":
+                delta = (payload.day_of_week - current.weekday()) % 7  # type: ignore[operator]
+                candidate = current + timedelta(days=delta)
+            elif payload.frequency == "monthly_day":
+                candidate = self._safe_day(current.year, current.month, payload.day_of_month)  # type: ignore[arg-type]
+            elif payload.frequency == "yearly":
+                candidate = self._safe_day(
+                    current.year,
+                    payload.month_of_year,  # type: ignore[arg-type]
+                    payload.day_of_month,  # type: ignore[arg-type]
+                )
+
+            if candidate and payload.business_day_adjust and payload.frequency in {
+                "monthly_day",
+                "yearly",
+            }:
+                candidate = self._roll_forward_weekend(candidate)
+
+            if candidate and payload.start_date <= candidate <= payload.end_date and candidate not in out:
+                out.append(candidate)
+
+            if payload.frequency == "weekly":
+                current += timedelta(days=7)
+            elif current.month == 12:
+                current = date(current.year + 1, 1, 1)
+            else:
+                current = date(current.year, current.month + 1, 1)
+
+        out.sort()
+        return out
+
+    @staticmethod
+    def _roll_forward_weekend(value: date) -> date:
+        if value.weekday() == 5:
+            return value + timedelta(days=2)
+        if value.weekday() == 6:
+            return value + timedelta(days=1)
+        return value
+
+    @staticmethod
+    def _render_template(template: str, entry_date: date, plan_name: str) -> str:
+        return (
+            template.replace("{date}", entry_date.isoformat())
+            .replace("{month}", entry_date.strftime("%Y-%m"))
+            .replace("{plan}", plan_name.strip())
+            .strip()
+        )
+
+    def _preview_item_from_payload(
+        self, payload: AccrualPlanCreate, entry_date: date
+    ) -> AccrualPreviewItem:
+        amount = payload.amount
+        if payload.direction == "revenue":
+            lines = [
+                {"account_id": payload.bridge_account_id, "party_id": payload.party_id, "amount": amount},
+                {"account_id": payload.target_account_id, "party_id": payload.party_id, "amount": -amount},
+            ]
+        else:
+            lines = [
+                {"account_id": payload.target_account_id, "party_id": payload.party_id, "amount": amount},
+                {"account_id": payload.bridge_account_id, "party_id": payload.party_id, "amount": -amount},
+            ]
+
+        description = None
+        if payload.description_template is not None:
+            description = self._render_template(payload.description_template, entry_date, payload.name)
+
+        return AccrualPreviewItem(
+            entry_date=entry_date,
+            summary=self._render_template(payload.summary_template, entry_date, payload.name),
+            description=description,
+            lines=lines,
+        )
+
+    @staticmethod
+    def _assert_all_plan_references_exist(cur, payload: AccrualPlanCreate) -> None:
+        cur.execute("SELECT id FROM parties WHERE id = %s", (payload.party_id,))
+        if not cur.fetchone():
+            raise LedgerValidationError("plan references unknown party")
+        cur.execute(
+            "SELECT id FROM accounts WHERE id = ANY(%s)",
+            ([payload.target_account_id, payload.bridge_account_id],),
+        )
+        found = {row["id"] for row in cur.fetchall()}
+        if payload.target_account_id not in found or payload.bridge_account_id not in found:
+            raise LedgerValidationError("plan references unknown account")
+
+    @staticmethod
+    def _assert_plan_account_direction_rules(cur, payload: AccrualPlanCreate) -> None:
+        cur.execute(
+            "SELECT id, type FROM accounts WHERE id = ANY(%s)",
+            ([payload.target_account_id, payload.bridge_account_id],),
+        )
+        by_id = {row["id"]: row["type"] for row in cur.fetchall()}
+        bridge_type = by_id.get(payload.bridge_account_id)
+        target_type = by_id.get(payload.target_account_id)
+        if bridge_type is None or target_type is None:
+            raise LedgerValidationError("plan references unknown account")
+        if payload.direction == "revenue":
+            if target_type != "revenue":
+                raise LedgerValidationError("revenue plan target account must be type revenue")
+            if bridge_type != "asset":
+                raise LedgerValidationError("revenue plan bridge account must be type asset (A/R)")
+        else:
+            if target_type != "expense":
+                raise LedgerValidationError("expense plan target account must be type expense")
+            if bridge_type != "liability":
+                raise LedgerValidationError("expense plan bridge account must be type liability (A/P)")

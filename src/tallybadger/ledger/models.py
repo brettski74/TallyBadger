@@ -2,10 +2,12 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 AccountType = Literal["asset", "liability", "equity", "revenue", "expense"]
 PartyRole = Literal["customer", "vendor", "both", "other"]
+AccrualDirection = Literal["revenue", "expense"]
+AccrualFrequency = Literal["weekly", "monthly_day", "yearly"]
 
 
 class AccountCreate(BaseModel):
@@ -112,3 +114,85 @@ class AccountLedgerLineOut(BaseModel):
     entry_date: date
     description: str | None
     amount: Decimal
+
+
+class AccrualPlanWrite(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    direction: AccrualDirection
+    party_id: int = Field(gt=0)
+    target_account_id: int = Field(gt=0)
+    bridge_account_id: int = Field(gt=0)
+    frequency: AccrualFrequency
+    start_date: date
+    end_date: date
+    amount: Decimal
+    summary_template: str = Field(min_length=1, max_length=200)
+    description_template: str | None = Field(default=None, max_length=500)
+    day_of_week: int | None = Field(default=None, ge=0, le=6)
+    day_of_month: int | None = Field(default=None, ge=1, le=31)
+    month_of_year: int | None = Field(default=None, ge=1, le=12)
+    business_day_adjust: bool = False
+
+    @model_validator(mode="after")
+    def validate_frequency_shape(self) -> "AccrualPlanWrite":
+        if self.end_date < self.start_date:
+            raise ValueError("end_date must be on or after start_date")
+        if self.amount <= Decimal("0"):
+            raise ValueError("amount must be positive")
+
+        if self.frequency == "weekly":
+            if self.day_of_week is None:
+                raise ValueError("weekly frequency requires day_of_week")
+            if self.business_day_adjust:
+                raise ValueError("business_day_adjust is only supported for monthly/yearly frequencies")
+        elif self.frequency == "monthly_day":
+            if self.day_of_month is None:
+                raise ValueError("monthly_day frequency requires day_of_month")
+        elif self.frequency == "yearly":
+            if self.month_of_year is None or self.day_of_month is None:
+                raise ValueError("yearly frequency requires month_of_year and day_of_month")
+
+        return self
+
+
+class AccrualPlanCreate(AccrualPlanWrite):
+    pass
+
+
+class AccrualPlanUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    end_date: date | None = None
+    amount: Decimal | None = None
+    summary_template: str | None = Field(default=None, min_length=1, max_length=200)
+    description_template: str | None = Field(default=None, max_length=500)
+    force_override: bool = False
+
+
+class AccrualPlanOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    direction: AccrualDirection
+    party_id: int
+    target_account_id: int
+    bridge_account_id: int
+    frequency: AccrualFrequency
+    start_date: date
+    end_date: date
+    amount: Decimal
+    summary_template: str
+    description_template: str | None
+    day_of_week: int | None
+    day_of_month: int | None
+    month_of_year: int | None
+    business_day_adjust: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class AccrualPreviewItem(BaseModel):
+    entry_date: date
+    summary: str
+    description: str | None
+    lines: list[JournalLineIn]

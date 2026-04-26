@@ -3,7 +3,7 @@ PIP := .venv/bin/pip
 PYTEST := .venv/bin/pytest
 UVICORN := .venv/bin/uvicorn
 
-.PHONY: help venv install test test-integration run up down restart status logs frontend-install frontend-dev frontend-test db-up db-down db-migrate db-migrate-local
+.PHONY: help venv install test test-integration run up down restart status logs frontend-install frontend-dev frontend-test db-up db-down db-migrate db-migrate-local dbclean
 
 help:
 	@echo "Available targets:"
@@ -23,6 +23,7 @@ help:
 	@echo "  make db-up     Start Postgres via Docker Compose"
 	@echo "  make db-down   Stop Docker Compose services"
 	@echo "  make db-migrate Apply SQL migrations to configured DB"
+	@echo "  make dbclean   Recreate local DB volume and reapply migrations"
 
 venv:
 	python -m venv .venv
@@ -73,4 +74,9 @@ db-migrate-local: db-up
 	PYTHONPATH=src $(PYTHON) -m tallybadger.db_migrations
 
 db-migrate:
+	PYTHONPATH=src $(PYTHON) -m tallybadger.db_migrations
+
+dbclean:
+	docker compose down -v
+	docker compose up -d db
 	PYTHONPATH=src $(PYTHON) -m tallybadger.db_migrations

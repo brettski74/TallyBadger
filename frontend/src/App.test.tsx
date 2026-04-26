@@ -10,7 +10,7 @@ afterEach(() => {
 
 function mockFetchImplementation(handlers: Array<(input: RequestInfo | URL, init?: RequestInit) => Response>) {
   let call = 0;
-  vi.spyOn(global, "fetch").mockImplementation(async (input, init) => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
     const handler = handlers[Math.min(call, handlers.length - 1)];
     call += 1;
     return handler(input, init);
@@ -117,5 +117,19 @@ describe("App", () => {
 
     expect(await screen.findByRole("heading", { name: "Create party" })).toBeInTheDocument();
     expect(screen.getByText("Acme Yard Maintenance")).toBeInTheDocument();
+  });
+
+  it("shows accrual plans tab and loads plans list", async () => {
+    mockFetchImplementation([
+      () => new Response(JSON.stringify([]), { status: 200 }),
+      () => new Response(JSON.stringify([]), { status: 200 }),
+      () => new Response(JSON.stringify([]), { status: 200 }),
+    ]);
+
+    render(<App />);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Accrual plans" }));
+
+    expect(await screen.findByRole("heading", { name: "Accrual plans" })).toBeInTheDocument();
   });
 });
