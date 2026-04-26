@@ -16,7 +16,10 @@ from tallybadger.ledger.models import (
     AccrualPlanUpdate,
     JournalEntryWrite,
     JournalLineIn,
+    LedgerSettingsUpdate,
     PartyCreate,
+    SettlementAllocationIn,
+    SettlementWrite,
 )
 from tallybadger.ledger.service import (
     JOURNAL_LIST_SPLIT_LABEL,
@@ -25,6 +28,16 @@ from tallybadger.ledger.service import (
 )
 
 pytestmark = pytest.mark.integration
+
+
+def _ensure_ledger_settings_row(integration_db_url: str) -> None:
+    """TRUNCATE ... CASCADE may remove ledger_settings; settlement tests need row id=1."""
+    with connect(integration_db_url) as conn:
+        with conn.transaction():
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO ledger_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING"
+                )
 
 
 @pytest.fixture(scope="session")
@@ -309,3 +322,339 @@ def test_accrual_plan_create_and_guarded_update(ledger_service: LedgerService) -
             plan.id,
             AccrualPlanUpdate(name="Revised rent plan"),
         )
+
+
+def test_early_receipt_settlement_reclasses_accrual_ar_to_unearned(
+    ledger_service: LedgerService,
+    integration_db_url: str,
+) -> None:
+    _ensure_ledger_settings_row(integration_db_url)
+    cash = ledger_service.create_account(AccountCreate(name="Cash", type="asset"))
+    ar = ledger_service.create_account(AccountCreate(name="Accounts Receivable", type="asset"))
+    rent = ledger_service.create_account(AccountCreate(name="Rent Revenue", type="revenue"))
+    ur = ledger_service.create_account(AccountCreate(name="Unearned Revenue", type="liability"))
+
+    ledger_service.update_ledger_settings(
+        LedgerSettingsUpdate(
+            accounts_receivable_account_id=ar.id,
+            unearned_revenue_account_id=ur.id,
+        )
+    )
+
+    party = ledger_service.create_party(
+        PartyCreate(name="Acme Yard Maintenance", role="customer", is_active=True)
+    )
+
+    ledger_service.create_accrual_plan(
+        AccrualPlanCreate(
+            name="Rent 2026-07",
+            direction="revenue",
+            party_id=party.id,
+            target_account_id=rent.id,
+            bridge_account_id=ar.id,
+            frequency="monthly_day",
+            start_date=date(2026, 7, 1),
+            end_date=date(2026, 7, 31),
+            amount=Decimal("1500.00"),
+            summary_template="{plan}",
+            day_of_month=1,
+        )
+    )
+
+    open_obs = ledger_service.list_open_obligations(party.id)
+    assert len(open_obs) == 1
+    ob = open_obs[0]
+    assert ob.source_line_id is not None
+    accrual_entry_id = ob.source_entry_id
+    assert accrual_entry_id is not None
+
+    result = ledger_service.record_settlement(
+        SettlementWrite(
+            party_id=party.id,
+            settlement_type="receipt",
+            event_date=date(2026, 6, 26),
+            amount=Decimal("1500.00"),
+            cash_account_id=cash.id,
+            allocations=[
+                SettlementAllocationIn(obligation_id=ob.id, amount=Decimal("1500.00")),
+            ],
+            note="early rent",
+        )
+    )
+
+    settle_entry = ledger_service.get_entry(result.entry_id)
+    assert settle_entry.summary == "Settlement Rent 2026-07"
+
+    accrual_entry = ledger_service.get_entry(accrual_entry_id)
+    account_ids = {line.account_id for line in accrual_entry.lines}
+    assert ar.id not in account_ids
+    assert ur.id in account_ids
+    assert rent.id in account_ids
+
+
+def test_partial_early_receipt_splits_accrual_bridge_between_ur_and_ar(
+    ledger_service: LedgerService,
+    integration_db_url: str,
+) -> None:
+    _ensure_ledger_settings_row(integration_db_url)
+    cash = ledger_service.create_account(AccountCreate(name="Cash", type="asset"))
+    ar = ledger_service.create_account(AccountCreate(name="Accounts Receivable", type="asset"))
+    rent = ledger_service.create_account(AccountCreate(name="Rent Revenue", type="revenue"))
+    ur = ledger_service.create_account(AccountCreate(name="Unearned Revenue", type="liability"))
+
+    ledger_service.update_ledger_settings(
+        LedgerSettingsUpdate(
+            accounts_receivable_account_id=ar.id,
+            unearned_revenue_account_id=ur.id,
+        )
+    )
+
+    party = ledger_service.create_party(
+        PartyCreate(name="Acme Yard Maintenance", role="customer", is_active=True)
+    )
+
+    ledger_service.create_accrual_plan(
+        AccrualPlanCreate(
+            name="Rent increase month",
+            direction="revenue",
+            party_id=party.id,
+            target_account_id=rent.id,
+            bridge_account_id=ar.id,
+            frequency="monthly_day",
+            start_date=date(2026, 7, 1),
+            end_date=date(2026, 7, 31),
+            amount=Decimal("1500.00"),
+            summary_template="{plan}",
+            day_of_month=1,
+        )
+    )
+
+    open_obs = ledger_service.list_open_obligations(party.id)
+    ob = open_obs[0]
+    accrual_entry_id = ob.source_entry_id
+    assert accrual_entry_id is not None
+
+    result = ledger_service.record_settlement(
+        SettlementWrite(
+            party_id=party.id,
+            settlement_type="receipt",
+            event_date=date(2026, 6, 26),
+            amount=Decimal("500.00"),
+            cash_account_id=cash.id,
+            allocations=[
+                SettlementAllocationIn(obligation_id=ob.id, amount=Decimal("500.00")),
+            ],
+            note="old rent amount before increase notice",
+        )
+    )
+
+    assert ledger_service.get_entry(result.entry_id).summary == "Settlement Rent increase month"
+
+    accrual_entry = ledger_service.get_entry(accrual_entry_id)
+    assert len(accrual_entry.lines) == 3
+    by_account = {line.account_id: line.amount for line in accrual_entry.lines}
+    assert by_account[ur.id] == Decimal("500.00")
+    assert by_account[ar.id] == Decimal("1000.00")
+    assert by_account[rent.id] == Decimal("-1500.00")
+
+    still_open = ledger_service.list_open_obligations(party.id)
+    assert len(still_open) == 1
+    assert still_open[0].open_amount == Decimal("1000.00")
+
+
+def _journal_entry_count(integration_db_url: str) -> int:
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute("SELECT COUNT(*) AS c FROM journal_entries")
+            return int(cur.fetchone()["c"])
+
+
+def test_same_day_full_receipt_collapses_into_accrual_entry(
+    ledger_service: LedgerService,
+    integration_db_url: str,
+) -> None:
+    _ensure_ledger_settings_row(integration_db_url)
+    cash = ledger_service.create_account(AccountCreate(name="Cash", type="asset"))
+    ar = ledger_service.create_account(AccountCreate(name="Accounts Receivable", type="asset"))
+    rent = ledger_service.create_account(AccountCreate(name="Rent Revenue", type="revenue"))
+    ur = ledger_service.create_account(AccountCreate(name="Unearned Revenue", type="liability"))
+
+    ledger_service.update_ledger_settings(
+        LedgerSettingsUpdate(
+            accounts_receivable_account_id=ar.id,
+            unearned_revenue_account_id=ur.id,
+        )
+    )
+
+    party = ledger_service.create_party(
+        PartyCreate(name="Acme Yard Maintenance", role="customer", is_active=True)
+    )
+
+    ledger_service.create_accrual_plan(
+        AccrualPlanCreate(
+            name="July rent",
+            direction="revenue",
+            party_id=party.id,
+            target_account_id=rent.id,
+            bridge_account_id=ar.id,
+            frequency="monthly_day",
+            start_date=date(2026, 7, 1),
+            end_date=date(2026, 7, 31),
+            amount=Decimal("1500.00"),
+            summary_template="{plan}",
+            day_of_month=1,
+        )
+    )
+
+    assert _journal_entry_count(integration_db_url) == 1
+    ob = ledger_service.list_open_obligations(party.id)[0]
+    accrual_entry_id = ob.source_entry_id
+    assert accrual_entry_id is not None
+
+    result = ledger_service.record_settlement(
+        SettlementWrite(
+            party_id=party.id,
+            settlement_type="receipt",
+            event_date=date(2026, 7, 1),
+            amount=Decimal("1500.00"),
+            cash_account_id=cash.id,
+            allocations=[
+                SettlementAllocationIn(obligation_id=ob.id, amount=Decimal("1500.00")),
+            ],
+            note=None,
+        )
+    )
+
+    assert _journal_entry_count(integration_db_url) == 1
+    assert result.entry_id == accrual_entry_id
+
+    entry = ledger_service.get_entry(accrual_entry_id)
+    assert not any(line.account_id == ar.id for line in entry.lines)
+    assert sum(line.amount for line in entry.lines if line.account_id == cash.id) == Decimal("1500.00")
+    assert sum(line.amount for line in entry.lines if line.account_id == rent.id) == Decimal("-1500.00")
+
+
+def test_same_day_partial_receipt_adds_cash_on_accrual_entry(
+    ledger_service: LedgerService,
+    integration_db_url: str,
+) -> None:
+    _ensure_ledger_settings_row(integration_db_url)
+    cash = ledger_service.create_account(AccountCreate(name="Cash", type="asset"))
+    ar = ledger_service.create_account(AccountCreate(name="Accounts Receivable", type="asset"))
+    rent = ledger_service.create_account(AccountCreate(name="Rent Revenue", type="revenue"))
+    ur = ledger_service.create_account(AccountCreate(name="Unearned Revenue", type="liability"))
+
+    ledger_service.update_ledger_settings(
+        LedgerSettingsUpdate(
+            accounts_receivable_account_id=ar.id,
+            unearned_revenue_account_id=ur.id,
+        )
+    )
+
+    party = ledger_service.create_party(
+        PartyCreate(name="Acme Yard Maintenance", role="customer", is_active=True)
+    )
+
+    ledger_service.create_accrual_plan(
+        AccrualPlanCreate(
+            name="July rent partial",
+            direction="revenue",
+            party_id=party.id,
+            target_account_id=rent.id,
+            bridge_account_id=ar.id,
+            frequency="monthly_day",
+            start_date=date(2026, 7, 1),
+            end_date=date(2026, 7, 31),
+            amount=Decimal("1500.00"),
+            summary_template="{plan}",
+            day_of_month=1,
+        )
+    )
+
+    ob = ledger_service.list_open_obligations(party.id)[0]
+    accrual_entry_id = ob.source_entry_id
+    assert accrual_entry_id is not None
+
+    ledger_service.record_settlement(
+        SettlementWrite(
+            party_id=party.id,
+            settlement_type="receipt",
+            event_date=date(2026, 7, 1),
+            amount=Decimal("500.00"),
+            cash_account_id=cash.id,
+            allocations=[
+                SettlementAllocationIn(obligation_id=ob.id, amount=Decimal("500.00")),
+            ],
+            note=None,
+        )
+    )
+
+    assert _journal_entry_count(integration_db_url) == 1
+    entry = ledger_service.get_entry(accrual_entry_id)
+    by_account = {line.account_id: line.amount for line in entry.lines}
+    assert by_account[ar.id] == Decimal("1000.00")
+    assert by_account[cash.id] == Decimal("500.00")
+    assert by_account[rent.id] == Decimal("-1500.00")
+
+
+def test_same_day_overpayment_adds_cash_and_unearned_on_accrual_entry(
+    ledger_service: LedgerService,
+    integration_db_url: str,
+) -> None:
+    _ensure_ledger_settings_row(integration_db_url)
+    cash = ledger_service.create_account(AccountCreate(name="Cash", type="asset"))
+    ar = ledger_service.create_account(AccountCreate(name="Accounts Receivable", type="asset"))
+    rent = ledger_service.create_account(AccountCreate(name="Rent Revenue", type="revenue"))
+    ur = ledger_service.create_account(AccountCreate(name="Unearned Revenue", type="liability"))
+
+    ledger_service.update_ledger_settings(
+        LedgerSettingsUpdate(
+            accounts_receivable_account_id=ar.id,
+            unearned_revenue_account_id=ur.id,
+        )
+    )
+
+    party = ledger_service.create_party(
+        PartyCreate(name="Acme Yard Maintenance", role="customer", is_active=True)
+    )
+
+    ledger_service.create_accrual_plan(
+        AccrualPlanCreate(
+            name="July rent over",
+            direction="revenue",
+            party_id=party.id,
+            target_account_id=rent.id,
+            bridge_account_id=ar.id,
+            frequency="monthly_day",
+            start_date=date(2026, 7, 1),
+            end_date=date(2026, 7, 31),
+            amount=Decimal("1500.00"),
+            summary_template="{plan}",
+            day_of_month=1,
+        )
+    )
+
+    ob = ledger_service.list_open_obligations(party.id)[0]
+    accrual_entry_id = ob.source_entry_id
+    assert accrual_entry_id is not None
+
+    ledger_service.record_settlement(
+        SettlementWrite(
+            party_id=party.id,
+            settlement_type="receipt",
+            event_date=date(2026, 7, 1),
+            amount=Decimal("2000.00"),
+            cash_account_id=cash.id,
+            allocations=[
+                SettlementAllocationIn(obligation_id=ob.id, amount=Decimal("1500.00")),
+            ],
+            note=None,
+        )
+    )
+
+    assert _journal_entry_count(integration_db_url) == 1
+    entry = ledger_service.get_entry(accrual_entry_id)
+    assert sum(line.amount for line in entry.lines if line.account_id == cash.id) == Decimal("2000.00")
+    assert sum(line.amount for line in entry.lines if line.account_id == ur.id) == Decimal("-500.00")
+    assert sum(line.amount for line in entry.lines if line.account_id == rent.id) == Decimal("-1500.00")
+    assert not any(line.account_id == ar.id for line in entry.lines)

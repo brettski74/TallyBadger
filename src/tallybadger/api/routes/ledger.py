@@ -9,16 +9,22 @@ from tallybadger.ledger.models import (
     AccountLedgerLineOut,
     AccountOut,
     AccountUpdate,
+    AccrualObligationOut,
     AccrualPlanCreate,
     AccrualPlanOut,
     AccrualPlanUpdate,
     AccrualPreviewItem,
+    LedgerSettingsOut,
+    LedgerSettingsUpdate,
+    ObligationStatusUpdate,
     PartyCreate,
     PartyOut,
     PartyUpdate,
     JournalEntryListItem,
     JournalEntryOut,
     JournalEntryWrite,
+    SettlementOut,
+    SettlementWrite,
 )
 from tallybadger.ledger.service import (
     LedgerConflictError,
@@ -146,6 +152,55 @@ def update_accrual_plan(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except LedgerConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except LedgerValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/ledger-settings", response_model=LedgerSettingsOut)
+def get_ledger_settings(service: LedgerService = Depends(get_ledger_service)) -> LedgerSettingsOut:
+    return service.get_ledger_settings()
+
+
+@router.patch("/ledger-settings", response_model=LedgerSettingsOut)
+def update_ledger_settings(
+    payload: LedgerSettingsUpdate,
+    service: LedgerService = Depends(get_ledger_service),
+) -> LedgerSettingsOut:
+    try:
+        return service.update_ledger_settings(payload)
+    except LedgerValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/obligations/{party_id}", response_model=list[AccrualObligationOut])
+def list_open_obligations(
+    party_id: int,
+    service: LedgerService = Depends(get_ledger_service),
+) -> list[AccrualObligationOut]:
+    return service.list_open_obligations(party_id)
+
+
+@router.patch("/obligations/{obligation_id}/status", response_model=AccrualObligationOut)
+def update_obligation_status(
+    obligation_id: int,
+    payload: ObligationStatusUpdate,
+    service: LedgerService = Depends(get_ledger_service),
+) -> AccrualObligationOut:
+    try:
+        return service.update_obligation_status(obligation_id, payload)
+    except LedgerNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except LedgerValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/settlements", response_model=SettlementOut, status_code=status.HTTP_201_CREATED)
+def create_settlement(
+    payload: SettlementWrite,
+    service: LedgerService = Depends(get_ledger_service),
+) -> SettlementOut:
+    try:
+        return service.record_settlement(payload)
     except LedgerValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 

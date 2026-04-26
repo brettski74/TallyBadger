@@ -3,7 +3,7 @@ PIP := .venv/bin/pip
 PYTEST := .venv/bin/pytest
 UVICORN := .venv/bin/uvicorn
 
-.PHONY: help venv install test test-integration run up down restart status logs frontend-install frontend-dev frontend-test db-up db-down db-migrate db-migrate-local dbclean
+.PHONY: help venv install test test-integration run up down restart status logs frontend-install frontend-dev frontend-test db-up db-down db-wait db-migrate db-migrate-local dbclean
 
 help:
 	@echo "Available targets:"
@@ -22,6 +22,7 @@ help:
 	@echo "  make frontend-test     Run frontend Vitest suite"
 	@echo "  make db-up     Start Postgres via Docker Compose"
 	@echo "  make db-down   Stop Docker Compose services"
+	@echo "  make db-wait   Wait for Postgres readiness"
 	@echo "  make db-migrate Apply SQL migrations to configured DB"
 	@echo "  make dbclean   Recreate local DB volume and reapply migrations"
 
@@ -70,7 +71,19 @@ db-up:
 db-down:
 	docker compose down
 
-db-migrate-local: db-up
+db-wait:
+	@echo "Waiting for Postgres to accept connections..."
+	@for i in $$(seq 1 30); do \
+		if docker compose exec -T db pg_isready -U tallybadger -d tallybadger >/dev/null 2>&1; then \
+			echo "Postgres is ready."; \
+			exit 0; \
+		fi; \
+		sleep 1; \
+	done; \
+	echo "Timed out waiting for Postgres readiness."; \
+	exit 1
+
+db-migrate-local: db-up db-wait
 	PYTHONPATH=src $(PYTHON) -m tallybadger.db_migrations
 
 db-migrate:
@@ -79,4 +92,5 @@ db-migrate:
 dbclean:
 	docker compose down -v
 	docker compose up -d db
+	$(MAKE) db-wait
 	PYTHONPATH=src $(PYTHON) -m tallybadger.db_migrations

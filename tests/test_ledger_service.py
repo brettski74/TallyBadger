@@ -295,3 +295,93 @@ def test_expense_plan_target_account_must_be_expense() -> None:
     )
     with pytest.raises(LedgerValidationError, match="type expense"):
         service._assert_plan_account_direction_rules(cur, payload)
+
+
+def test_settlement_journal_summary_uses_earliest_allocated_accrual() -> None:
+    allocation = {1: Decimal("10.00"), 2: Decimal("5.00")}
+    obligations = [
+        {
+            "id": 1,
+            "source_entry_id": 10,
+            "source_entry_date": date(2026, 2, 1),
+            "source_entry_summary": "Feb accrual",
+        },
+        {
+            "id": 2,
+            "source_entry_id": 20,
+            "source_entry_date": date(2026, 1, 1),
+            "source_entry_summary": "Jan accrual",
+        },
+    ]
+    assert (
+        LedgerService._settlement_journal_summary(obligations, allocation)
+        == "Settlement Jan accrual"
+    )
+
+
+def test_receipt_collapses_only_when_all_allocations_match_accrual_day() -> None:
+    allocation = {1: Decimal("1.00"), 2: Decimal("1.00")}
+    same = LedgerService._receipt_allocations_all_same_accrual_day(
+        [
+            {"id": 1, "source_entry_id": 10, "source_line_id": 100, "source_entry_date": date(2026, 7, 1)},
+            {"id": 2, "source_entry_id": 20, "source_line_id": 200, "source_entry_date": date(2026, 7, 1)},
+        ],
+        allocation,
+        date(2026, 7, 1),
+    )
+    assert same is True
+
+    mixed = LedgerService._receipt_allocations_all_same_accrual_day(
+        [
+            {"id": 1, "source_entry_id": 10, "source_line_id": 100, "source_entry_date": date(2026, 7, 1)},
+            {"id": 2, "source_entry_id": 20, "source_line_id": 200, "source_entry_date": date(2026, 6, 1)},
+        ],
+        allocation,
+        date(2026, 7, 1),
+    )
+    assert mixed is False
+
+    zero_skipped = LedgerService._receipt_allocations_all_same_accrual_day(
+        [
+            {"id": 1, "source_entry_id": 10, "source_line_id": 100, "source_entry_date": date(2026, 7, 2)},
+            {"id": 2, "source_entry_id": 20, "source_line_id": 200, "source_entry_date": date(2026, 7, 1)},
+        ],
+        {1: Decimal("0"), 2: Decimal("10.00")},
+        date(2026, 7, 1),
+    )
+    assert zero_skipped is True
+
+
+def test_settlement_journal_summary_tiebreaks_by_entry_id() -> None:
+    allocation = {1: Decimal("1.00"), 2: Decimal("1.00")}
+    obligations = [
+        {
+            "id": 1,
+            "source_entry_id": 50,
+            "source_entry_date": date(2026, 3, 1),
+            "source_entry_summary": "Later id",
+        },
+        {
+            "id": 2,
+            "source_entry_id": 40,
+            "source_entry_date": date(2026, 3, 1),
+            "source_entry_summary": "Earlier id",
+        },
+    ]
+    assert (
+        LedgerService._settlement_journal_summary(obligations, allocation)
+        == "Settlement Earlier id"
+    )
+
+
+def test_split_receipt_allocations_separates_due_and_early() -> None:
+    due, early = LedgerService._split_receipt_allocations(
+        date(2026, 1, 15),
+        [
+            {"id": 1, "source_entry_date": date(2026, 1, 1)},
+            {"id": 2, "source_entry_date": date(2026, 2, 1)},
+        ],
+        {1: Decimal("40.00"), 2: Decimal("60.00")},
+    )
+    assert due == Decimal("40.00")
+    assert early == Decimal("60.00")
