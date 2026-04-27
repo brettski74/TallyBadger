@@ -105,13 +105,14 @@ def _capture_entry(cap: CelRegexCapture, bag: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, "whole": m.group(0), "list": lst, "groups": groups}
 
 
-def _normalize_rule_output(result: Any) -> dict[str, Any] | None:
+def _normalize_rule_output(result: Any, rule_label: str) -> dict[str, Any] | None:
     py = _from_cel_value(result)
     if py is None:
         return None
     if not isinstance(py, dict):
-        # Spike behavior: anything not map means "no match"
-        return None
+        raise ImportRulesCelError(
+            f"CEL rule {rule_label} returned {type(py).__name__}; expected map/object or null",
+        )
     return py
 
 
@@ -149,7 +150,7 @@ def evaluate_cel(rule_set: CelRuleSet, attributes: dict[str, Any]) -> CelEvaluat
         except Exception as exc:  # celpy raises parser/runtime specific errors
             raise ImportRulesCelError(f"CEL rule {label} failed: {exc}") from exc
 
-        payload = _normalize_rule_output(out)
+        payload = _normalize_rule_output(out, label)
         if payload is None:
             trace.append(CelTraceEvent(event="rule_not_matched", detail={"rule": label}))
             continue

@@ -102,10 +102,10 @@ def test_regex_captures_available_in_expression() -> None:
     assert out.attributes["label"] == "2026-04-01 ACME Rent"
 
 
-def test_non_map_result_treated_as_no_match_in_spike() -> None:
+def test_non_map_result_is_error() -> None:
     rs = CelRuleSet(rules=[CelRule(expression="true")])
-    out = evaluate_cel(rs, {})
-    assert out.trace[-1].event == "rule_not_matched"
+    with pytest.raises(ImportRulesCelError, match="expected map/object or null"):
+        evaluate_cel(rs, {})
 
 
 def test_invalid_stop_type_raises() -> None:

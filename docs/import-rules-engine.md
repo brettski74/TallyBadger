@@ -8,12 +8,14 @@ This document describes **what is implemented today**: behaviour, API, JSON shap
 
 | Stage | Responsibility |
 |--------|------------------|
-| **Import template** (future UI / #9) | Map source columns → **canonical attribute names**; run **simple, deterministic conversions** (e.g. strip currency symbols, parse amounts to numbers, parse date strings to dates). Same logical field names and types across banks → **one rule set can be reused** with different templates. |
+| **Import template** (future UI / #9) | Map source columns → attribute names (these may be canonical **or** source-specific/ephemeral), plus simple deterministic conversions (e.g. strip currency symbols, parse amounts to numbers, parse date strings to dates). |
 | **Rules engine (#8)** | Take that **bag of attributes** (mixed types). **Match** rows and **enrich** them: regex captures, copies, numeric checks, ordered overwrites, `append_to_attribute` to build strings, etc. Output: **same bag shape**, larger or richer. |
 | **JE readiness** (later) | Check the bag for **everything needed** to build a journal entry; if incomplete, surface **missing fields** or hand off for user fix / drop. |
 | **Posting** | Create ledger entries from a complete bag (#10 / ledger). |
 
 The engine **does not** read CSV, own column mapping, or post journals. It only runs **`evaluate(rule_set, attributes)`**.
+
+Canonical JE fields can be provided directly by the import template, derived in rules, or both. In practice, the **combination** of template + rules should populate whatever canonical fields posting needs, and rules may use ephemeral attributes as intermediate inputs.
 
 ---
 
@@ -226,6 +228,7 @@ The expression should return either:
 
 - `null` -> treated as **no match**
 - map/object -> treated as **matched action payload**
+- anything else -> **error** (422 via `ImportRulesCelError`)
 
 Top-level reserved payload keys:
 
@@ -252,8 +255,14 @@ match[0]["ok"]
   : null
 ```
 
+### Why a regex capture pre-step exists
+
+With the current CEL runtime (`cel-python`), `matches()` is available for boolean regex checks, but capture-group extraction helpers are not exposed as convenient CEL functions. The pre-step gives expressions stable access to captures via `match`/`matches` without adding side-effectful custom CEL functions.
+
+If we later adopt a CEL runtime/functions package with robust capture extraction in-expression, this pre-step could be removed.
+
 ### Notes
 
-- In this spike, non-map/non-null expression results are treated as **no match**.
+- In this spike, non-map/non-null expression results are **errors**.
 - `stop/drop/review` must be null or string; other types return 422 via `ImportRulesCelError`.
 - `append_to_attribute` is not needed in CEL mode; string composition is done directly in expression.
