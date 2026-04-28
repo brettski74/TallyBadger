@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 
 class CelRegexCapture(BaseModel):
-    """Optional regex extraction step to expose capture groups to CEL as `match`."""
+    """Ordered regex step: must match for the rule to proceed; feeds `match`/`matches` in CEL."""
 
     attribute: str = Field(min_length=1)
     pattern: str = Field(min_length=1)

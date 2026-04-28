@@ -77,6 +77,69 @@ def test_drop_stops_and_sets_reason() -> None:
     assert out.attributes.get("x") is None
 
 
+def test_capture_failure_skips_cel_expression() -> None:
+    rs = CelRuleSet(
+        rules=[
+            CelRule(
+                id="gated",
+                captures=[
+                    CelRegexCapture(
+                        attribute="description",
+                        pattern=r"WILL_NOT_MATCH",
+                    ),
+                ],
+                expression='{"set":{"expression_ran": true}}',
+            ),
+        ],
+    )
+    out = evaluate_cel(rs, {"description": "plain text"})
+    assert out.attributes.get("expression_ran") is None
+    assert any(
+        t.event == "rule_not_matched" and t.detail.get("reason") == "capture_failed"
+        for t in out.trace
+    )
+
+
+def test_second_capture_failure_skips_expression_short_circuits() -> None:
+    rs = CelRuleSet(
+        rules=[
+            CelRule(
+                captures=[
+                    CelRegexCapture(attribute="a", pattern=r"^ok$"),
+                    CelRegexCapture(attribute="b", pattern=r"^NO$"),
+                ],
+                expression='{"set":{"ran": true}}',
+            ),
+        ],
+    )
+    out = evaluate_cel(rs, {"a": "ok", "b": "nope"})
+    assert out.attributes.get("ran") is None
+    failed = [
+        t.detail
+        for t in out.trace
+        if t.event == "rule_not_matched" and t.detail.get("reason") == "capture_failed"
+    ]
+    assert any(d.get("capture_index") == 1 for d in failed)
+
+
+def test_two_captures_both_must_succeed_before_expression() -> None:
+    rs = CelRuleSet(
+        rules=[
+            CelRule(
+                captures=[
+                    CelRegexCapture(attribute="x", pattern=r"1"),
+                    CelRegexCapture(attribute="y", pattern=r"2"),
+                ],
+                expression=(
+                    '{"set":{"combined": match[0]["whole"] + "-" + match[1]["whole"]}}'
+                ),
+            ),
+        ],
+    )
+    out = evaluate_cel(rs, {"x": "a1b", "y": "c2d"})
+    assert out.attributes["combined"] == "1-2"
+
+
 def test_regex_captures_available_in_expression() -> None:
     rs = CelRuleSet(
         rules=[
@@ -88,8 +151,8 @@ def test_regex_captures_available_in_expression() -> None:
                     ),
                 ],
                 expression=(
-                    'match[0]["ok"] ? {"set":{"party_name_hint": match[0]["groups"]["sender"],'
-                    '"label": string(attributes["posted_on"]) + " " + match[0]["groups"]["sender"] + " Rent"}} : null'
+                    '{"set":{"party_name_hint": match[0]["groups"]["sender"],'
+                    '"label": string(attributes["posted_on"]) + " " + match[0]["groups"]["sender"] + " Rent"}}'
                 ),
             ),
         ],

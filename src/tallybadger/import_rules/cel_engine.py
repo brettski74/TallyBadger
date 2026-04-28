@@ -136,7 +136,29 @@ def evaluate_cel(rule_set: CelRuleSet, attributes: dict[str, Any]) -> CelEvaluat
             continue
         trace.append(CelTraceEvent(event="rule_tried", detail={"rule": label}))
 
-        match_ctx = [_capture_entry(c, bag) for c in rule.captures]
+        match_ctx: list[dict[str, Any]] = []
+        capture_failed = False
+        for cap_index, cap in enumerate(rule.captures):
+            entry = _capture_entry(cap, bag)
+            if not entry["ok"]:
+                trace.append(
+                    CelTraceEvent(
+                        event="rule_not_matched",
+                        detail={
+                            "rule": label,
+                            "reason": "capture_failed",
+                            "capture_index": cap_index,
+                            "attribute": cap.attribute,
+                        },
+                    )
+                )
+                capture_failed = True
+                break
+            match_ctx.append(entry)
+
+        if capture_failed:
+            continue
+
         activation = {
             "attributes": _to_cel_value(bag),
             "attr": _to_cel_value(bag),

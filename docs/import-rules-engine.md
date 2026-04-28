@@ -210,7 +210,7 @@ assert out.attributes["amount"] == Decimal("10.00")
 
 ## CEL spike (alternative rule model)
 
-There is now a **spike implementation** that models each rule as one CEL expression, with optional regex capture pre-step:
+There is now a **spike implementation** that models each rule as one CEL expression, with optional ordered **capture** (regex) steps:
 
 - Engine: `src/tallybadger/import_rules/cel_engine.py`
 - Models: `src/tallybadger/import_rules/cel_models.py`
@@ -222,7 +222,7 @@ There is now a **spike implementation** that models each rule as one CEL express
 Each rule has:
 
 - `expression`: CEL expression
-- optional `captures`: list of regex specs to precompute `match`/`matches` activation values
+- optional `captures`: ordered list of regex specs; see [Capture gating](#capture-gating-spike) below.
 
 The expression should return either:
 
@@ -239,27 +239,70 @@ Top-level reserved payload keys:
 
 This reflects the compromise design: control flags are top-level; mutable attributes are namespaced under `set`.
 
+### Capture gating (spike)
+
+For each rule, **`captures` are evaluated in list order** (short-circuit):
+
+1. Run `re.search(pattern, str(attributes[attribute]), flags)` for `captures[0]`, then `captures[1]`, and so on.
+2. On the **first** capture that does **not** match, stop: **do not** run further captures for this rule, **do not** run the CEL expression, and treat the rule as **no match** (`rule_not_matched` in the trace, with `reason: capture_failed` and the failing index).
+3. If **every** capture matches (or `captures` is **empty**), build `match` / `matches` from those results and **then** evaluate `expression`.
+
+So when the CEL program runs, **every** `match[i]` corresponds to a successful capture; **`ok` is always `true`**. (The `ok` field remains in the shape for clarity and tooling.)
+
+### Activation context schema (spike)
+
+Each CEL rule is evaluated with an **activation** map. Keys are fixed; values are what `cel-python` sees (strings, numbers, lists, maps).
+
+| Key | Type | Meaning |
+|-----|------|---------|
+| `attributes` | map | Current attribute bag (same content as `attr`). |
+| `attr` | map | Alias of `attributes` (shorter access in expressions). |
+| `match` | list | Precomputed regex results; **one element per** `captures[]` entry **in order**. |
+| `matches` | list | Same as `match` (alias). |
+
+**`match[i]`** (one object per `rule.captures[i]`):
+
+```json
+{
+  "ok": true,
+  "whole": "<full regex match or null if no match>",
+  "list": ["<whole match>", "<group 1>", "<group 2>", "..."],
+  "groups": { "named_group": "<capture text>", "...": "..." }
+}
+```
+
+Semantics:
+
+- **`ok`** — `true` if `re.search(pattern, str(attribute_value), flags)` matched; otherwise `false`.
+- **`whole`** — Full match text when `ok` is `true`; **`null`** when `ok` is `false`.
+- **`list`** — When `ok` is `true`: index **`0`** is the whole match (same as `whole`); indices **`1`…`n`** are **positional** capture groups **1…n** in pattern order. When `ok` is `false`: **`[]`**.
+- **`groups`** — Only **named** capture groups from the pattern; omitted keys are not present. Values are capture strings. When `ok` is `false`: **`{}`**.
+
+Index **`i`** in `match` always corresponds to **`captures[i]`** on that rule (same order as the `captures` array in the rule definition). If the expression is evaluated at all, **all** of those captures succeeded.
+
 ### Example CEL expression
 
+After captures succeed, you only need to branch inside CEL when the **payload** should be conditional (e.g. amount threshold). A failed regex no longer requires `match[i]["ok"]` checks—that case never reaches the expression.
+
 ```cel
-match[0]["ok"]
-  ? {
-      "set": {
-        "party_name_hint": match[0]["groups"]["sender"],
-        "label": string(attributes["posted_on"]) + " " + match[0]["groups"]["sender"] + " Rent"
-      },
-      "review": "confirm sender match",
-      "stop": null,
-      "drop": null
-    }
+attributes["amount"] > 0 ?
+  {
+    "set": {
+      "party_name_hint": match[0]["groups"]["sender"],
+      "label": string(attributes["posted_on"]) + " " + match[0]["groups"]["sender"] + " Rent"
+    },
+    "review": "confirm sender match",
+    "stop": null,
+    "drop": null
+  }
   : null
 ```
 
-### Why a regex capture pre-step exists
+### Why ordered captures exist (not in-expression regex)
 
-With the current CEL runtime (`cel-python`), `matches()` is available for boolean regex checks, but capture-group extraction helpers are not exposed as convenient CEL functions. The pre-step gives expressions stable access to captures via `match`/`matches` without adding side-effectful custom CEL functions.
+With the current CEL runtime (`cel-python`), `matches()` is available for boolean regex checks, but capture-group extraction helpers are not exposed as convenient CEL functions. Ordered captures give expressions stable access to groups via `match`/`matches` without side-effectful custom CEL functions, and **gate** the rule so the common case (regex must match) does not require boilerplate in the expression.
 
-If we later adopt a CEL runtime/functions package with robust capture extraction in-expression, this pre-step could be removed.
+If we later adopt a CEL runtime with robust capture extraction in-expression, captures could become optional sugar; gating semantics would still match user expectations.
 
 ### Notes
 
