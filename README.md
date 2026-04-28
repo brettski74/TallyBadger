@@ -4,7 +4,7 @@ Double-entry accounting for a **small set of rental properties**: journals, char
 
 **Stack today:** Python 3.11+, [FastAPI](https://fastapi.tiangolo.com/), PostgreSQL, Docker Compose, and a React + TypeScript + Vite frontend under `frontend/`.
 
-**Not built yet (honest inventory):** auth, bank CSV ingestion, MCP tools, and simplified non-accountant flows (#7).
+**Not built yet (honest inventory):** auth, bank CSV ingestion end-to-end, MCP tools, and simplified non-accountant flows. Settlements / accrual obligations ([#7](https://github.com/brettski74/TallyBadger/issues/7)) and a **first pass** of the **import rules engine** ([#8](https://github.com/brettski74/TallyBadger/issues/8)) are in the codebase—see **`docs/import-rules-engine.md`** for #8 scope, API, and gaps.
 
 ---
 
@@ -14,10 +14,11 @@ Double-entry accounting for a **small set of rental properties**: journals, char
 |------|--------|
 | API shell | FastAPI app with `/`, `/health`, OpenAPI at `/docs` when running |
 | Config | `tallybadger.core.config.Settings` — `TALLYBADGER_DATABASE_URL` (see below) |
-| Database | PostgreSQL in Compose; `sql/002_ledger_mvp.sql` adds accounts + journal tables |
-| Tests | `pytest` + `TestClient` (health + ledger service/API tests) |
+| Database | PostgreSQL in Compose; `sql/*.sql` migrations (ledger, accruals, settlements, …) |
+| Import rules (#8) | In-process `evaluate()` + `POST /import-rules/evaluate` (stateless); **no** rules UI or DB persistence yet — **see [docs/import-rules-engine.md](docs/import-rules-engine.md)** |
+| Tests | `pytest` + `TestClient` (health, ledger, import rules, …); reports under `test-results/` |
 | Container | `Dockerfile` + `docker-compose.yml` (`api` + `db`) |
-| Front end | React + TypeScript + Vite: chart of accounts plus expert-mode journal entry list/create/edit |
+| Front end | React + TypeScript + Vite: chart of accounts, journal entries, accrual plans, settlements |
 
 ---
 
@@ -80,13 +81,15 @@ Optional `.env` (or environment variables):
 TALLYBADGER_DATABASE_URL=postgresql://tallybadger:tallybadger@127.0.0.1:5432/tallybadger
 ```
 
-Run tests (single consolidated report):
+Run tests — **single** backend report (`test-results/pytest.html` / `pytest.xml`; last command wins):
 
 ```bash
-pytest
-# or
-make test
+make test          # full suite: Docker DB + migrate + all tests (incl. integration)
+make test-unit     # skip integration (no DB required)
+make test-integration   # integration tests only (DB must be up / migrated)
 ```
+
+See [docs/import-rules-engine.md](docs/import-rules-engine.md) for import rules behaviour (#8), including the CEL spike endpoint (`/import-rules/cel/evaluate`).
 
 Quick dev control targets:
 
@@ -117,18 +120,10 @@ Frontend test report location:
 
 - `test-results/frontend-vitest.html` (static HTML; open directly in browser)
 
-Test report locations:
+Backend test report (same paths for every target; last run wins):
 
 - `test-results/pytest.xml`
-- `test-results/pytest.html` (open in browser)
-
-Run integration tests against a live PostgreSQL instance:
-
-```bash
-make db-up
-make db-migrate
-TALLYBADGER_TEST_DATABASE_URL=postgresql://tallybadger:tallybadger@127.0.0.1:5432/tallybadger make test
-```
+- `test-results/pytest.html`
 
 ---
 

@@ -3,14 +3,15 @@ PIP := .venv/bin/pip
 PYTEST := .venv/bin/pytest
 UVICORN := .venv/bin/uvicorn
 
-.PHONY: help venv install test test-integration run up down restart status logs frontend-install frontend-dev frontend-test db-up db-down db-wait db-migrate db-migrate-local dbclean
+.PHONY: help venv install test test-unit test-integration run up down restart status logs frontend-install frontend-dev frontend-test db-up db-down db-wait db-migrate db-migrate-local dbclean
 
 help:
 	@echo "Available targets:"
 	@echo "  make venv      Create local virtualenv"
 	@echo "  make install   Install project + dev dependencies"
-	@echo "  make test      Run full test suite (single XML + HTML report)"
-	@echo "  make test-integration  Run only Postgres integration tests"
+	@echo "  make test      Run all pytest tests (db-up, migrate, then unit + integration); report: test-results/pytest.html"
+	@echo "  make test-unit Run pytest excluding integration (no DB required); same report paths"
+	@echo "  make test-integration  Run only integration tests; same report paths"
 	@echo "  make run       Alias for make up"
 	@echo "  make up        Start DB + API + frontend in background via tbad"
 	@echo "  make down      Stop DB + API + frontend via tbad"
@@ -32,8 +33,11 @@ venv:
 install:
 	$(PIP) install -e ".[dev]"
 
-test:
-	$(PYTEST) --junitxml=test-results/pytest.xml --html=test-results/pytest.html --self-contained-html
+test: db-migrate-local
+	TALLYBADGER_TEST_DATABASE_URL=$${TALLYBADGER_TEST_DATABASE_URL:-postgresql://tallybadger:tallybadger@127.0.0.1:5432/tallybadger} $(PYTEST) --junitxml=test-results/pytest.xml --html=test-results/pytest.html --self-contained-html
+
+test-unit:
+	$(PYTEST) -m "not integration" --junitxml=test-results/pytest.xml --html=test-results/pytest.html --self-contained-html
 
 test-integration:
 	TALLYBADGER_TEST_DATABASE_URL=$${TALLYBADGER_TEST_DATABASE_URL:-postgresql://tallybadger:tallybadger@127.0.0.1:5432/tallybadger} $(PYTEST) -m integration --junitxml=test-results/pytest.xml --html=test-results/pytest.html --self-contained-html
