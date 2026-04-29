@@ -8,8 +8,9 @@ import { AccountsSection } from "./components/AccountsSection";
 import { JournalEntriesPanel } from "./components/JournalEntriesPanel";
 import { PartiesSection } from "./components/PartiesSection";
 import { SettlementsSection } from "./components/SettlementsSection";
+import { CsvImportSection } from "./components/CsvImportSection";
 
-type MainTab = "accounts" | "journal" | "parties" | "accruals" | "settlements";
+type MainTab = "accounts" | "journal" | "parties" | "accruals" | "settlements" | "csv_import";
 
 function App() {
   const [tab, setTab] = useState<MainTab>("accounts");
@@ -96,6 +97,13 @@ function App() {
           >
             Settlements
           </button>
+          <button
+            type="button"
+            className={tab === "csv_import" ? "app-nav-active" : undefined}
+            onClick={() => setTab("csv_import")}
+          >
+            CSV import
+          </button>
         </nav>
       </header>
 
@@ -127,6 +135,7 @@ function App() {
         )}
         {tab === "accruals" && <AccrualPlansSection accounts={accounts} parties={parties} />}
         {tab === "settlements" && <SettlementsSection accounts={accounts} parties={parties} />}
+        {tab === "csv_import" && <CsvImportSection />}
       </main>
     </div>
   );
