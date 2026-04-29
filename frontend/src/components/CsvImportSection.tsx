@@ -57,11 +57,24 @@ function toApiColumns(cols: EditableColumn[]): ImportTemplateColumn[] {
   return cols.map((c) => {
     const attribute_name = c.attributeName.trim() ? c.attributeName.trim() : null;
     const data_type = c.dataType;
-    const date_format =
-      data_type === "date" || data_type === "datetime"
-        ? c.dateFormat.trim() || null
-        : null;
+    const date_format = data_type === "date" || data_type === "datetime" ? c.dateFormat.trim() || null : null;
     return { attribute_name, data_type, date_format };
+  });
+}
+
+function fillBlankAttributesFromHeader(columns: EditableColumn[], headerRow: string[] | undefined): EditableColumn[] {
+  if (!headerRow) {
+    return columns;
+  }
+  return columns.map((column, index) => {
+    if (column.attributeName.trim()) {
+      return column;
+    }
+    const headerValue = (headerRow[index] ?? "").trim();
+    if (!headerValue) {
+      return column;
+    }
+    return { ...column, attributeName: headerValue };
   });
 }
 
@@ -237,13 +250,17 @@ export function CsvImportSection() {
     const colCount = rows[0]!.length;
     const tpl = startTemplateId ? prefetchedTemplate : null;
 
-    const nextColumns = tpl
+    let nextColumns = tpl
       ? mergeTemplateColumns(tpl.columns, colCount)
       : defaultColumns(colCount);
     const header = tpl ? tpl.has_header_row : false;
     const ruleId = tpl?.cel_rule_set_id != null ? String(tpl.cel_rule_set_id) : "";
     const name = tpl?.name ?? "";
     const tid = tpl?.id ?? null;
+
+    if (header) {
+      nextColumns = fillBlankAttributesFromHeader(nextColumns, rows[0]);
+    }
 
     setRawRows(rows);
     applySnapshot(nextColumns, header, ruleId, name, tid);
@@ -486,7 +503,13 @@ export function CsvImportSection() {
                 aria-label="First row is a header"
                 type="checkbox"
                 checked={hasHeaderRow}
-                onChange={(e) => setHasHeaderRow(e.target.checked)}
+                onChange={(e) => {
+                  const checked = e.target.checked;
+                  setHasHeaderRow(checked);
+                  if (checked) {
+                    setColumns((prev) => fillBlankAttributesFromHeader(prev, rawRows[0]));
+                  }
+                }}
               />
               First row is a header (not imported as data)
             </label>
@@ -557,7 +580,7 @@ export function CsvImportSection() {
                         <input
                           aria-label={`Date format for column ${colIndex + 1}`}
                           value={c.dateFormat}
-                          placeholder="%Y-%m-%d"
+                          placeholder="yyyy-mm-dd"
                           disabled={c.dataType !== "date" && c.dataType !== "datetime"}
                           onChange={(e) => updateColumn(colIndex, { dateFormat: e.target.value })}
                         />

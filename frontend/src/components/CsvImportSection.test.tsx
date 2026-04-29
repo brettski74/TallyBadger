@@ -19,7 +19,7 @@ function mockListEndpoints() {
           name: "My tpl",
           has_header_row: true,
           columns: [
-            { attribute_name: "posted_on", data_type: "date", date_format: "%Y-%m-%d" },
+            { attribute_name: "posted_on", data_type: "date", date_format: "yyyy-mm-dd" },
             { attribute_name: "amount", data_type: "numeric", date_format: null },
           ],
           cel_rule_set_id: null,
@@ -37,7 +37,7 @@ function mockListEndpoints() {
           name: "Bank",
           has_header_row: true,
           columns: [
-            { attribute_name: "posted_on", data_type: "date", date_format: "%Y-%m-%d" },
+            { attribute_name: "posted_on", data_type: "date", date_format: "yyyy-mm-dd" },
             { attribute_name: "amount", data_type: "numeric", date_format: null },
           ],
           cel_rule_set_id: null,
@@ -137,10 +137,30 @@ describe("CsvImportSection", () => {
     expect(screen.getByRole("button", { name: "Save template" })).toBeDisabled();
   });
 
+  it("fills blank attribute names from header row when header is enabled", async () => {
+    mockListEndpoints();
+    vi.mocked(readFileAsText).mockResolvedValue("posted_on,amount,memo\n2024-01-01,12.34,hello\n");
+
+    render(<CsvImportSection />);
+    await screen.findByLabelText("CSV file");
+    const file = new File(["dummy"], "t.csv", { type: "text/csv" });
+    await userEvent.upload(screen.getByLabelText("CSV file"), file);
+    await userEvent.click(screen.getByRole("button", { name: "Continue to preview" }));
+
+    await userEvent.type(screen.getByLabelText("Attribute for column 2"), "manual_amount");
+    await userEvent.click(screen.getByLabelText("First row is a header"));
+
+    expect(screen.getByLabelText("Attribute for column 1")).toHaveValue("posted_on");
+    expect(screen.getByLabelText("Attribute for column 2")).toHaveValue("manual_amount");
+    expect(screen.getByLabelText("Attribute for column 3")).toHaveValue("memo");
+  });
+
   it("saves a new template when name is provided", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input.toString();
       if (url.includes("/import-templates") && init?.method === "POST") {
+        const payload = JSON.parse(String(init.body));
+        expect(payload.columns[0].date_format).toBe("yyyy-mm-dd");
         return new Response(
           JSON.stringify({
             id: 2,
@@ -191,6 +211,8 @@ describe("CsvImportSection", () => {
     await userEvent.click(screen.getByRole("button", { name: "Continue to preview" }));
 
     await userEvent.type(screen.getByLabelText("Attribute for column 1"), "x");
+    await userEvent.selectOptions(screen.getByLabelText("Type for column 1"), "date");
+    await userEvent.type(screen.getByLabelText("Date format for column 1"), "yyyy-mm-dd");
     await userEvent.type(screen.getByLabelText("Template name"), "My tpl");
     await userEvent.click(screen.getByRole("button", { name: "Save template" }));
 
