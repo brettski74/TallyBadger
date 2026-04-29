@@ -78,7 +78,7 @@ def _sample_rule_set() -> dict:
 
 def _sample_columns() -> list[dict]:
     return [
-        {"attribute_name": "posted_on", "data_type": "date", "date_format": "%Y-%m-%d"},
+        {"attribute_name": "posted_on", "data_type": "date", "date_format": "yyyy-mm-dd"},
         {"attribute_name": None, "data_type": "string"},
         {"attribute_name": "amount", "data_type": "numeric"},
     ]
@@ -107,7 +107,7 @@ def test_import_template_crud_with_rule_set(import_api_client: TestClient) -> No
     assert body["has_header_row"] is True
     assert body["cel_rule_set_id"] == rs_id
     assert len(body["columns"]) == 3
-    assert body["columns"][0]["date_format"] == "%Y-%m-%d"
+    assert body["columns"][0]["date_format"] == "yyyy-mm-dd"
     tid = body["id"]
 
     listed = import_api_client.get("/import-templates")
@@ -180,4 +180,15 @@ def test_patch_empty_422(import_api_client: TestClient) -> None:
     )
     tid = c.json()["id"]
     r = import_api_client.patch(f"/import-templates/{tid}", json={})
+    assert r.status_code == 422
+
+
+def test_date_column_posix_format_rejected_422(import_api_client: TestClient) -> None:
+    r = import_api_client.post(
+        "/import-templates",
+        json={
+            "name": "bad-date-format",
+            "columns": [{"attribute_name": "d", "data_type": "date", "date_format": "%Y-%m-%d"}],
+        },
+    )
     assert r.status_code == 422

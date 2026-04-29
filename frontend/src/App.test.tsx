@@ -133,6 +133,33 @@ describe("App", () => {
     expect(await screen.findByRole("heading", { name: "Accrual plans" })).toBeInTheDocument();
   });
 
+  it("shows CSV import tab and loads template and rule set lists", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/accounts")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      if (url.includes("/parties")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      if (url.endsWith("/import-templates")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      if (url.includes("/import-rules/cel/rule-sets")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      return new Response("not mocked", { status: 404 });
+    });
+
+    render(<App />);
+
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "CSV import" }));
+
+    expect(await screen.findByRole("heading", { name: "CSV import" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Import template")).toBeInTheDocument();
+  });
+
   it("shows settlements tab and loads role settings", async () => {
     mockFetchImplementation([
       () => new Response(JSON.stringify([]), { status: 200 }),
