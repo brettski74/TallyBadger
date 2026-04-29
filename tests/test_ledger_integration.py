@@ -60,8 +60,8 @@ def clean_database(integration_db_url: str) -> Iterator[None]:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    TRUNCATE TABLE journal_lines, journal_entries, accrual_plans, parties, accounts,
-                      cel_rule_sets
+                    TRUNCATE TABLE import_templates, journal_lines, journal_entries,
+                      accrual_plans, parties, accounts, cel_rule_sets
                     RESTART IDENTITY CASCADE
                     """
                 )
