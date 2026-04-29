@@ -36,7 +36,9 @@ def clean_cel_rule_sets(integration_db_url: str) -> Iterator[None]:
     with connect(integration_db_url) as conn:
         with conn.transaction():
             with conn.cursor() as cur:
-                cur.execute("TRUNCATE TABLE cel_rule_sets RESTART IDENTITY CASCADE")
+                cur.execute(
+                    "TRUNCATE TABLE import_templates, cel_rule_sets RESTART IDENTITY CASCADE",
+                )
     yield
 
 
