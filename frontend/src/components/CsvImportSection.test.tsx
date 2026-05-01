@@ -10,7 +10,7 @@ vi.mock("../lib/readFileAsText", () => ({
 }));
 
 function mockListEndpoints() {
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+  return vi.spyOn(globalThis, "fetch").mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input.toString();
     if (url.includes("/import-templates") && init?.method === "POST") {
       return new Response(
@@ -55,6 +55,11 @@ function mockListEndpoints() {
     }
     if (url.includes("/import-rules/cel/rule-sets")) {
       return new Response(JSON.stringify([{ id: 10, name: "rs1", updated_at: "2026-04-01T00:00:00Z" }]), {
+        status: 200,
+      });
+    }
+    if (url.includes("/imports/csv/execute") && init?.method === "POST") {
+      return new Response(JSON.stringify({ posted_entries: 1, dropped_rows: 0, row_errors: [], entries: [] }), {
         status: 200,
       });
     }
@@ -219,6 +224,63 @@ describe("CsvImportSection", () => {
     await waitFor(() => {
       const posts = fetchMock.mock.calls.filter(([, init]) => init && init.method === "POST");
       expect(posts.length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  it("executes import from preview", async () => {
+    const fetchMock = mockListEndpoints();
+    vi.mocked(readFileAsText).mockResolvedValue("date,summary,dr,cr,amount\n2026-07-01,Rent July,Cash,Rent Revenue,1200\n");
+
+    render(<CsvImportSection />);
+    await screen.findByLabelText("CSV file");
+    const file = new File(["dummy"], "import.csv", { type: "text/csv" });
+    await userEvent.upload(screen.getByLabelText("CSV file"), file);
+    await userEvent.click(screen.getByRole("button", { name: "Continue to preview" }));
+
+    await userEvent.type(screen.getByLabelText("Attribute for column 1"), "date");
+    await userEvent.selectOptions(screen.getByLabelText("Type for column 1"), "date");
+    await userEvent.type(screen.getByLabelText("Date format for column 1"), "yyyy-mm-dd");
+    await userEvent.type(screen.getByLabelText("Attribute for column 2"), "summary");
+    await userEvent.type(screen.getByLabelText("Attribute for column 3"), "dr-account");
+    await userEvent.type(screen.getByLabelText("Attribute for column 4"), "cr-account");
+    await userEvent.type(screen.getByLabelText("Attribute for column 5"), "amount");
+    await userEvent.selectOptions(screen.getByLabelText("Type for column 5"), "numeric");
+
+    await userEvent.click(screen.getByRole("button", { name: "Execute import" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent("Import complete: 1 entries posted");
+    });
+    const executeCall = fetchMock.mock.calls.find(
+      ([input, init]) => (typeof input === "string" ? input : input.toString()).includes("/imports/csv/execute") && init?.method === "POST",
+    );
+    expect(executeCall).toBeTruthy();
+  });
+
+  it("calls onImportSucceeded after successful execute", async () => {
+    mockListEndpoints();
+    vi.mocked(readFileAsText).mockResolvedValue("date,summary,dr,cr,amount\n2026-07-01,Rent July,Cash,Rent Revenue,1200\n");
+    const onImportSucceeded = vi.fn();
+
+    render(<CsvImportSection onImportSucceeded={onImportSucceeded} />);
+    await screen.findByLabelText("CSV file");
+    const file = new File(["dummy"], "import.csv", { type: "text/csv" });
+    await userEvent.upload(screen.getByLabelText("CSV file"), file);
+    await userEvent.click(screen.getByRole("button", { name: "Continue to preview" }));
+
+    await userEvent.type(screen.getByLabelText("Attribute for column 1"), "date");
+    await userEvent.selectOptions(screen.getByLabelText("Type for column 1"), "date");
+    await userEvent.type(screen.getByLabelText("Date format for column 1"), "yyyy-mm-dd");
+    await userEvent.type(screen.getByLabelText("Attribute for column 2"), "summary");
+    await userEvent.type(screen.getByLabelText("Attribute for column 3"), "dr-account");
+    await userEvent.type(screen.getByLabelText("Attribute for column 4"), "cr-account");
+    await userEvent.type(screen.getByLabelText("Attribute for column 5"), "amount");
+    await userEvent.selectOptions(screen.getByLabelText("Type for column 5"), "numeric");
+
+    await userEvent.click(screen.getByRole("button", { name: "Execute import" }));
+
+    await waitFor(() => {
+      expect(onImportSucceeded).toHaveBeenCalledTimes(1);
     });
   });
 });

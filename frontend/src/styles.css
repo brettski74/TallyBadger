@@ -417,3 +417,7 @@ th {
   width: auto;
   margin-top: 0.75rem;
 }
+
+.csv-save-form .form-actions-inline button {
+  margin-top: 0.75rem;
+}

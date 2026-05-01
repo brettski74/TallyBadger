@@ -135,7 +135,7 @@ function App() {
         )}
         {tab === "accruals" && <AccrualPlansSection accounts={accounts} parties={parties} />}
         {tab === "settlements" && <SettlementsSection accounts={accounts} parties={parties} />}
-        {tab === "csv_import" && <CsvImportSection />}
+        {tab === "csv_import" && <CsvImportSection onImportSucceeded={() => setTab("journal")} />}
       </main>
     </div>
   );
