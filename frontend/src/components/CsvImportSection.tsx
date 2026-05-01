@@ -4,9 +4,11 @@ import { listCelRuleSets, type CelRuleSetSummary } from "../api/celRuleSets";
 import {
   ApiHttpError,
   createImportTemplate,
+  executeCsvImport,
   getImportTemplate,
   listImportTemplates,
   patchImportTemplate,
+  type CsvImportExecuteResult,
   type ImportColumnDataType,
   type ImportTemplate,
   type ImportTemplateColumn,
@@ -92,7 +94,12 @@ function baselineKey(parts: {
   });
 }
 
-export function CsvImportSection() {
+export interface CsvImportSectionProps {
+  /** Called after a successful `POST /imports/csv/execute` (e.g. switch main tab to journal). */
+  onImportSucceeded?: () => void;
+}
+
+export function CsvImportSection({ onImportSucceeded }: CsvImportSectionProps = {}) {
   const [step, setStep] = useState<Step>("start");
   const [listError, setListError] = useState<string | null>(null);
   const [templates, setTemplates] = useState<ImportTemplateSummary[]>([]);
@@ -117,6 +124,9 @@ export function CsvImportSection() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [continueError, setContinueError] = useState<string | null>(null);
+  const [executeError, setExecuteError] = useState<string | null>(null);
+  const [executing, setExecuting] = useState(false);
+  const [executeResult, setExecuteResult] = useState<CsvImportExecuteResult | null>(null);
 
   const loadLists = useCallback(async () => {
     setListError(null);
@@ -193,6 +203,8 @@ export function CsvImportSection() {
     setBaseline("");
     setSaveError(null);
     setContinueError(null);
+    setExecuteError(null);
+    setExecuteResult(null);
   }
 
   function applySnapshot(
@@ -387,6 +399,49 @@ export function CsvImportSection() {
     }
   }
 
+  function csvTextFromRows(rows: string[][]): string {
+    return rows
+      .map((row) =>
+        row
+          .map((cell) => {
+            if (cell.includes('"') || cell.includes(",") || cell.includes("\n")) {
+              return `"${cell.replace(/"/g, '""')}"`;
+            }
+            return cell;
+          })
+          .join(","),
+      )
+      .join("\n");
+  }
+
+  async function handleExecuteImport() {
+    if (!rawRows.length) {
+      setExecuteError("No CSV rows are loaded.");
+      return;
+    }
+    setExecuteError(null);
+    setExecuteResult(null);
+    setExecuting(true);
+    try {
+      const result = await executeCsvImport({
+        csv_text: csvTextFromRows(rawRows),
+        has_header_row: hasHeaderRow,
+        columns: toApiColumns(columns),
+        cel_rule_set_id: celRuleSetId ? Number(celRuleSetId) : null,
+      });
+      setExecuteResult(result);
+      onImportSucceeded?.();
+    } catch (err) {
+      if (err instanceof ApiHttpError) {
+        setExecuteError(err.message);
+      } else {
+        setExecuteError(err instanceof Error ? err.message : "Failed to execute import");
+      }
+    } finally {
+      setExecuting(false);
+    }
+  }
+
   function onDropFiles(files: FileList | null) {
     const next = files?.[0];
     if (!next) {
@@ -405,8 +460,7 @@ export function CsvImportSection() {
       <section className="card csv-import-card">
         <h2>CSV import</h2>
         <p className="muted">
-          Choose a file, map columns, and optionally save a reusable import template. Import execution comes in a later
-          slice.
+          Choose a file, map columns, optionally save a reusable template, then execute the import.
         </p>
         {listError && (
           <p className="error" role="alert">
@@ -636,10 +690,26 @@ export function CsvImportSection() {
                   {saveError}
                 </p>
               ) : null}
+              {executeError ? (
+                <p className="error" role="alert">
+                  {executeError}
+                </p>
+              ) : null}
+              {executeResult ? (
+                <p className="banner-info" role="status">
+                  Import complete: {executeResult.posted_entries} entries posted
+                  {executeResult.dropped_rows > 0 ? `, ${executeResult.dropped_rows} rows dropped by rules` : ""}.
+                </p>
+              ) : null}
 
-              <button type="submit" disabled={saveDisabled}>
-                {saving ? "Saving…" : "Save template"}
-              </button>
+              <div className="form-actions-inline">
+                <button type="submit" disabled={saveDisabled}>
+                  {saving ? "Saving…" : "Save template"}
+                </button>
+                <button type="button" onClick={() => void handleExecuteImport()} disabled={executing || columns.length === 0}>
+                  {executing ? "Executing…" : "Execute import"}
+                </button>
+              </div>
             </form>
           </div>
         )}

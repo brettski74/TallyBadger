@@ -827,6 +827,45 @@ class LedgerService:
         except errors.ForeignKeyViolation as exc:
             raise LedgerValidationError("journal line references unknown account") from exc
 
+    def create_entries_batch(self, payloads: list[JournalEntryWrite]) -> list[JournalEntryOut]:
+        if not payloads:
+            return []
+        for payload in payloads:
+            self._validate_summary(payload.summary)
+            self._validate_lines(payload.lines)
+        created_ids: list[int] = []
+        try:
+            with self._connection_factory() as conn:
+                with conn.transaction():
+                    with conn.cursor(row_factory=dict_row) as cur:
+                        for payload in payloads:
+                            self._assert_all_line_accounts_exist(cur, payload.lines)
+                            self._assert_all_line_parties_exist(cur, payload.lines)
+                            cur.execute(
+                                """
+                                INSERT INTO journal_entries (entry_date, summary, description)
+                                VALUES (%s, %s, %s)
+                                RETURNING id
+                                """,
+                                (payload.entry_date, payload.summary.strip(), payload.description),
+                            )
+                            entry_id = cur.fetchone()["id"]
+                            for line in payload.lines:
+                                self._assert_account_active(cur, line.account_id)
+                                self._assert_party_active(cur, line.party_id)
+                                cur.execute(
+                                    """
+                                    INSERT INTO journal_lines (entry_id, account_id, party_id, amount)
+                                    VALUES (%s, %s, %s, %s)
+                                    """,
+                                    (entry_id, line.account_id, line.party_id, line.amount),
+                                )
+                            self._assert_entry_balanced(cur, entry_id)
+                            created_ids.append(entry_id)
+                    return [self.get_entry(entry_id, conn=conn) for entry_id in created_ids]
+        except errors.ForeignKeyViolation as exc:
+            raise LedgerValidationError("journal line references unknown account") from exc
+
     def update_entry(self, entry_id: int, payload: JournalEntryWrite) -> JournalEntryOut:
         self._validate_summary(payload.summary)
         self._validate_lines(payload.lines)
