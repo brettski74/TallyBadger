@@ -40,6 +40,12 @@ def _rule_label(rule: CelRule, index: int) -> str:
     return f"rule[{index}]"
 
 
+def _matcher_label(cap: CelRegexCapture) -> str:
+    if cap.label:
+        return cap.label
+    return cap.attribute
+
+
 def _to_cel_value(value: Any) -> Any:
     if value is None:
         return None
@@ -149,6 +155,7 @@ def evaluate_cel(rule_set: CelRuleSet, attributes: dict[str, Any]) -> CelEvaluat
                             "reason": "capture_failed",
                             "capture_index": cap_index,
                             "attribute": cap.attribute,
+                            "matcher_label": _matcher_label(cap),
                         },
                     )
                 )

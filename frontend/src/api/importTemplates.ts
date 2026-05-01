@@ -1,15 +1,7 @@
 import { getApiBase } from "./baseUrl";
-import { readApiErrorMessage } from "./errors";
+import { ApiHttpError, readApiErrorMessage } from "./errors";
 
-export class ApiHttpError extends Error {
-  readonly status: number;
-
-  constructor(status: number, message: string) {
-    super(message);
-    this.name = "ApiHttpError";
-    this.status = status;
-  }
-}
+export { ApiHttpError };
 
 export type ImportColumnDataType = "string" | "numeric" | "date" | "datetime";
 

@@ -8,9 +8,17 @@ import { AccountsSection } from "./components/AccountsSection";
 import { JournalEntriesPanel } from "./components/JournalEntriesPanel";
 import { PartiesSection } from "./components/PartiesSection";
 import { SettlementsSection } from "./components/SettlementsSection";
+import { CelRuleSetsSection } from "./components/CelRuleSetsSection";
 import { CsvImportSection } from "./components/CsvImportSection";
 
-type MainTab = "accounts" | "journal" | "parties" | "accruals" | "settlements" | "csv_import";
+type MainTab =
+  | "accounts"
+  | "journal"
+  | "parties"
+  | "accruals"
+  | "settlements"
+  | "import_rules"
+  | "csv_import";
 
 function App() {
   const [tab, setTab] = useState<MainTab>("accounts");
@@ -99,6 +107,13 @@ function App() {
           </button>
           <button
             type="button"
+            className={tab === "import_rules" ? "app-nav-active" : undefined}
+            onClick={() => setTab("import_rules")}
+          >
+            Import rules
+          </button>
+          <button
+            type="button"
             className={tab === "csv_import" ? "app-nav-active" : undefined}
             onClick={() => setTab("csv_import")}
           >
@@ -135,6 +150,7 @@ function App() {
         )}
         {tab === "accruals" && <AccrualPlansSection accounts={accounts} parties={parties} />}
         {tab === "settlements" && <SettlementsSection accounts={accounts} parties={parties} />}
+        {tab === "import_rules" && <CelRuleSetsSection />}
         {tab === "csv_import" && <CsvImportSection onImportSucceeded={() => setTab("journal")} />}
       </main>
     </div>

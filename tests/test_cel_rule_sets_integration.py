@@ -156,3 +156,34 @@ def test_patch_empty_body_422(cel_client: TestClient) -> None:
     rid = c.json()["id"]
     r = cel_client.patch(f"/import-rules/cel/rule-sets/{rid}", json={})
     assert r.status_code == 422
+
+
+def test_capture_matcher_label_round_trip(cel_client: TestClient) -> None:
+    payload = {
+        "name": "with-labels",
+        "rule_set": {
+            "rules": [
+                {
+                    "name": "Parse EMT sender",
+                    "sort_order": 0,
+                    "expression": '{"set": {"x": 1}}',
+                    "captures": [
+                        {
+                            "attribute": "description",
+                            "pattern": r".*",
+                            "flags": [],
+                            "label": "Interac description line",
+                        },
+                    ],
+                },
+            ],
+        },
+    }
+    create = cel_client.post("/import-rules/cel/rule-sets", json=payload)
+    assert create.status_code == 201, create.text
+    rid = create.json()["id"]
+    got = cel_client.get(f"/import-rules/cel/rule-sets/{rid}")
+    assert got.status_code == 200
+    cap = got.json()["rule_set"]["rules"][0]["captures"][0]
+    assert cap["label"] == "Interac description line"
+    assert cap["attribute"] == "description"

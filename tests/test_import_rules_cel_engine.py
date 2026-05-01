@@ -94,10 +94,33 @@ def test_capture_failure_skips_cel_expression() -> None:
     )
     out = evaluate_cel(rs, {"description": "plain text"})
     assert out.attributes.get("expression_ran") is None
-    assert any(
-        t.event == "rule_not_matched" and t.detail.get("reason") == "capture_failed"
-        for t in out.trace
+    failed = next(
+        t for t in out.trace if t.event == "rule_not_matched" and t.detail.get("reason") == "capture_failed"
     )
+    assert failed.detail.get("matcher_label") == "description"
+
+
+def test_capture_failure_trace_uses_matcher_label_when_set() -> None:
+    rs = CelRuleSet(
+        rules=[
+            CelRule(
+                id="gated",
+                captures=[
+                    CelRegexCapture(
+                        attribute="description",
+                        pattern=r"WILL_NOT_MATCH",
+                        label="Bank memo pattern",
+                    ),
+                ],
+                expression='{"set":{"expression_ran": true}}',
+            ),
+        ],
+    )
+    out = evaluate_cel(rs, {"description": "plain text"})
+    failed = next(
+        t for t in out.trace if t.event == "rule_not_matched" and t.detail.get("reason") == "capture_failed"
+    )
+    assert failed.detail.get("matcher_label") == "Bank memo pattern"
 
 
 def test_second_capture_failure_skips_expression_short_circuits() -> None:
