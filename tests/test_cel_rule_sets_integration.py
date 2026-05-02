@@ -62,7 +62,6 @@ def _sample_rule_set() -> dict:
     return {
         "rules": [
             {
-                "id": "r1",
                 "sort_order": 10,
                 "enabled": True,
                 "expression": '{"set": {"tag": "alpha"}}',
@@ -80,7 +79,6 @@ def test_cel_rule_set_crud_flow(cel_client: TestClient) -> None:
     assert create.status_code == 201, create.text
     body = create.json()
     assert body["name"] == "bank-a"
-    assert body["rule_set"]["rules"][0]["id"] == "r1"
     rid = body["id"]
 
     listed = cel_client.get("/import-rules/cel/rule-sets")

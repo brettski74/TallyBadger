@@ -29,7 +29,6 @@ class CelRegexCapture(BaseModel):
 
 
 class CelRule(BaseModel):
-    id: str | None = Field(default=None, max_length=120)
     name: str | None = Field(default=None, max_length=200)
     enabled: bool = True
     sort_order: int = 0

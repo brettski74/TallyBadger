@@ -13,7 +13,6 @@ def test_cel_rule_can_set_attributes_and_keep_types() -> None:
     rs = CelRuleSet(
         rules=[
             CelRule(
-                id="r1",
                 sort_order=10,
                 expression='{"set":{"category":"rent","amount_copy": attributes["amount"]}}',
             ),
@@ -41,17 +40,17 @@ def test_stop_drop_review_are_nullable_reason_strings() -> None:
     rs = CelRuleSet(
         rules=[
             CelRule(
-                id="a",
+                name="a",
                 sort_order=10,
                 expression='{"set":{"x":1},"review":"needs eyeballs"}',
             ),
             CelRule(
-                id="b",
+                name="b",
                 sort_order=20,
                 expression='{"set":{"x":2},"stop":"done for row"}',
             ),
             CelRule(
-                id="c",
+                name="c",
                 sort_order=30,
                 expression='{"set":{"x":3}}',
             ),
@@ -81,7 +80,6 @@ def test_capture_failure_skips_cel_expression() -> None:
     rs = CelRuleSet(
         rules=[
             CelRule(
-                id="gated",
                 captures=[
                     CelRegexCapture(
                         attribute="description",
@@ -104,7 +102,6 @@ def test_capture_failure_trace_uses_matcher_label_when_set() -> None:
     rs = CelRuleSet(
         rules=[
             CelRule(
-                id="gated",
                 captures=[
                     CelRegexCapture(
                         attribute="description",

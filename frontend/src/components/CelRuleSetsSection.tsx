@@ -44,7 +44,6 @@ function serializeState(name: string, rules: CelRule[]): string {
     name: name.trim(),
     rule_set: {
       rules: ordered.map((r, idx) => ({
-        id: r.id,
         name: r.name,
         enabled: r.enabled,
         sort_order: idx,
@@ -99,7 +98,6 @@ function buildPayload(name: string, rules: CelRule[]): { name: string; rule_set:
     name: name.trim(),
     rule_set: {
       rules: ordered.map((r, i) => ({
-        id: r.id?.trim() ? r.id.trim() : null,
         name: r.name?.trim() ? r.name.trim() : null,
         enabled: r.enabled,
         sort_order: i,

@@ -79,7 +79,6 @@ describe("CelRuleSetsSection", () => {
             rule_set: {
               rules: [
                 {
-                  id: null,
                   name: "R1",
                   enabled: true,
                   sort_order: 0,

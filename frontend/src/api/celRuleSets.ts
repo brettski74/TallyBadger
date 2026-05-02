@@ -15,7 +15,6 @@ export interface CelRegexCapture {
 }
 
 export interface CelRule {
-  id: string | null;
   name: string | null;
   enabled: boolean;
   sort_order: number;

@@ -33,8 +33,6 @@ def _compile_regex_flags(names: list[str]) -> int:
 
 
 def _rule_label(rule: CelRule, index: int) -> str:
-    if rule.id:
-        return rule.id
     if rule.name:
         return rule.name
     return f"rule[{index}]"
