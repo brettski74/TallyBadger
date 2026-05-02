@@ -125,6 +125,9 @@ export function CsvImportSection({ onImportSucceeded }: CsvImportSectionProps = 
   const [saving, setSaving] = useState(false);
   const [continueError, setContinueError] = useState<string | null>(null);
   const [executeError, setExecuteError] = useState<string | null>(null);
+  const [executeRowErrors, setExecuteRowErrors] = useState<
+    { row_number: number; errors: string[] }[] | null
+  >(null);
   const [executing, setExecuting] = useState(false);
   const [executeResult, setExecuteResult] = useState<CsvImportExecuteResult | null>(null);
 
@@ -420,6 +423,7 @@ export function CsvImportSection({ onImportSucceeded }: CsvImportSectionProps = 
       return;
     }
     setExecuteError(null);
+    setExecuteRowErrors(null);
     setExecuteResult(null);
     setExecuting(true);
     try {
@@ -432,10 +436,22 @@ export function CsvImportSection({ onImportSucceeded }: CsvImportSectionProps = 
       setExecuteResult(result);
       onImportSucceeded?.();
     } catch (err) {
-      if (err instanceof ApiHttpError) {
+      const rowErrors =
+        err !== null &&
+        typeof err === "object" &&
+        "rowErrors" in err &&
+        Array.isArray((err as { rowErrors: unknown }).rowErrors)
+          ? (err as { rowErrors: { row_number: number; errors: string[] }[] }).rowErrors
+          : null;
+      if (rowErrors !== null && err instanceof Error) {
         setExecuteError(err.message);
+        setExecuteRowErrors([...rowErrors].sort((a, b) => a.row_number - b.row_number));
+      } else if (err instanceof ApiHttpError) {
+        setExecuteError(err.message);
+        setExecuteRowErrors(null);
       } else {
         setExecuteError(err instanceof Error ? err.message : "Failed to execute import");
+        setExecuteRowErrors(null);
       }
     } finally {
       setExecuting(false);
@@ -634,7 +650,7 @@ export function CsvImportSection({ onImportSucceeded }: CsvImportSectionProps = 
                         <input
                           aria-label={`Date format for column ${colIndex + 1}`}
                           value={c.dateFormat}
-                          placeholder="yyyy-mm-dd"
+                          placeholder="YYYY-MM-DD"
                           disabled={c.dataType !== "date" && c.dataType !== "datetime"}
                           onChange={(e) => updateColumn(colIndex, { dateFormat: e.target.value })}
                         />
@@ -691,9 +707,18 @@ export function CsvImportSection({ onImportSucceeded }: CsvImportSectionProps = 
                 </p>
               ) : null}
               {executeError ? (
-                <p className="error" role="alert">
-                  {executeError}
-                </p>
+                <div className="error" role="alert">
+                  <p className="csv-import-error-summary">{executeError}</p>
+                  {executeRowErrors && executeRowErrors.length > 0 ? (
+                    <ul className="csv-import-validation-rows">
+                      {executeRowErrors.map((row) => (
+                        <li key={row.row_number}>
+                          <strong>Row {row.row_number}:</strong> {row.errors.join("; ")}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </div>
               ) : null}
               {executeResult ? (
                 <p className="banner-info" role="status">

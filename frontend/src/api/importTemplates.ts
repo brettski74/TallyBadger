@@ -49,6 +49,17 @@ export interface CsvImportExecuteResult {
   row_errors: CsvImportRowError[];
 }
 
+/** 422 from POST /imports/csv/execute with full `row_errors` for UI display. */
+export class CsvImportValidationError extends ApiHttpError {
+  readonly rowErrors: CsvImportRowError[];
+
+  constructor(status: number, message: string, rowErrors: CsvImportRowError[]) {
+    super(status, message);
+    this.name = "CsvImportValidationError";
+    this.rowErrors = rowErrors;
+  }
+}
+
 async function throwIfNotOk(response: Response): Promise<void> {
   if (!response.ok) {
     throw new ApiHttpError(response.status, await readApiErrorMessage(response));
@@ -95,11 +106,23 @@ export async function patchImportTemplate(
 }
 
 export async function executeCsvImport(payload: CsvImportExecutePayload): Promise<CsvImportExecuteResult> {
-  const response = await fetch(`${getApiBase()}/imports/csv/execute`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
+  const base = getApiBase();
+  let response: Response;
+  try {
+    response = await fetch(`${base}/imports/csv/execute`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  } catch (err) {
+    if (err instanceof TypeError) {
+      throw new ApiHttpError(
+        0,
+        `Cannot reach API at ${base} (${err.message}). Is the API running on that host/port?`,
+      );
+    }
+    throw err;
+  }
   if (!response.ok) {
     try {
       const body = (await response.json()) as { detail?: unknown };
@@ -108,12 +131,20 @@ export async function executeCsvImport(payload: CsvImportExecutePayload): Promis
         body.detail !== null &&
         "row_errors" in body.detail
       ) {
-        const detail = body.detail as { message?: string; row_errors?: Array<{ row_number?: number; errors?: string[] }> };
-        const first = detail.row_errors?.[0];
-        const firstMsg = first?.errors?.[0];
+        const detail = body.detail as {
+          message?: string;
+          row_errors?: CsvImportRowError[];
+        };
+        const rowErrors = (detail.row_errors ?? []).map((r) => ({
+          row_number: r.row_number ?? 0,
+          errors: r.errors ?? [],
+        }));
         const prefix = detail.message ?? "CSV import failed validation";
-        const rowPart = first?.row_number ? ` (row ${first.row_number})` : "";
-        throw new ApiHttpError(response.status, `${prefix}${rowPart}${firstMsg ? `: ${firstMsg}` : ""}`);
+        const summary =
+          rowErrors.length > 0
+            ? `${prefix} (${rowErrors.length} row${rowErrors.length === 1 ? "" : "s"} with errors).`
+            : prefix;
+        throw new CsvImportValidationError(response.status, summary, rowErrors);
       }
       throw new ApiHttpError(response.status, await readApiErrorMessage(response));
     } catch (err) {

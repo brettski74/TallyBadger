@@ -19,7 +19,7 @@ function mockListEndpoints() {
           name: "My tpl",
           has_header_row: true,
           columns: [
-            { attribute_name: "posted_on", data_type: "date", date_format: "yyyy-mm-dd" },
+            { attribute_name: "posted_on", data_type: "date", date_format: "YYYY-MM-DD" },
             { attribute_name: "amount", data_type: "numeric", date_format: null },
           ],
           cel_rule_set_id: null,
@@ -37,7 +37,7 @@ function mockListEndpoints() {
           name: "Bank",
           has_header_row: true,
           columns: [
-            { attribute_name: "posted_on", data_type: "date", date_format: "yyyy-mm-dd" },
+            { attribute_name: "posted_on", data_type: "date", date_format: "YYYY-MM-DD" },
             { attribute_name: "amount", data_type: "numeric", date_format: null },
           ],
           cel_rule_set_id: null,
@@ -165,7 +165,7 @@ describe("CsvImportSection", () => {
       const url = typeof input === "string" ? input : input.toString();
       if (url.includes("/import-templates") && init?.method === "POST") {
         const payload = JSON.parse(String(init.body));
-        expect(payload.columns[0].date_format).toBe("yyyy-mm-dd");
+        expect(payload.columns[0].date_format).toBe("YYYY-MM-DD");
         return new Response(
           JSON.stringify({
             id: 2,
@@ -217,7 +217,7 @@ describe("CsvImportSection", () => {
 
     await userEvent.type(screen.getByLabelText("Attribute for column 1"), "x");
     await userEvent.selectOptions(screen.getByLabelText("Type for column 1"), "date");
-    await userEvent.type(screen.getByLabelText("Date format for column 1"), "yyyy-mm-dd");
+    await userEvent.type(screen.getByLabelText("Date format for column 1"), "YYYY-MM-DD");
     await userEvent.type(screen.getByLabelText("Template name"), "My tpl");
     await userEvent.click(screen.getByRole("button", { name: "Save template" }));
 
@@ -239,7 +239,7 @@ describe("CsvImportSection", () => {
 
     await userEvent.type(screen.getByLabelText("Attribute for column 1"), "date");
     await userEvent.selectOptions(screen.getByLabelText("Type for column 1"), "date");
-    await userEvent.type(screen.getByLabelText("Date format for column 1"), "yyyy-mm-dd");
+    await userEvent.type(screen.getByLabelText("Date format for column 1"), "YYYY-MM-DD");
     await userEvent.type(screen.getByLabelText("Attribute for column 2"), "summary");
     await userEvent.type(screen.getByLabelText("Attribute for column 3"), "dr-account");
     await userEvent.type(screen.getByLabelText("Attribute for column 4"), "cr-account");
@@ -257,6 +257,61 @@ describe("CsvImportSection", () => {
     expect(executeCall).toBeTruthy();
   });
 
+  it("lists every row error when execute returns 422 with row_errors", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/imports/csv/execute") && init?.method === "POST") {
+        return new Response(
+          JSON.stringify({
+            detail: {
+              message: "Validation failed",
+              row_errors: [
+                { row_number: 4, errors: ["bad date on row 4"] },
+                { row_number: 2, errors: ["bad amount"] },
+              ],
+            },
+          }),
+          { status: 422 },
+        );
+      }
+      if (url.endsWith("/import-templates") || url.match(/\/import-templates\?/)) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      if (url.includes("/import-rules/cel/rule-sets")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      return new Response("unmocked", { status: 500 });
+    });
+
+    vi.mocked(readFileAsText).mockResolvedValue("a,b\n1,2\n3,4\n");
+
+    render(<CsvImportSection />);
+    await screen.findByLabelText("CSV file");
+    const file = new File(["dummy"], "t.csv", { type: "text/csv" });
+    await userEvent.upload(screen.getByLabelText("CSV file"), file);
+    await userEvent.click(screen.getByRole("button", { name: "Continue to preview" }));
+
+    await userEvent.type(screen.getByLabelText("Attribute for column 1"), "x");
+    await userEvent.type(screen.getByLabelText("Attribute for column 2"), "y");
+
+    await userEvent.click(screen.getByRole("button", { name: "Execute import" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalled();
+    });
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("2 rows with errors");
+    expect(alert).toHaveTextContent("Row 2:");
+    expect(alert).toHaveTextContent("bad amount");
+    expect(alert).toHaveTextContent("Row 4:");
+    expect(alert).toHaveTextContent("bad date on row 4");
+
+    const items = alert.querySelectorAll(".csv-import-validation-rows li");
+    expect(items[0]).toHaveTextContent("Row 2:");
+    expect(items[1]).toHaveTextContent("Row 4:");
+  });
+
   it("calls onImportSucceeded after successful execute", async () => {
     mockListEndpoints();
     vi.mocked(readFileAsText).mockResolvedValue("date,summary,dr,cr,amount\n2026-07-01,Rent July,Cash,Rent Revenue,1200\n");
@@ -270,7 +325,7 @@ describe("CsvImportSection", () => {
 
     await userEvent.type(screen.getByLabelText("Attribute for column 1"), "date");
     await userEvent.selectOptions(screen.getByLabelText("Type for column 1"), "date");
-    await userEvent.type(screen.getByLabelText("Date format for column 1"), "yyyy-mm-dd");
+    await userEvent.type(screen.getByLabelText("Date format for column 1"), "YYYY-MM-DD");
     await userEvent.type(screen.getByLabelText("Attribute for column 2"), "summary");
     await userEvent.type(screen.getByLabelText("Attribute for column 3"), "dr-account");
     await userEvent.type(screen.getByLabelText("Attribute for column 4"), "cr-account");

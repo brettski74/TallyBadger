@@ -23,6 +23,7 @@ class Settings(BaseSettings):
         return [
             f"http://{self.frontend_host}:{self.frontend_port}",
             f"http://localhost:{self.frontend_port}",
+            f"http://[::1]:{self.frontend_port}",
         ]
 
 

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { CelRuleSetsSection } from "./CelRuleSetsSection";
@@ -119,5 +119,56 @@ describe("CelRuleSetsSection", () => {
     await waitFor(() => {
       expect(screen.getByRole("textbox", { name: /^Rule set name$/i })).toHaveValue("Original");
     });
+  });
+
+  it("moves a rule up when Up is clicked (order not undone by renumber)", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/import-rules/cel/rule-sets/1") && !init?.method) {
+        return new Response(
+          JSON.stringify({
+            id: 1,
+            name: "Two rules",
+            rule_set: {
+              rules: [
+                { name: "Alpha", enabled: true, sort_order: 0, expression: "null", captures: [] },
+                { name: "Beta", enabled: true, sort_order: 1, expression: "null", captures: [] },
+              ],
+            },
+            created_at: "2026-04-01T00:00:00Z",
+            updated_at: "2026-04-01T00:00:00Z",
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.endsWith("/import-rules/cel/rule-sets")) {
+        return new Response(
+          JSON.stringify([{ id: 1, name: "Two rules", updated_at: "2026-04-01T00:00:00Z" }]),
+          { status: 200 },
+        );
+      }
+      return new Response("x", { status: 500 });
+    });
+
+    render(<CelRuleSetsSection />);
+    await userEvent.selectOptions(await screen.findByRole("combobox"), "Two rules");
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Alpha/ })).toBeInTheDocument();
+    });
+
+    let items = screen.getAllByRole("listitem");
+    expect(items).toHaveLength(2);
+    expect(within(items[0]!).getByText("Alpha")).toBeInTheDocument();
+    expect(within(items[1]!).getByText("Beta")).toBeInTheDocument();
+
+    await userEvent.click(within(items[1]!).getAllByRole("button")[0]!);
+
+    const upBeta = within(items[1]!).getByRole("button", { name: "Up" });
+    await userEvent.click(upBeta);
+
+    items = screen.getAllByRole("listitem");
+    expect(within(items[0]!).getByText("Beta")).toBeInTheDocument();
+    expect(within(items[1]!).getByText("Alpha")).toBeInTheDocument();
   });
 });

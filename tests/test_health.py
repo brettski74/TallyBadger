@@ -28,3 +28,15 @@ def test_cors_preflight_for_frontend_origin() -> None:
     )
     assert r.status_code == 200
     assert r.headers["access-control-allow-origin"] == "http://127.0.0.1:5173"
+
+
+def test_cors_preflight_for_ipv6_loopback_frontend_origin() -> None:
+    r = client.options(
+        "/accounts",
+        headers={
+            "Origin": "http://[::1]:5173",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert r.status_code == 200
+    assert r.headers["access-control-allow-origin"] == "http://[::1]:5173"

@@ -12,25 +12,19 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
+from tallybadger.import_dates import parse_import_date_string, parse_import_datetime_string
 from tallybadger.import_rules.cel_engine import evaluate_cel
 from tallybadger.import_rules.cel_rule_set_service import (
     CelRuleSetNotFoundError,
     CelRuleSetService,
 )
+from tallybadger.import_rules.errors import ImportRulesCelError
 from tallybadger.import_templates.models import ImportTemplateColumn
 from tallybadger.ledger.models import JournalEntryOut, JournalEntryWrite, JournalLineIn
 from tallybadger.ledger.service import LedgerService, LedgerValidationError
 
 router = APIRouter(prefix="", tags=["import-csv"])
 
-_TOKEN_TO_STRPTIME = {
-    "yyyy": "%Y",
-    "mm": "%m",
-    "dd": "%d",
-    "HH": "%H",
-    "MM": "%M",
-    "ss": "%S",
-}
 _CURRENCY_PREFIX_RE = re.compile(r"^[^\d+\-(]+")
 
 
@@ -59,13 +53,6 @@ class CsvImportExecuteResult(BaseModel):
     dropped_rows: int = 0
     row_errors: list[CsvImportRowError] = Field(default_factory=list)
     entries: list[JournalEntryOut] = Field(default_factory=list)
-
-
-def _friendly_format_to_strptime(date_format: str) -> str:
-    result = date_format
-    for token, directive in _TOKEN_TO_STRPTIME.items():
-        result = result.replace(token, directive)
-    return result
 
 
 def _parse_decimal_from_csv(raw: str) -> Decimal:
@@ -97,14 +84,17 @@ def _convert_cell(raw: str, col: ImportTemplateColumn) -> Any:
     if col.data_type in ("date", "datetime"):
         if not text:
             return None
-        fmt = _friendly_format_to_strptime(col.date_format or "")
+        fmt = col.date_format or ""
         try:
-            parsed = datetime.strptime(text, fmt)
+            if col.data_type == "date":
+                parsed = parse_import_date_string(text, fmt)
+            else:
+                parsed = parse_import_datetime_string(text, fmt)
         except ValueError as exc:
             raise ValueError(
                 f"invalid {col.data_type} value '{raw}' for format '{col.date_format}'",
             ) from exc
-        return parsed.date() if col.data_type == "date" else parsed
+        return parsed
     raise ValueError(f"unsupported data_type '{col.data_type}'")
 
 
@@ -293,7 +283,11 @@ def execute_csv_import(
             continue
 
         if rule_set is not None:
-            result = evaluate_cel(rule_set, bag)
+            try:
+                result = evaluate_cel(rule_set, bag)
+            except ImportRulesCelError as exc:
+                row_errors.append(CsvImportRowError(row_number=idx, errors=[str(exc)]))
+                continue
             if result.dropped:
                 dropped_rows += 1
                 continue

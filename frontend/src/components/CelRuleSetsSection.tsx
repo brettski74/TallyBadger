@@ -15,7 +15,7 @@ import { ApiHttpError } from "../api/errors";
 const FLAG_OPTIONS: { value: string; label: string }[] = [
   { value: "ignorecase", label: "Ignore case" },
   { value: "multiline", label: "Multiline" },
-  { value: "dotall", label: "Dotall" },
+  { value: "dotall", label: "Dot matches newlines" },
 ];
 
 function expressionPreview(expr: string): string {
@@ -34,8 +34,9 @@ function matcherRowTitle(cap: CelRegexCapture): string {
   return cap.attribute;
 }
 
+/** Assign sort_order from current array position (display order is authoritative). */
 function renumber(rules: CelRule[]): CelRule[] {
-  return [...rules].sort((a, b) => a.sort_order - b.sort_order || 0).map((r, i) => ({ ...r, sort_order: i }));
+  return rules.map((r, i) => ({ ...r, sort_order: i }));
 }
 
 function serializeState(name: string, rules: CelRule[]): string {
@@ -64,17 +65,16 @@ function cloneRules(rules: CelRule[]): CelRule[] {
 }
 
 function normalizeRulesFromApi(rules: CelRule[]): CelRule[] {
-  return renumber(
-    rules.map((r) => ({
-      ...r,
-      captures: r.captures.map((c) => ({ ...c, label: c.label ?? null, flags: c.flags ?? [] })),
-    })),
-  );
+  const sorted = [...rules].sort((a, b) => a.sort_order - b.sort_order || 0);
+  return sorted.map((r, i) => ({
+    ...r,
+    sort_order: i,
+    captures: r.captures.map((c) => ({ ...c, label: c.label ?? null, flags: c.flags ?? [] })),
+  }));
 }
 
 function newRule(sortOrder: number): CelRule {
   return {
-    id: null,
     name: null,
     enabled: true,
     sort_order: sortOrder,
@@ -690,16 +690,19 @@ export function CelRuleSetsSection() {
                     </fieldset>
                   ))}
 
-                  <label>
-                    CEL expression
+                  <div className="rule-sets-cel-field">
+                    <label htmlFor={`rule-cel-expr-${selectedRuleIndex}`} className="rule-sets-cel-label">
+                      CEL expression
+                    </label>
                     <textarea
+                      id={`rule-cel-expr-${selectedRuleIndex}`}
                       value={selectedRule.expression}
                       onChange={(e) => updateRuleAt(selectedRuleIndex!, { expression: e.target.value })}
-                      rows={8}
+                      rows={16}
                       className="rule-sets-cel-textarea"
                       spellCheck={false}
                     />
-                  </label>
+                  </div>
                 </>
               )}
             </div>

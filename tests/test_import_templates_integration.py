@@ -78,7 +78,7 @@ def _sample_rule_set() -> dict:
 
 def _sample_columns() -> list[dict]:
     return [
-        {"attribute_name": "posted_on", "data_type": "date", "date_format": "yyyy-mm-dd"},
+        {"attribute_name": "posted_on", "data_type": "date", "date_format": "YYYY-MM-DD"},
         {"attribute_name": None, "data_type": "string"},
         {"attribute_name": "amount", "data_type": "numeric"},
     ]
@@ -107,7 +107,7 @@ def test_import_template_crud_with_rule_set(import_api_client: TestClient) -> No
     assert body["has_header_row"] is True
     assert body["cel_rule_set_id"] == rs_id
     assert len(body["columns"]) == 3
-    assert body["columns"][0]["date_format"] == "yyyy-mm-dd"
+    assert body["columns"][0]["date_format"] == "YYYY-MM-DD"
     tid = body["id"]
 
     listed = import_api_client.get("/import-templates")
