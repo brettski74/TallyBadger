@@ -97,7 +97,7 @@ def test_csv_import_posts_all_rows_atomically(
         "csv_text": csv_text,
         "has_header_row": True,
         "columns": [
-            {"attribute_name": "date", "data_type": "date", "date_format": "yyyy-mm-dd"},
+            {"attribute_name": "date", "data_type": "date", "date_format": "YYYY-MM-DD"},
             {"attribute_name": "summary", "data_type": "string"},
             {"attribute_name": "dr-account", "data_type": "string"},
             {"attribute_name": "cr-account", "data_type": "string"},
@@ -130,7 +130,7 @@ def test_csv_import_aggregates_row_errors_and_rolls_back(
         "csv_text": csv_text,
         "has_header_row": True,
         "columns": [
-            {"attribute_name": "date", "data_type": "date", "date_format": "yyyy-mm-dd"},
+            {"attribute_name": "date", "data_type": "date", "date_format": "YYYY-MM-DD"},
             {"attribute_name": "summary", "data_type": "string"},
             {"attribute_name": "dr-account", "data_type": "string"},
             {"attribute_name": "cr-account", "data_type": "string"},
@@ -181,7 +181,7 @@ def test_csv_import_applies_optional_cel_rule_set(
         "has_header_row": True,
         "cel_rule_set_id": rule_set_id,
         "columns": [
-            {"attribute_name": "date", "data_type": "date", "date_format": "yyyy-mm-dd"},
+            {"attribute_name": "date", "data_type": "date", "date_format": "YYYY-MM-DD"},
         ],
     }
     r = import_api_client.post("/imports/csv/execute", json=payload)

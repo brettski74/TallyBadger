@@ -13,7 +13,6 @@ def test_cel_rule_can_set_attributes_and_keep_types() -> None:
     rs = CelRuleSet(
         rules=[
             CelRule(
-                id="r1",
                 sort_order=10,
                 expression='{"set":{"category":"rent","amount_copy": attributes["amount"]}}',
             ),
@@ -41,17 +40,17 @@ def test_stop_drop_review_are_nullable_reason_strings() -> None:
     rs = CelRuleSet(
         rules=[
             CelRule(
-                id="a",
+                name="a",
                 sort_order=10,
                 expression='{"set":{"x":1},"review":"needs eyeballs"}',
             ),
             CelRule(
-                id="b",
+                name="b",
                 sort_order=20,
                 expression='{"set":{"x":2},"stop":"done for row"}',
             ),
             CelRule(
-                id="c",
+                name="c",
                 sort_order=30,
                 expression='{"set":{"x":3}}',
             ),
@@ -81,7 +80,6 @@ def test_capture_failure_skips_cel_expression() -> None:
     rs = CelRuleSet(
         rules=[
             CelRule(
-                id="gated",
                 captures=[
                     CelRegexCapture(
                         attribute="description",
@@ -94,10 +92,32 @@ def test_capture_failure_skips_cel_expression() -> None:
     )
     out = evaluate_cel(rs, {"description": "plain text"})
     assert out.attributes.get("expression_ran") is None
-    assert any(
-        t.event == "rule_not_matched" and t.detail.get("reason") == "capture_failed"
-        for t in out.trace
+    failed = next(
+        t for t in out.trace if t.event == "rule_not_matched" and t.detail.get("reason") == "capture_failed"
     )
+    assert failed.detail.get("matcher_label") == "description"
+
+
+def test_capture_failure_trace_uses_matcher_label_when_set() -> None:
+    rs = CelRuleSet(
+        rules=[
+            CelRule(
+                captures=[
+                    CelRegexCapture(
+                        attribute="description",
+                        pattern=r"WILL_NOT_MATCH",
+                        label="Bank memo pattern",
+                    ),
+                ],
+                expression='{"set":{"expression_ran": true}}',
+            ),
+        ],
+    )
+    out = evaluate_cel(rs, {"description": "plain text"})
+    failed = next(
+        t for t in out.trace if t.event == "rule_not_matched" and t.detail.get("reason") == "capture_failed"
+    )
+    assert failed.detail.get("matcher_label") == "Bank memo pattern"
 
 
 def test_second_capture_failure_skips_expression_short_circuits() -> None:

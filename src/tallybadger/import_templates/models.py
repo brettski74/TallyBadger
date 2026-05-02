@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import re
 from typing import Literal, Self
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 ImportColumnDataType = Literal["string", "numeric", "date", "datetime"]
-_ISOISH_DATE_FORMAT_RE = re.compile(r"^[ymdHMs:\-/. T]+$")
 
 
 class ImportTemplateColumn(BaseModel):
@@ -33,9 +31,11 @@ class ImportTemplateColumn(BaseModel):
             if not df:
                 raise ValueError("date_format is required when data_type is date or datetime")
             if "%" in df:
-                raise ValueError("date_format must use ISO-style tokens like yyyy-mm-dd, not POSIX % tokens")
-            if not _ISOISH_DATE_FORMAT_RE.fullmatch(df):
-                raise ValueError("date_format contains unsupported characters")
+                raise ValueError(
+                    "date_format must use Pendulum tokens (e.g. YYYY-MM-DD, M/D/YYYY), not POSIX % tokens",
+                )
+            if any(ord(c) < 32 for c in df):
+                raise ValueError("date_format may not contain control characters")
             object.__setattr__(self, "date_format", df)
         else:
             object.__setattr__(self, "date_format", None)
