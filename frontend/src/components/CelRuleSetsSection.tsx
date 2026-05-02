@@ -581,7 +581,7 @@ export function CelRuleSetsSection() {
                           name: e.target.value === "" ? null : e.target.value,
                         })
                       }
-                      placeholder="Human-readable name"
+                      placeholder="Shown in the rules list and in evaluation traces"
                       autoComplete="off"
                     />
                   </label>
@@ -592,20 +592,6 @@ export function CelRuleSetsSection() {
                       onChange={(e) => updateRuleAt(selectedRuleIndex!, { enabled: e.target.checked })}
                     />
                     Enabled
-                  </label>
-                  <label>
-                    Rule id (optional)
-                    <input
-                      type="text"
-                      value={selectedRule.id ?? ""}
-                      onChange={(e) =>
-                        updateRuleAt(selectedRuleIndex!, {
-                          id: e.target.value.trim() ? e.target.value : null,
-                        })
-                      }
-                      placeholder="Stable id for traces"
-                      autoComplete="off"
-                    />
                   </label>
 
                   <h4>Regex matchers</h4>
