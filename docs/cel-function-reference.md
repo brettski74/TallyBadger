@@ -1,0 +1,99 @@
+# CEL function reference (import rules)
+
+This document is the **authoritative reference** for **custom functions** available in **CEL** expressions used by the import CEL rule path (`evaluate_cel`, CSV execute with a CEL rule set, `POST /import-rules/cel/evaluate`). It is maintained alongside GitHub issues **[#46](https://github.com/brettski74/TallyBadger/issues/46)** (party-aware functions + party data model) and **[#50](https://github.com/brettski74/TallyBadger/issues/50)** (generic attribute helpers).
+
+**Related:** [Import rules engine](import-rules-engine.md) ([#8](https://github.com/brettski74/TallyBadger/issues/8)) — CEL spike contract, `attributes` / `match` activation map, capture gating.
+
+**Convention:** Unless stated otherwise, string arguments are trimmed for lookup; empty strings after trim are invalid input and should surface a **CEL evaluation error** (same class as today: `ImportRulesCelError` → 422 on import). Exact spelling of function names in CEL follows the identifiers registered in code (typically `party`, `party_type`, …).
+
+---
+
+## Status legend
+
+| Status | Meaning |
+|--------|---------|
+| **#46** | Planned in [#46](https://github.com/brettski74/TallyBadger/issues/46); update this doc in the same PR as the implementation. |
+| **#50** | Planned in [#50](https://github.com/brettski74/TallyBadger/issues/50); update this doc in the same PR as the implementation. |
+
+---
+
+## Party and account helpers (**#46**)
+
+These functions read **current ledger state** (active parties, accounts) passed into the CEL runtime when rules run (e.g. CSV import execute). They do **not** change import posting rules: journal construction still requires **exact** `parties.name` (and account names) in the bag where the pipeline already enforces that.
+
+### `party(str) -> string`
+
+- **Argument `str`:** Haystack text (e.g. raw bank description or concatenated fields) to match against each party’s **ordered regex patterns**.
+- **Matching:** For each **active** party, consider patterns in **`sort_order`** ascending. Use Python **`re.search(pattern, haystack)`** per pattern (same engine as elsewhere; document default flags—typically none, so authors may use `(?i)` for case-insensitivity).
+- **Success:** Return the party’s canonical **`name`** (the string import posting expects).
+- **Ambiguity:** If **more than one** active party has at least one pattern that matches the haystack, **fail** the CEL evaluation with an error that **lists the matched party names** (and optionally ids in the message for support).
+- **No match:** If no active party’s patterns match, **fail** the CEL evaluation with a clear **“no party matched”** (or equivalent) message so the row surfaces as a rule failure unless product later adds a nullable variant.
+
+*Note:* Parties with **no** patterns never contribute to `party(str)`; exact-name resolution for posting is unchanged and separate.
+
+### `party_type(str) -> string`
+
+- **Argument `str`:** Canonical **party `name`** (not arbitrary haystack).
+- **Returns:** Party **role** as a string: `customer`, `vendor`, `both`, or `other` (aligned with `PartyRole` / API).
+- **Errors:** Unknown party name, inactive party, or blank input → evaluation error with a clear message.
+
+### `party_subtype(str) -> string`
+
+- **Argument `str`:** Canonical party **name**.
+- **Returns:** That party’s **`subtype`** text; when unset, return an **empty string** (document if implementation chooses CEL `null` instead—keep this file in sync).
+- **Errors:** Unknown or inactive party → evaluation error.
+
+### `revenue_account(str) -> string`
+
+- **Argument `str`:** Canonical party **name**.
+- **Returns:** **`name`** of the party’s configured **default revenue account** (for posting into account-name fields).
+- **Eligibility:** Party **`role`** must be **`customer`** or **`both`**. The party must have **`default_revenue_account_id`** set to an **active** account whose type is suitable for revenue (implementation should validate at **party save** time: account `type == revenue`; CEL may defensively error if misconfigured).
+- **Errors:** Wrong role, missing default, inactive party, unknown name, inactive account → evaluation error with explicit reason.
+
+### `expense_account(str) -> string`
+
+- **Argument `str`:** Canonical party **name**.
+- **Returns:** **`name`** of the party’s configured **default expense account**.
+- **Eligibility:** Party **`role`** must be **`vendor`** or **`both`**. Validate at party save: account `type == expense`.
+- **Errors:** Same style as `revenue_account`.
+
+---
+
+## Generic helpers (**#50**)
+
+### `abs(v) -> number`
+
+- **Argument `v`:** Numeric value (`int` / `double` in CEL terms).
+- **Returns:** Absolute value in the same numeric kind as far as CEL/cel-python allows; document any coercion from Decimal in the attribute bag.
+
+### `day(d) -> int`
+
+- **Argument `d`:** Date or date-time (CEL string ISO date/datetime from attributes, or a type the runtime maps).
+- **Returns:** Day of month **1–31** in the interpreted calendar date.
+
+### `month(d) -> int`
+
+- **Argument `d`:** Date or date-time.
+- **Returns:** Month **1–12**.
+
+### `account_type(str) -> string`
+
+- **Argument `str`:** Canonical **account `name`**.
+- **Returns:** Account type string: `asset`, `liability`, `equity`, `revenue`, `expense`, or `suspense` (aligned with ledger models).
+- **Errors:** Unknown or inactive account → evaluation error.
+
+### `match_date(d, n, t) -> bool`
+
+- **Arguments:** `d` — date (or date-time, using calendar date part); `n` — target day-of-month (1–31); `t` — non-negative integer **tolerance** in days.
+- **Returns:** `true` if the day-of-month of `d` lies in the **closed interval** `[n - t, n + t]` intersected with valid calendar days for that month (define edge behaviour for month lengths explicitly in implementation—e.g. clamp or compare in date space).
+- **Example:** For date **2026-04-10**, `match_date(d, 8, 2)` is **true** (10 ∈ [6, 10]); `match_date(d, 8, 1)` is **false** (10 ∉ [7, 9]).
+
+---
+
+## Changelog (maintenance)
+
+| When | Change |
+|------|--------|
+| *(initial)* | Stub reference: #46 party helpers + #50 generic helpers split from monolithic #50 description. |
+
+Update this table whenever functions are added or signatures/semantics change.
