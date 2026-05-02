@@ -46,6 +46,7 @@ export interface JournalEntryWrite {
   summary: string;
   description: string | null;
   lines: JournalLineIn[];
+  requires_review?: boolean;
 }
 
 export interface ListJournalEntriesParams {

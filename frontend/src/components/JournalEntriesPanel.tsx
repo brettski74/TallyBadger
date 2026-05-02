@@ -72,6 +72,7 @@ export function JournalEntriesPanel({
       const batch = await listJournalEntries({
         from_date: fromDate || undefined,
         to_date: toDate || undefined,
+        needs_review: needsReviewOnly || undefined,
         limit: PAGE_SIZE,
         offset: 0,
       });
