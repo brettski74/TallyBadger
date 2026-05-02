@@ -2,13 +2,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 
 import type { Account } from "../api/accounts";
 import type { Party } from "../api/parties";
-import {
-  createSettlement,
-  getLedgerSettings,
-  listOpenObligations,
-  updateLedgerSettings,
-  type Obligation,
-} from "../api/settlements";
+import { createSettlement, listOpenObligations, type Obligation } from "../api/settlements";
 
 interface SettlementsSectionProps {
   accounts: Account[];
@@ -23,31 +17,12 @@ export function SettlementsSection({ accounts, parties }: SettlementsSectionProp
   const [cashAccountId, setCashAccountId] = useState("");
   const [note, setNote] = useState("");
 
-  const [arId, setArId] = useState("");
-  const [apId, setApId] = useState("");
-  const [urId, setUrId] = useState("");
-  const [settingsError, setSettingsError] = useState<string | null>(null);
-
   const [obligations, setObligations] = useState<Obligation[]>([]);
   const [allocations, setAllocations] = useState<Record<number, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [submitMessage, setSubmitMessage] = useState<string | null>(null);
 
   const cashOptions = useMemo(() => accounts.filter((account) => account.type === "asset"), [accounts]);
-
-  useEffect(() => {
-    async function loadSettings() {
-      try {
-        const settings = await getLedgerSettings();
-        setArId(settings.accounts_receivable_account_id ? String(settings.accounts_receivable_account_id) : "");
-        setApId(settings.accounts_payable_account_id ? String(settings.accounts_payable_account_id) : "");
-        setUrId(settings.unearned_revenue_account_id ? String(settings.unearned_revenue_account_id) : "");
-      } catch (err) {
-        setSettingsError(err instanceof Error ? err.message : "Failed to load ledger settings");
-      }
-    }
-    void loadSettings();
-  }, []);
 
   useEffect(() => {
     async function loadObligations() {
@@ -95,23 +70,6 @@ export function SettlementsSection({ accounts, parties }: SettlementsSectionProp
     return out;
   }
 
-  async function handleSaveSettings(event: FormEvent) {
-    event.preventDefault();
-    setSettingsError(null);
-    try {
-      const settings = await updateLedgerSettings({
-        accounts_receivable_account_id: arId ? Number(arId) : null,
-        accounts_payable_account_id: apId ? Number(apId) : null,
-        unearned_revenue_account_id: urId ? Number(urId) : null,
-      });
-      setArId(settings.accounts_receivable_account_id ? String(settings.accounts_receivable_account_id) : "");
-      setApId(settings.accounts_payable_account_id ? String(settings.accounts_payable_account_id) : "");
-      setUrId(settings.unearned_revenue_account_id ? String(settings.unearned_revenue_account_id) : "");
-    } catch (err) {
-      setSettingsError(err instanceof Error ? err.message : "Failed to update settings");
-    }
-  }
-
   async function handleSubmitSettlement(event: FormEvent) {
     event.preventDefault();
     setFormError(null);
@@ -148,41 +106,9 @@ export function SettlementsSection({ accounts, parties }: SettlementsSectionProp
   return (
     <>
       <section className="card journal-card-wide">
-        <h2>Settlement account roles</h2>
-        <form onSubmit={(e) => void handleSaveSettings(e)}>
-          <label>
-            Accounts receivable account
-            <select value={arId} onChange={(e) => setArId(e.target.value)}>
-              <option value="">Select asset account</option>
-              {accounts.filter((a) => a.type === "asset").map((a) => (
-                <option key={a.id} value={a.id}>{a.name}</option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Accounts payable account
-            <select value={apId} onChange={(e) => setApId(e.target.value)}>
-              <option value="">Select liability account</option>
-              {accounts.filter((a) => a.type === "liability").map((a) => (
-                <option key={a.id} value={a.id}>{a.name}</option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Unearned revenue account
-            <select value={urId} onChange={(e) => setUrId(e.target.value)}>
-              <option value="">Select liability account</option>
-              {accounts.filter((a) => a.type === "liability").map((a) => (
-                <option key={a.id} value={a.id}>{a.name}</option>
-              ))}
-            </select>
-          </label>
-          <button type="submit">Save settlement roles</button>
-          {settingsError && <p className="error" role="alert">{settingsError}</p>}
-        </form>
-      </section>
-
-      <section className="card journal-card-wide">
+        <p className="muted">
+          A/R, A/P, and unearned revenue accounts are configured under <strong>Configuration</strong>.
+        </p>
         <h2>Settle obligations</h2>
         <form noValidate onSubmit={(e) => void handleSubmitSettlement(e)}>
           <label>

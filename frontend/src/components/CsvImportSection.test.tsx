@@ -2,12 +2,25 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+import type { Account } from "../api/accounts";
 import { CsvImportSection } from "./CsvImportSection";
 import { readFileAsText } from "../lib/readFileAsText";
 
 vi.mock("../lib/readFileAsText", () => ({
   readFileAsText: vi.fn(),
 }));
+
+const TEMPLATE_API_DEFAULTS = {
+  default_import_account_id: null,
+  default_import_normal_balance: null,
+} as const;
+
+const EMPTY_ACCOUNTS: Account[] = [];
+
+const SAMPLE_ACCOUNTS: Account[] = [
+  { id: 1, name: "Cash", type: "asset", is_active: true, created_at: "2026-04-01T00:00:00Z", updated_at: "2026-04-01T00:00:00Z" },
+  { id: 2, name: "Loans Payable", type: "liability", is_active: true, created_at: "2026-04-01T00:00:00Z", updated_at: "2026-04-01T00:00:00Z" },
+];
 
 function mockListEndpoints() {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -25,6 +38,7 @@ function mockListEndpoints() {
           cel_rule_set_id: null,
           created_at: "2026-04-01T00:00:00Z",
           updated_at: "2026-04-01T00:00:00Z",
+          ...TEMPLATE_API_DEFAULTS,
         }),
         { status: 201 },
       );
@@ -43,6 +57,7 @@ function mockListEndpoints() {
           cel_rule_set_id: null,
           created_at: "2026-04-01T00:00:00Z",
           updated_at: "2026-04-01T00:00:00Z",
+          ...TEMPLATE_API_DEFAULTS,
         }),
         { status: 200 },
       );
@@ -76,7 +91,7 @@ describe("CsvImportSection", () => {
     mockListEndpoints();
     vi.mocked(readFileAsText).mockResolvedValue("");
 
-    render(<CsvImportSection />);
+    render(<CsvImportSection accounts={EMPTY_ACCOUNTS} />);
 
     await screen.findByRole("heading", { name: "CSV import" });
     const form = screen.getByRole("button", { name: "Continue to preview" }).closest("form");
@@ -91,7 +106,7 @@ describe("CsvImportSection", () => {
     const body = "c1,c2\n" + Array.from({ length: 30 }, (_, i) => `${i},v`).join("\n");
     vi.mocked(readFileAsText).mockResolvedValue(body);
 
-    render(<CsvImportSection />);
+    render(<CsvImportSection accounts={EMPTY_ACCOUNTS} />);
     await screen.findByLabelText("CSV file");
 
     const file = new File(["dummy"], "rows.csv", { type: "text/csv" });
@@ -111,7 +126,7 @@ describe("CsvImportSection", () => {
     mockListEndpoints();
     vi.mocked(readFileAsText).mockResolvedValue("posted_on,amount,extra\n2024-01-01,12,note\n");
 
-    render(<CsvImportSection />);
+    render(<CsvImportSection accounts={EMPTY_ACCOUNTS} />);
     await screen.findByLabelText("Import template");
     await userEvent.selectOptions(screen.getByLabelText("Import template"), "1");
 
@@ -128,11 +143,28 @@ describe("CsvImportSection", () => {
     expect(screen.getByLabelText("First row is a header")).toBeChecked();
   });
 
+  it("sets default import normal balance from selected account type", async () => {
+    mockListEndpoints();
+    vi.mocked(readFileAsText).mockResolvedValue("a,b\n1,2\n");
+
+    render(<CsvImportSection accounts={SAMPLE_ACCOUNTS} />);
+    await screen.findByLabelText("CSV file");
+    const file = new File(["dummy"], "t.csv", { type: "text/csv" });
+    await userEvent.upload(screen.getByLabelText("CSV file"), file);
+    await userEvent.click(screen.getByRole("button", { name: "Continue to preview" }));
+
+    await userEvent.selectOptions(screen.getByLabelText("Default import account"), "1");
+    expect(screen.getByLabelText("Default import account normal balance")).toHaveValue("debit");
+
+    await userEvent.selectOptions(screen.getByLabelText("Default import account"), "2");
+    expect(screen.getByLabelText("Default import account normal balance")).toHaveValue("credit");
+  });
+
   it("disables save when template name is blank", async () => {
     mockListEndpoints();
     vi.mocked(readFileAsText).mockResolvedValue("a,b\n1,2\n");
 
-    render(<CsvImportSection />);
+    render(<CsvImportSection accounts={EMPTY_ACCOUNTS} />);
     await screen.findByLabelText("CSV file");
     const file = new File(["dummy"], "t.csv", { type: "text/csv" });
     await userEvent.upload(screen.getByLabelText("CSV file"), file);
@@ -146,7 +178,7 @@ describe("CsvImportSection", () => {
     mockListEndpoints();
     vi.mocked(readFileAsText).mockResolvedValue("posted_on,amount,memo\n2024-01-01,12.34,hello\n");
 
-    render(<CsvImportSection />);
+    render(<CsvImportSection accounts={EMPTY_ACCOUNTS} />);
     await screen.findByLabelText("CSV file");
     const file = new File(["dummy"], "t.csv", { type: "text/csv" });
     await userEvent.upload(screen.getByLabelText("CSV file"), file);
@@ -178,6 +210,7 @@ describe("CsvImportSection", () => {
             cel_rule_set_id: null,
             created_at: "2026-04-01T00:00:00Z",
             updated_at: "2026-04-01T00:00:00Z",
+            ...TEMPLATE_API_DEFAULTS,
           }),
           { status: 201 },
         );
@@ -192,6 +225,7 @@ describe("CsvImportSection", () => {
             cel_rule_set_id: null,
             created_at: "2026-04-01T00:00:00Z",
             updated_at: "2026-04-01T00:00:00Z",
+            ...TEMPLATE_API_DEFAULTS,
           }),
           { status: 200 },
         );
@@ -209,7 +243,7 @@ describe("CsvImportSection", () => {
 
     vi.mocked(readFileAsText).mockResolvedValue("a,b\n1,2\n");
 
-    render(<CsvImportSection />);
+    render(<CsvImportSection accounts={EMPTY_ACCOUNTS} />);
     await screen.findByLabelText("CSV file");
     const file = new File(["dummy"], "t.csv", { type: "text/csv" });
     await userEvent.upload(screen.getByLabelText("CSV file"), file);
@@ -231,7 +265,7 @@ describe("CsvImportSection", () => {
     const fetchMock = mockListEndpoints();
     vi.mocked(readFileAsText).mockResolvedValue("date,summary,dr,cr,amount\n2026-07-01,Rent July,Cash,Rent Revenue,1200\n");
 
-    render(<CsvImportSection />);
+    render(<CsvImportSection accounts={EMPTY_ACCOUNTS} />);
     await screen.findByLabelText("CSV file");
     const file = new File(["dummy"], "import.csv", { type: "text/csv" });
     await userEvent.upload(screen.getByLabelText("CSV file"), file);
@@ -285,7 +319,7 @@ describe("CsvImportSection", () => {
 
     vi.mocked(readFileAsText).mockResolvedValue("a,b\n1,2\n3,4\n");
 
-    render(<CsvImportSection />);
+    render(<CsvImportSection accounts={EMPTY_ACCOUNTS} />);
     await screen.findByLabelText("CSV file");
     const file = new File(["dummy"], "t.csv", { type: "text/csv" });
     await userEvent.upload(screen.getByLabelText("CSV file"), file);
@@ -317,7 +351,7 @@ describe("CsvImportSection", () => {
     vi.mocked(readFileAsText).mockResolvedValue("date,summary,dr,cr,amount\n2026-07-01,Rent July,Cash,Rent Revenue,1200\n");
     const onImportSucceeded = vi.fn();
 
-    render(<CsvImportSection onImportSucceeded={onImportSucceeded} />);
+    render(<CsvImportSection accounts={EMPTY_ACCOUNTS} onImportSucceeded={onImportSucceeded} />);
     await screen.findByLabelText("CSV file");
     const file = new File(["dummy"], "import.csv", { type: "text/csv" });
     await userEvent.upload(screen.getByLabelText("CSV file"), file);

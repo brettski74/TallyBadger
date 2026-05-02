@@ -1,5 +1,6 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
+import type { Account } from "../api/accounts";
 import { listCelRuleSets, type CelRuleSetSummary } from "../api/celRuleSets";
 import {
   ApiHttpError,
@@ -12,6 +13,7 @@ import {
   type ImportColumnDataType,
   type ImportTemplate,
   type ImportTemplateColumn,
+  type ImportTemplateNormalBalance,
   type ImportTemplateSummary,
 } from "../api/importTemplates";
 import { parseCsv } from "../lib/csvParse";
@@ -30,6 +32,13 @@ interface EditableColumn {
 const PREVIEW_LIMITS: PreviewRowLimit[] = [10, 25, 50, 100];
 
 const DATA_TYPES: ImportColumnDataType[] = ["string", "numeric", "date", "datetime"];
+
+function inferImportNormalFromAccountType(type: Account["type"]): ImportTemplateNormalBalance {
+  if (type === "asset" || type === "expense" || type === "suspense") {
+    return "debit";
+  }
+  return "credit";
+}
 
 function defaultColumns(count: number): EditableColumn[] {
   return Array.from({ length: count }, () => ({
@@ -85,21 +94,26 @@ function baselineKey(parts: {
   celRuleSetId: string;
   templateName: string;
   columns: EditableColumn[];
+  defaultImportAccountId: string;
+  defaultImportNormalBalance: string;
 }): string {
   return JSON.stringify({
     hasHeaderRow: parts.hasHeaderRow,
     celRuleSetId: parts.celRuleSetId,
     templateName: parts.templateName.trim(),
     columns: parts.columns,
+    defaultImportAccountId: parts.defaultImportAccountId,
+    defaultImportNormalBalance: parts.defaultImportNormalBalance,
   });
 }
 
 export interface CsvImportSectionProps {
+  accounts: Account[];
   /** Called after a successful `POST /imports/csv/execute` (e.g. switch main tab to journal). */
   onImportSucceeded?: () => void;
 }
 
-export function CsvImportSection({ onImportSucceeded }: CsvImportSectionProps = {}) {
+export function CsvImportSection({ accounts, onImportSucceeded }: CsvImportSectionProps) {
   const [step, setStep] = useState<Step>("start");
   const [listError, setListError] = useState<string | null>(null);
   const [templates, setTemplates] = useState<ImportTemplateSummary[]>([]);
@@ -119,6 +133,8 @@ export function CsvImportSection({ onImportSucceeded }: CsvImportSectionProps = 
   const [celRuleSetId, setCelRuleSetId] = useState<string>("");
   const [templateNameInput, setTemplateNameInput] = useState("");
   const [loadedTemplateId, setLoadedTemplateId] = useState<number | null>(null);
+  const [defaultImportAccountId, setDefaultImportAccountId] = useState("");
+  const [defaultImportNormalBalance, setDefaultImportNormalBalance] = useState<"" | ImportTemplateNormalBalance>("");
   const [baseline, setBaseline] = useState<string>("");
 
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -178,8 +194,17 @@ export function CsvImportSection({ onImportSucceeded }: CsvImportSectionProps = 
   }, [startTemplateId]);
 
   const isDirty = useMemo(
-    () => baseline !== baselineKey({ hasHeaderRow, celRuleSetId, templateName: templateNameInput, columns }),
-    [baseline, hasHeaderRow, celRuleSetId, templateNameInput, columns],
+    () =>
+      baseline !==
+      baselineKey({
+        hasHeaderRow,
+        celRuleSetId,
+        templateName: templateNameInput,
+        columns,
+        defaultImportAccountId,
+        defaultImportNormalBalance,
+      }),
+    [baseline, hasHeaderRow, celRuleSetId, templateNameInput, columns, defaultImportAccountId, defaultImportNormalBalance],
   );
 
   const dataRows = useMemo(() => {
@@ -203,6 +228,8 @@ export function CsvImportSection({ onImportSucceeded }: CsvImportSectionProps = 
     setCelRuleSetId("");
     setTemplateNameInput("");
     setLoadedTemplateId(null);
+    setDefaultImportAccountId("");
+    setDefaultImportNormalBalance("");
     setBaseline("");
     setSaveError(null);
     setContinueError(null);
@@ -216,18 +243,25 @@ export function CsvImportSection({ onImportSucceeded }: CsvImportSectionProps = 
     ruleId: string,
     name: string,
     templateId: number | null,
+    importDefaults?: { accountId: string; normal: "" | ImportTemplateNormalBalance },
   ) {
+    const acctId = importDefaults?.accountId ?? "";
+    const normalBal = importDefaults?.normal ?? "";
     setColumns(nextColumns);
     setHasHeaderRow(header);
     setCelRuleSetId(ruleId);
     setTemplateNameInput(name);
     setLoadedTemplateId(templateId);
+    setDefaultImportAccountId(acctId);
+    setDefaultImportNormalBalance(normalBal);
     setBaseline(
       baselineKey({
         hasHeaderRow: header,
         celRuleSetId: ruleId,
         templateName: name,
         columns: nextColumns,
+        defaultImportAccountId: acctId,
+        defaultImportNormalBalance: normalBal,
       }),
     );
   }
@@ -278,7 +312,13 @@ export function CsvImportSection({ onImportSucceeded }: CsvImportSectionProps = 
     }
 
     setRawRows(rows);
-    applySnapshot(nextColumns, header, ruleId, name, tid);
+    applySnapshot(nextColumns, header, ruleId, name, tid, {
+      accountId: tpl?.default_import_account_id != null ? String(tpl.default_import_account_id) : "",
+      normal:
+        tpl?.default_import_normal_balance === "debit" || tpl?.default_import_normal_balance === "credit"
+          ? tpl.default_import_normal_balance
+          : "",
+    });
     setStep("preview");
   }
 
@@ -307,6 +347,8 @@ export function CsvImportSection({ onImportSucceeded }: CsvImportSectionProps = 
     has_header_row: boolean;
     columns: ImportTemplateColumn[];
     cel_rule_set_id: number | null;
+    default_import_account_id: number | null;
+    default_import_normal_balance: ImportTemplateNormalBalance | null;
   }): Promise<ImportTemplate | null> {
     const tryPatch = async (id: number) => patchImportTemplate(id, body);
 
@@ -376,6 +418,11 @@ export function CsvImportSection({ onImportSucceeded }: CsvImportSectionProps = 
         has_header_row: hasHeaderRow,
         columns: toApiColumns(columns),
         cel_rule_set_id: celRuleSetId ? Number(celRuleSetId) : null,
+        default_import_account_id: defaultImportAccountId ? Number(defaultImportAccountId) : null,
+        default_import_normal_balance:
+          defaultImportNormalBalance === "debit" || defaultImportNormalBalance === "credit"
+            ? defaultImportNormalBalance
+            : null,
       };
       const saved = await persistWithOptionalOverwrite(body);
       if (!saved) {
@@ -383,12 +430,22 @@ export function CsvImportSection({ onImportSucceeded }: CsvImportSectionProps = 
       }
       setTemplates(await listImportTemplates());
       setLoadedTemplateId(saved.id);
+      const nextAcct =
+        saved.default_import_account_id != null ? String(saved.default_import_account_id) : "";
+      const nextNorm =
+        saved.default_import_normal_balance === "debit" || saved.default_import_normal_balance === "credit"
+          ? saved.default_import_normal_balance
+          : "";
+      setDefaultImportAccountId(nextAcct);
+      setDefaultImportNormalBalance(nextNorm);
       setBaseline(
         baselineKey({
           hasHeaderRow: saved.has_header_row,
           celRuleSetId: saved.cel_rule_set_id != null ? String(saved.cel_rule_set_id) : "",
           templateName: saved.name,
           columns: saved.columns.map(fromApiColumn),
+          defaultImportAccountId: nextAcct,
+          defaultImportNormalBalance: nextNorm,
         }),
       );
       setTemplateNameInput(saved.name);
@@ -432,6 +489,11 @@ export function CsvImportSection({ onImportSucceeded }: CsvImportSectionProps = 
         has_header_row: hasHeaderRow,
         columns: toApiColumns(columns),
         cel_rule_set_id: celRuleSetId ? Number(celRuleSetId) : null,
+        default_import_account_id: defaultImportAccountId ? Number(defaultImportAccountId) : null,
+        default_import_normal_balance:
+          defaultImportNormalBalance === "debit" || defaultImportNormalBalance === "credit"
+            ? defaultImportNormalBalance
+            : null,
       });
       setExecuteResult(result);
       onImportSucceeded?.();
@@ -687,6 +749,59 @@ export function CsvImportSection({ onImportSucceeded }: CsvImportSectionProps = 
                   ))}
                 </select>
               </label>
+
+              <label>
+                Default import account (optional)
+                <select
+                  aria-label="Default import account"
+                  value={defaultImportAccountId}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setDefaultImportAccountId(v);
+                    if (!v) {
+                      setDefaultImportNormalBalance("");
+                      return;
+                    }
+                    const acct = accounts.find((a) => String(a.id) === v);
+                    if (acct) {
+                      setDefaultImportNormalBalance(inferImportNormalFromAccountType(acct.type));
+                    }
+                  }}
+                >
+                  <option value="">— None —</option>
+                  {accounts
+                    .filter((a) => a.is_active)
+                    .map((a) => (
+                      <option key={a.id} value={String(a.id)}>
+                        {a.name} ({a.type})
+                      </option>
+                    ))}
+                </select>
+              </label>
+              <label>
+                Amount sign treats default account as
+                <select
+                  aria-label="Default import account normal balance"
+                  value={defaultImportNormalBalance}
+                  disabled={!defaultImportAccountId}
+                  onChange={(e) =>
+                    setDefaultImportNormalBalance(
+                      e.target.value === "debit" || e.target.value === "credit"
+                        ? e.target.value
+                        : "",
+                    )
+                  }
+                >
+                  <option value="">Infer from account type</option>
+                  <option value="debit">Debit-normal (e.g. asset — +amount increases via debit)</option>
+                  <option value="credit">Credit-normal (e.g. liability — +amount increases via credit)</option>
+                </select>
+              </label>
+              <p className="muted">
+                For simple rows, a signed amount together with this setting fills the default account on the correct
+                side when rules leave a side blank; the other side uses unallocated suspense if needed (those entries
+                are flagged for review). If unset, only unallocated accounts apply.
+              </p>
 
               <label>
                 Template name (optional)

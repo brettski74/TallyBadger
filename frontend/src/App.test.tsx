@@ -183,7 +183,7 @@ describe("App", () => {
     expect(screen.getByLabelText("Import template")).toBeInTheDocument();
   });
 
-  it("shows settlements tab and loads role settings", async () => {
+  it("shows configuration tab and loads ledger settings", async () => {
     mockFetchImplementation([
       () => new Response(JSON.stringify([]), { status: 200 }),
       () => new Response(JSON.stringify([]), { status: 200 }),
@@ -193,6 +193,8 @@ describe("App", () => {
             accounts_receivable_account_id: null,
             accounts_payable_account_id: null,
             unearned_revenue_account_id: null,
+            unallocated_debits_account_id: null,
+            unallocated_credits_account_id: null,
             updated_at: "2026-04-01T00:00:00Z",
           }),
           { status: 200 },
@@ -201,9 +203,24 @@ describe("App", () => {
 
     render(<App />);
     const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Configuration" }));
+
+    expect(await screen.findByRole("heading", { name: "Configuration" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save configuration" })).toBeInTheDocument();
+  });
+
+  it("shows settlements tab without account role form", async () => {
+    mockFetchImplementation([
+      () => new Response(JSON.stringify([]), { status: 200 }),
+      () => new Response(JSON.stringify([]), { status: 200 }),
+    ]);
+
+    render(<App />);
+    const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: "Settlements" }));
 
-    expect(await screen.findByRole("heading", { name: "Settlement account roles" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Settle obligations" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Settlement account roles" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Post settlement" })).toBeInTheDocument();
   });
 });

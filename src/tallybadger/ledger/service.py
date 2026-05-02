@@ -404,7 +404,9 @@ class LedgerService:
                 cur.execute(
                     """
                     SELECT accounts_receivable_account_id, accounts_payable_account_id,
-                           unearned_revenue_account_id, updated_at
+                           unearned_revenue_account_id,
+                           unallocated_debits_account_id, unallocated_credits_account_id,
+                           updated_at
                     FROM ledger_settings
                     WHERE id = 1
                     """
@@ -424,21 +426,35 @@ class LedgerService:
                         self._assert_account_type(cur, payload.accounts_payable_account_id, "liability")
                     if payload.unearned_revenue_account_id is not None:
                         self._assert_account_type(cur, payload.unearned_revenue_account_id, "liability")
+                    if payload.unallocated_debits_account_id is not None:
+                        self._assert_account_type(cur, payload.unallocated_debits_account_id, "suspense")
+                    if payload.unallocated_credits_account_id is not None:
+                        self._assert_account_type(cur, payload.unallocated_credits_account_id, "suspense")
                     cur.execute(
                         """
                         UPDATE ledger_settings
                         SET accounts_receivable_account_id = COALESCE(%s, accounts_receivable_account_id),
                             accounts_payable_account_id = COALESCE(%s, accounts_payable_account_id),
                             unearned_revenue_account_id = COALESCE(%s, unearned_revenue_account_id),
+                            unallocated_debits_account_id = COALESCE(
+                                %s, unallocated_debits_account_id
+                            ),
+                            unallocated_credits_account_id = COALESCE(
+                                %s, unallocated_credits_account_id
+                            ),
                             updated_at = NOW()
                         WHERE id = 1
                         RETURNING accounts_receivable_account_id, accounts_payable_account_id,
-                                  unearned_revenue_account_id, updated_at
+                                  unearned_revenue_account_id,
+                                  unallocated_debits_account_id, unallocated_credits_account_id,
+                                  updated_at
                         """,
                         (
                             payload.accounts_receivable_account_id,
                             payload.accounts_payable_account_id,
                             payload.unearned_revenue_account_id,
+                            payload.unallocated_debits_account_id,
+                            payload.unallocated_credits_account_id,
                         ),
                     )
                     row = cur.fetchone()
@@ -670,6 +686,7 @@ class LedgerService:
         *,
         from_date=None,
         to_date=None,
+        needs_review: bool | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> list[JournalEntryListItem]:
@@ -681,6 +698,8 @@ class LedgerService:
         if to_date is not None:
             conditions.append("je.entry_date <= %s")
             params.append(to_date)
+        if needs_review is True:
+            conditions.append("je.requires_review IS TRUE")
 
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         list_params = [*params, limit, offset]
@@ -688,7 +707,8 @@ class LedgerService:
             with conn.cursor(row_factory=dict_row) as cur:
                 cur.execute(
                     f"""
-                    SELECT je.id, je.entry_date, je.summary, je.description, je.created_at, je.updated_at
+                    SELECT je.id, je.entry_date, je.summary, je.description, je.requires_review,
+                           je.created_at, je.updated_at
                     FROM journal_entries je
                     WHERE EXISTS (SELECT 1 FROM journal_lines jl WHERE jl.entry_id = je.id)
                     {where_clause.replace("WHERE", "AND") if where_clause else ""}
@@ -738,6 +758,7 @@ class LedgerService:
                     entry_date=header["entry_date"],
                     summary=header["summary"],
                     description=header["description"],
+                    requires_review=bool(header.get("requires_review")),
                     created_at=header["created_at"],
                     updated_at=header["updated_at"],
                     debit_side_label=debit_label,
@@ -805,11 +826,16 @@ class LedgerService:
                         self._assert_all_line_parties_exist(cur, payload.lines)
                         cur.execute(
                             """
-                            INSERT INTO journal_entries (entry_date, summary, description)
-                            VALUES (%s, %s, %s)
+                            INSERT INTO journal_entries (entry_date, summary, description, requires_review)
+                            VALUES (%s, %s, %s, %s)
                             RETURNING id
                             """,
-                            (payload.entry_date, payload.summary.strip(), payload.description),
+                            (
+                                payload.entry_date,
+                                payload.summary.strip(),
+                                payload.description,
+                                payload.requires_review,
+                            ),
                         )
                         entry_id = cur.fetchone()["id"]
                         for line in payload.lines:
@@ -843,11 +869,16 @@ class LedgerService:
                             self._assert_all_line_parties_exist(cur, payload.lines)
                             cur.execute(
                                 """
-                                INSERT INTO journal_entries (entry_date, summary, description)
-                                VALUES (%s, %s, %s)
+                                INSERT INTO journal_entries (entry_date, summary, description, requires_review)
+                                VALUES (%s, %s, %s, %s)
                                 RETURNING id
                                 """,
-                                (payload.entry_date, payload.summary.strip(), payload.description),
+                                (
+                                    payload.entry_date,
+                                    payload.summary.strip(),
+                                    payload.description,
+                                    payload.requires_review,
+                                ),
                             )
                             entry_id = cur.fetchone()["id"]
                             for line in payload.lines:
@@ -878,10 +909,17 @@ class LedgerService:
                         cur.execute(
                             """
                             UPDATE journal_entries
-                            SET entry_date = %s, summary = %s, description = %s, updated_at = NOW()
+                            SET entry_date = %s, summary = %s, description = %s,
+                                requires_review = %s, updated_at = NOW()
                             WHERE id = %s
                             """,
-                            (payload.entry_date, payload.summary.strip(), payload.description, entry_id),
+                            (
+                                payload.entry_date,
+                                payload.summary.strip(),
+                                payload.description,
+                                payload.requires_review,
+                                entry_id,
+                            ),
                         )
                         if cur.rowcount == 0:
                             raise LedgerNotFoundError(f"journal entry {entry_id} not found")
@@ -923,7 +961,7 @@ class LedgerService:
             with conn.cursor(row_factory=dict_row) as cur:
                 cur.execute(
                     """
-                    SELECT id, entry_date, summary, description, created_at, updated_at
+                    SELECT id, entry_date, summary, description, requires_review, created_at, updated_at
                     FROM journal_entries
                     WHERE id = %s
                     """,

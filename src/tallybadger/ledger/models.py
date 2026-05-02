@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-AccountType = Literal["asset", "liability", "equity", "revenue", "expense"]
+AccountType = Literal["asset", "liability", "equity", "revenue", "expense", "suspense"]
 PartyRole = Literal["customer", "vendor", "both", "other"]
 AccrualDirection = Literal["revenue", "expense"]
 AccrualFrequency = Literal["weekly", "monthly_day", "yearly"]
@@ -80,6 +80,7 @@ class JournalEntryWrite(BaseModel):
     summary: str = Field(min_length=1, max_length=200)
     description: str | None = Field(default=None, max_length=500)
     lines: list[JournalLineIn] = Field(min_length=2)
+    requires_review: bool = False
 
 
 class JournalEntryOut(BaseModel):
@@ -89,6 +90,7 @@ class JournalEntryOut(BaseModel):
     entry_date: date
     summary: str
     description: str | None
+    requires_review: bool = False
     created_at: datetime
     updated_at: datetime
     lines: list[JournalLineOut]
@@ -205,6 +207,8 @@ class LedgerSettingsUpdate(BaseModel):
     accounts_receivable_account_id: int | None = Field(default=None, gt=0)
     accounts_payable_account_id: int | None = Field(default=None, gt=0)
     unearned_revenue_account_id: int | None = Field(default=None, gt=0)
+    unallocated_debits_account_id: int | None = Field(default=None, gt=0)
+    unallocated_credits_account_id: int | None = Field(default=None, gt=0)
 
 
 class LedgerSettingsOut(BaseModel):
@@ -213,6 +217,8 @@ class LedgerSettingsOut(BaseModel):
     accounts_receivable_account_id: int | None
     accounts_payable_account_id: int | None
     unearned_revenue_account_id: int | None
+    unallocated_debits_account_id: int | None
+    unallocated_credits_account_id: int | None
     updated_at: datetime
 
 

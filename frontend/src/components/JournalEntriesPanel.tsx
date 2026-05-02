@@ -55,10 +55,12 @@ export function JournalEntriesPanel({
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [hasMore, setHasMore] = useState(false);
+  const [needsReviewOnly, setNeedsReviewOnly] = useState(false);
 
   const [formEntryDate, setFormEntryDate] = useState("");
   const [formSummary, setFormSummary] = useState("");
   const [formDescription, setFormDescription] = useState("");
+  const [formRequiresReview, setFormRequiresReview] = useState(false);
   const [formLines, setFormLines] = useState<LineDraft[] | null>(null);
   const [formLoading, setFormLoading] = useState(false);
   const [formLoadError, setFormLoadError] = useState<string | null>(null);
@@ -70,6 +72,7 @@ export function JournalEntriesPanel({
       const batch = await listJournalEntries({
         from_date: fromDate || undefined,
         to_date: toDate || undefined,
+        needs_review: needsReviewOnly || undefined,
         limit: PAGE_SIZE,
         offset: 0,
       });
@@ -80,7 +83,7 @@ export function JournalEntriesPanel({
     } finally {
       setListLoading(false);
     }
-  }, [fromDate, toDate]);
+  }, [fromDate, toDate, needsReviewOnly]);
 
   useEffect(() => {
     if (view !== "list") {
@@ -96,6 +99,7 @@ export function JournalEntriesPanel({
       const batch = await listJournalEntries({
         from_date: fromDate || undefined,
         to_date: toDate || undefined,
+        needs_review: needsReviewOnly || undefined,
         limit: PAGE_SIZE,
         offset: entries.length,
       });
@@ -113,6 +117,7 @@ export function JournalEntriesPanel({
     setFormEntryDate(new Date().toISOString().slice(0, 10));
     setFormSummary("");
     setFormDescription("");
+    setFormRequiresReview(false);
     setFormLines(null);
     setFormLoadError(null);
     setView("form");
@@ -128,6 +133,7 @@ export function JournalEntriesPanel({
       setFormEntryDate(entry.entry_date);
       setFormSummary(entry.summary);
       setFormDescription(entry.description ?? "");
+      setFormRequiresReview(Boolean(entry.requires_review));
       setFormLines(linesFromEntry(entry.lines));
     } catch (err) {
       setFormLoadError(err instanceof Error ? err.message : "Failed to load entry");
@@ -200,6 +206,7 @@ export function JournalEntriesPanel({
           initialEntryDate={formEntryDate}
           initialSummary={formSummary}
           initialDescription={formDescription}
+          initialRequiresReview={formRequiresReview}
           initialLines={formLines}
           onSubmit={handleSubmit}
           onCancel={handleCancelForm}
@@ -241,6 +248,15 @@ export function JournalEntriesPanel({
             onChange={(e) => setToDate(e.target.value)}
           />
         </label>
+        <label className="checkbox">
+          <input
+            aria-label="Show entries needing review only"
+            type="checkbox"
+            checked={needsReviewOnly}
+            onChange={(e) => setNeedsReviewOnly(e.target.checked)}
+          />
+          Needs review only
+        </label>
       </div>
 
       {listLoading && entries.length === 0 && <p>Loading…</p>}
@@ -270,6 +286,7 @@ export function JournalEntriesPanel({
               <tr key={row.id}>
                 <td>{row.entry_date}</td>
                 <td>{row.summary}</td>
+                <td>{row.requires_review ? "Yes" : "—"}</td>
                 <td>{row.party_labels}</td>
                 <td>{row.debit_side_label}</td>
                 <td>{row.credit_side_label}</td>

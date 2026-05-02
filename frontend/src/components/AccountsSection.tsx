@@ -2,7 +2,7 @@ import { FormEvent, useState } from "react";
 
 import { Account, AccountType, createAccount } from "../api/accounts";
 
-const ACCOUNT_TYPES: AccountType[] = ["asset", "liability", "equity", "revenue", "expense"];
+const ACCOUNT_TYPES: AccountType[] = ["asset", "liability", "equity", "revenue", "expense", "suspense"];
 
 interface AccountsSectionProps {
   accounts: Account[];

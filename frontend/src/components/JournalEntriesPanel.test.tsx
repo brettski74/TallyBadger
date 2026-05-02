@@ -47,6 +47,7 @@ describe("JournalEntriesPanel", () => {
         entry_date: "2026-04-10",
         summary: "Rent accrual",
         description: "Test",
+        requires_review: false,
         created_at: "2026-04-01T00:00:00Z",
         updated_at: "2026-04-01T00:00:00Z",
         debit_side_label: "Cash",
@@ -60,6 +61,7 @@ describe("JournalEntriesPanel", () => {
       entry_date: "2026-04-10",
       summary: "Rent accrual",
       description: "Test",
+      requires_review: false,
       created_at: "2026-04-01T00:00:00Z",
       updated_at: "2026-04-01T00:00:00Z",
       lines: [
@@ -109,6 +111,37 @@ describe("JournalEntriesPanel", () => {
 
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "Journal entries" })).toBeInTheDocument();
+    });
+  });
+
+  it("requests needs_review=true on list when filter checkbox is enabled", async () => {
+    const fetchMock = vi.spyOn(global, "fetch").mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
+
+    render(
+      <JournalEntriesPanel
+        accounts={accounts}
+        parties={parties}
+        accountsLoading={false}
+        accountsError={null}
+      />,
+    );
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const firstListCall = fetchMock.mock.calls.find(
+      ([u]) => String(u).includes("/journal-entries") && !/\/journal-entries\/\d/.test(String(u)),
+    );
+    expect(firstListCall).toBeTruthy();
+    expect(String(firstListCall![0])).not.toContain("needs_review");
+
+    const user = userEvent.setup();
+    await user.click(screen.getByLabelText("Show entries needing review only"));
+
+    await waitFor(() => {
+      const listCalls = fetchMock.mock.calls.filter(
+        ([u]) => String(u).includes("/journal-entries") && !/\/journal-entries\/\d/.test(String(u)),
+      );
+      const lastUrl = String(listCalls[listCalls.length - 1]![0]);
+      expect(lastUrl).toContain("needs_review=true");
     });
   });
 

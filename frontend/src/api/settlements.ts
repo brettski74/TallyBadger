@@ -5,6 +5,8 @@ export interface LedgerSettings {
   accounts_receivable_account_id: number | null;
   accounts_payable_account_id: number | null;
   unearned_revenue_account_id: number | null;
+  unallocated_debits_account_id: number | null;
+  unallocated_credits_account_id: number | null;
   updated_at: string;
 }
 

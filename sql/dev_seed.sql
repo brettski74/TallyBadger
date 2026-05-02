@@ -15,16 +15,16 @@ SELECT 'Accounts Receivable', 'asset', TRUE
 WHERE NOT EXISTS (SELECT 1 FROM accounts a WHERE LOWER(a.name) = LOWER('Accounts Receivable'));
 
 INSERT INTO accounts (name, type, is_active)
-SELECT 'Rent Revenue', 'revenue', TRUE
-WHERE NOT EXISTS (SELECT 1 FROM accounts a WHERE LOWER(a.name) = LOWER('Rent Revenue'));
+SELECT 'Unallocated Credits', 'suspense', TRUE
+WHERE NOT EXISTS (SELECT 1 FROM accounts a WHERE LOWER(a.name) = LOWER('Unallocated Credits'));
 
 INSERT INTO accounts (name, type, is_active)
-SELECT 'Unallocated Debits', 'revenue', TRUE
+SELECT 'Unallocated Debits', 'suspense', TRUE
 WHERE NOT EXISTS (SELECT 1 FROM accounts a WHERE LOWER(a.name) = LOWER('Unallocated Debits'));
 
 INSERT INTO accounts (name, type, is_active)
-SELECT 'Unallocated Credits', 'expense', TRUE
-WHERE NOT EXISTS (SELECT 1 FROM accounts a WHERE LOWER(a.name) = LOWER('Unallocated Credits'));
+SELECT 'Rent Revenue', 'revenue', TRUE
+WHERE NOT EXISTS (SELECT 1 FROM accounts a WHERE LOWER(a.name) = LOWER('Rent Revenue'));
 
 INSERT INTO accounts (name, type, is_active)
 SELECT 'Chequing', 'asset', TRUE

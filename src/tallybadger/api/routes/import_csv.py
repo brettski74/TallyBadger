@@ -7,10 +7,10 @@ import io
 import re
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from tallybadger.import_dates import parse_import_date_string, parse_import_datetime_string
 from tallybadger.import_rules.cel_engine import evaluate_cel
@@ -20,7 +20,13 @@ from tallybadger.import_rules.cel_rule_set_service import (
 )
 from tallybadger.import_rules.errors import ImportRulesCelError
 from tallybadger.import_templates.models import ImportTemplateColumn
-from tallybadger.ledger.models import JournalEntryOut, JournalEntryWrite, JournalLineIn
+from tallybadger.ledger.models import (
+    AccountOut,
+    JournalEntryOut,
+    JournalEntryWrite,
+    JournalLineIn,
+    LedgerSettingsOut,
+)
 from tallybadger.ledger.service import LedgerService, LedgerValidationError
 
 router = APIRouter(prefix="", tags=["import-csv"])
@@ -36,11 +42,22 @@ def get_cel_rule_set_service() -> CelRuleSetService:
     return CelRuleSetService()
 
 
+ImportNormalBalance = Literal["debit", "credit"]
+
+
 class CsvImportExecuteRequest(BaseModel):
     csv_text: str = Field(min_length=1)
     has_header_row: bool = False
     columns: list[ImportTemplateColumn] = Field(default_factory=list)
     cel_rule_set_id: int | None = None
+    default_import_account_id: int | None = Field(default=None, gt=0)
+    default_import_normal_balance: ImportNormalBalance | None = None
+
+    @model_validator(mode="after")
+    def default_import_pair(self) -> "CsvImportExecuteRequest":
+        if self.default_import_normal_balance is not None and self.default_import_account_id is None:
+            raise ValueError("default_import_normal_balance requires default_import_account_id")
+        return self
 
 
 class CsvImportRowError(BaseModel):
@@ -126,6 +143,32 @@ def _to_decimal_any(value: Any, *, field: str) -> Decimal:
     raise ValueError(f"{field} must be numeric")
 
 
+def _infer_normal_from_account_type(account_type: str) -> str:
+    if account_type in ("asset", "expense", "suspense"):
+        return "debit"
+    return "credit"
+
+
+def _default_import_account_name(
+    account_id: int,
+    accounts_by_id: dict[int, AccountOut],
+) -> str:
+    acct = accounts_by_id.get(account_id)
+    if acct is None or not acct.is_active:
+        raise ValueError("default import account is missing or inactive")
+    return acct.name
+
+
+def _truthy_rule_flag(value: Any) -> bool:
+    if value is True:
+        return True
+    if isinstance(value, str) and value.strip().lower() in ("true", "1", "yes", "y"):
+        return True
+    if isinstance(value, int) and value == 1:
+        return True
+    return False
+
+
 def _require_string(bag: dict[str, Any], key: str) -> str:
     value = bag.get(key)
     if value is None:
@@ -136,16 +179,84 @@ def _require_string(bag: dict[str, Any], key: str) -> str:
     return text
 
 
+def _resolve_unallocated_account_name(
+    *,
+    role: str,
+    settings: LedgerSettingsOut,
+    accounts_by_id: dict[int, AccountOut],
+) -> str:
+    account_id = (
+        settings.unallocated_debits_account_id
+        if role == "debit"
+        else settings.unallocated_credits_account_id
+    )
+    label = "unallocated debits" if role == "debit" else "unallocated credits"
+    if account_id is None:
+        raise ValueError(
+            f"{label} account is not configured in ledger settings; configure it under Configuration",
+        )
+    acct = accounts_by_id.get(account_id)
+    if acct is None or not acct.is_active:
+        raise ValueError(f"{label} account is missing or inactive")
+    if acct.type != "suspense":
+        raise ValueError(f"{label} account must be a suspense account")
+    return acct.name
+
+
 def _build_lines_from_simple(
     bag: dict[str, Any],
     account_ids: dict[str, int],
     party_ids: dict[str, int],
-) -> list[JournalLineIn]:
-    dr = _require_string(bag, "dr-account")
-    cr = _require_string(bag, "cr-account")
-    amount = _to_decimal_any(bag.get("amount"), field="amount")
-    if amount <= Decimal("0"):
-        raise ValueError("amount must be greater than zero")
+    *,
+    ledger_settings: LedgerSettingsOut,
+    accounts_by_id: dict[int, AccountOut],
+    default_import_account_id: int | None = None,
+    default_import_normal_balance: str | None = None,
+) -> tuple[list[JournalLineIn], bool]:
+    dr = str(bag.get("dr-account") or "").strip()
+    cr = str(bag.get("cr-account") or "").strip()
+
+    signed = _to_decimal_any(bag.get("amount"), field="amount")
+    if signed == Decimal("0"):
+        raise ValueError("amount must be non-zero")
+    mag = abs(signed)
+
+    default_name: str | None = None
+    normal: str | None = None
+    if default_import_account_id is not None:
+        default_name = _default_import_account_name(default_import_account_id, accounts_by_id)
+        if default_import_normal_balance in ("debit", "credit"):
+            normal = default_import_normal_balance
+        else:
+            normal = _infer_normal_from_account_type(
+                accounts_by_id[default_import_account_id].type,
+            )
+
+    if default_name and normal:
+        debit_normal = normal == "debit"
+        default_on_debit = (signed > Decimal("0")) == debit_normal
+        if default_on_debit and not dr:
+            dr = default_name
+        elif not default_on_debit and not cr:
+            cr = default_name
+
+    used_unalloc_dr = False
+    used_unalloc_cr = False
+    if not dr:
+        dr = _resolve_unallocated_account_name(
+            role="debit",
+            settings=ledger_settings,
+            accounts_by_id=accounts_by_id,
+        )
+        used_unalloc_dr = True
+    if not cr:
+        cr = _resolve_unallocated_account_name(
+            role="credit",
+            settings=ledger_settings,
+            accounts_by_id=accounts_by_id,
+        )
+        used_unalloc_cr = True
+
     if dr not in account_ids:
         raise ValueError(f"unknown account '{dr}'")
     if cr not in account_ids:
@@ -156,18 +267,19 @@ def _build_lines_from_simple(
         raise ValueError(f"unknown party '{dr_party_name}'")
     if cr_party_name and cr_party_name not in party_ids:
         raise ValueError(f"unknown party '{cr_party_name}'")
+    defaulted_to_unallocated = used_unalloc_dr or used_unalloc_cr
     return [
         JournalLineIn(
             account_id=account_ids[dr],
             party_id=party_ids.get(dr_party_name) if dr_party_name else None,
-            amount=amount,
+            amount=mag,
         ),
         JournalLineIn(
             account_id=account_ids[cr],
             party_id=party_ids.get(cr_party_name) if cr_party_name else None,
-            amount=-amount,
+            amount=-mag,
         ),
-    ]
+    ], defaulted_to_unallocated
 
 
 def _build_lines_from_array(
@@ -211,30 +323,57 @@ def _build_lines_from_array(
     return lines
 
 
+def _has_nonempty_line_array(bag: dict[str, Any]) -> bool:
+    raw = bag.get("line")
+    return isinstance(raw, list) and len(raw) > 0
+
+
+def _has_simple_amount(bag: dict[str, Any]) -> bool:
+    return bag.get("amount") not in (None, "")
+
+
 def _bag_to_journal_entry(
     bag: dict[str, Any],
     account_ids: dict[str, int],
     party_ids: dict[str, int],
+    *,
+    ledger_settings: LedgerSettingsOut,
+    accounts_by_id: dict[int, AccountOut],
+    default_import_account_id: int | None = None,
+    default_import_normal_balance: str | None = None,
 ) -> JournalEntryWrite:
     entry_date = _to_entry_date(bag.get("date"))
     summary = _require_string(bag, "summary")
     description_value = bag.get("description")
     description = None if description_value is None else str(description_value).strip() or None
-    has_simple = all(
-        key in bag and bag.get(key) not in (None, "")
-        for key in ("dr-account", "cr-account", "amount")
-    )
-    if has_simple:
-        if "line" in bag and bag.get("line") not in (None, []):
-            raise ValueError("do not provide both simple fields and line[]")
-        lines = _build_lines_from_simple(bag, account_ids, party_ids)
-    else:
+    has_line = _has_nonempty_line_array(bag)
+    has_amount = _has_simple_amount(bag)
+    if has_line and has_amount:
+        raise ValueError("do not provide both amount and line[]")
+    if has_line:
         lines = _build_lines_from_array(bag, account_ids, party_ids)
+        requires_review = _truthy_rule_flag(bag.get("require_review"))
+    elif has_amount:
+        lines, defaulted_unallocated = _build_lines_from_simple(
+            bag,
+            account_ids,
+            party_ids,
+            ledger_settings=ledger_settings,
+            accounts_by_id=accounts_by_id,
+            default_import_account_id=default_import_account_id,
+            default_import_normal_balance=default_import_normal_balance,
+        )
+        requires_review = defaulted_unallocated or _truthy_rule_flag(bag.get("require_review"))
+    else:
+        raise ValueError(
+            "either amount (with optional dr-account/cr-account) or line[] is required",
+        )
     return JournalEntryWrite(
         entry_date=entry_date,
         summary=summary,
         description=description,
         lines=lines,
+        requires_review=requires_review,
     )
 
 
@@ -254,7 +393,12 @@ def execute_csv_import(
     accounts = ledger_service.list_accounts()
     parties = ledger_service.list_parties()
     account_ids = {a.name: a.id for a in accounts if a.is_active}
+    accounts_by_id = {a.id: a for a in accounts}
     party_ids = {p.name: p.id for p in parties if p.is_active}
+    try:
+        ledger_settings = ledger_service.get_ledger_settings()
+    except LedgerValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
 
     rows = list(csv.reader(io.StringIO(payload.csv_text)))
     if not rows:
@@ -294,7 +438,17 @@ def execute_csv_import(
             bag = result.attributes
 
         try:
-            pending_entries.append(_bag_to_journal_entry(bag, account_ids, party_ids))
+            pending_entries.append(
+                _bag_to_journal_entry(
+                    bag,
+                    account_ids,
+                    party_ids,
+                    ledger_settings=ledger_settings,
+                    accounts_by_id=accounts_by_id,
+                    default_import_account_id=payload.default_import_account_id,
+                    default_import_normal_balance=payload.default_import_normal_balance,
+                ),
+            )
         except (ValueError, LedgerValidationError) as exc:
             row_errors.append(CsvImportRowError(row_number=idx, errors=[str(exc)]))
 
