@@ -1,7 +1,7 @@
 import { getApiBase } from "./baseUrl";
 import { readApiErrorMessage } from "./errors";
 
-export type AccountType = "asset" | "liability" | "equity" | "revenue" | "expense";
+export type AccountType = "asset" | "liability" | "equity" | "revenue" | "expense" | "suspense";
 
 export interface Account {
   id: number;

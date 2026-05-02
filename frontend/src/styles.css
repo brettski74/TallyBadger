@@ -214,6 +214,16 @@ th {
   grid-column: 1 / -1;
 }
 
+.config-subheading {
+  margin: 1.25rem 0 0.5rem;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.config-subheading:first-of-type {
+  margin-top: 0;
+}
+
 .journal-list-toolbar {
   display: flex;
   align-items: center;

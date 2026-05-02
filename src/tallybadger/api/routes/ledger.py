@@ -209,6 +209,7 @@ def create_settlement(
 def list_journal_entries(
     from_date: date | None = None,
     to_date: date | None = None,
+    needs_review: bool | None = None,
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     service: LedgerService = Depends(get_ledger_service),
@@ -216,6 +217,7 @@ def list_journal_entries(
     return service.list_entries(
         from_date=from_date,
         to_date=to_date,
+        needs_review=needs_review,
         limit=limit,
         offset=offset,
     )

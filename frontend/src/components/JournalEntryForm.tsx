@@ -85,6 +85,7 @@ export interface JournalEntryFormProps {
   initialEntryDate: string;
   initialSummary: string;
   initialDescription: string;
+  initialRequiresReview: boolean;
   initialLines: LineDraft[] | null;
   onSubmit: (payload: JournalEntryWrite) => Promise<void>;
   onCancel: () => void;
@@ -97,6 +98,7 @@ export function JournalEntryForm({
   initialEntryDate,
   initialSummary,
   initialDescription,
+  initialRequiresReview,
   initialLines,
   onSubmit,
   onCancel,
@@ -104,6 +106,7 @@ export function JournalEntryForm({
   const [entryDate, setEntryDate] = useState(initialEntryDate);
   const [summary, setSummary] = useState(initialSummary);
   const [description, setDescription] = useState(initialDescription);
+  const [requiresReview, setRequiresReview] = useState(initialRequiresReview);
   const [lines, setLines] = useState<LineDraft[]>(() =>
     initialLines && initialLines.length > 0 ? initialLines : emptyLines(2),
   );
@@ -229,6 +232,7 @@ export function JournalEntryForm({
         party_id: l.party_id === "" ? null : l.party_id,
         amount: l.amount.trim(),
       })),
+      requires_review: requiresReview,
     };
 
     setSubmitting(true);
@@ -303,6 +307,16 @@ export function JournalEntryForm({
           placeholder="e.g. April rent — Unit 2"
           maxLength={500}
         />
+      </label>
+
+      <label className="checkbox">
+        <input
+          aria-label="Requires review"
+          type="checkbox"
+          checked={requiresReview}
+          onChange={(e) => setRequiresReview(e.target.checked)}
+        />
+        Flag for review (e.g. after import to suspense — clear when reclassified)
       </label>
 
       <div

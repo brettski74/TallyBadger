@@ -23,21 +23,9 @@ const parties: Party[] = [
 
 describe("SettlementsSection", () => {
   it("shows obligation date/summary and auto-allocates earliest obligations", async () => {
-    vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            accounts_receivable_account_id: 2,
-            accounts_payable_account_id: 3,
-            unearned_revenue_account_id: 4,
-            updated_at: "2026-01-01T00:00:00Z",
-          }),
-          { status: 200 },
-        ),
-      )
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify([
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(
+        JSON.stringify([
             {
               id: 10,
               party_id: 1,
@@ -71,10 +59,10 @@ describe("SettlementsSection", () => {
               original_amount: "300.00",
               open_amount: "300.00",
             },
-          ]),
-          { status: 200 },
-        ),
-      );
+        ]),
+        { status: 200 },
+      ),
+    );
 
     render(<SettlementsSection accounts={accounts} parties={parties} />);
     const user = userEvent.setup();

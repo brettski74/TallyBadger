@@ -15,6 +15,7 @@ export interface JournalEntryOut {
   entry_date: string;
   summary: string;
   description: string | null;
+  requires_review: boolean;
   created_at: string;
   updated_at: string;
   lines: JournalLineOut[];
@@ -24,6 +25,8 @@ export interface JournalEntryListItem {
   id: number;
   entry_date: string;
   summary: string;
+  description: string | null;
+  requires_review: boolean;
   created_at: string;
   updated_at: string;
   debit_side_label: string;
@@ -48,6 +51,7 @@ export interface JournalEntryWrite {
 export interface ListJournalEntriesParams {
   from_date?: string;
   to_date?: string;
+  needs_review?: boolean;
   limit?: number;
   offset?: number;
 }
@@ -62,6 +66,9 @@ export async function listJournalEntries(
   }
   if (params.to_date) {
     search.set("to_date", params.to_date);
+  }
+  if (params.needs_review === true) {
+    search.set("needs_review", "true");
   }
   if (params.limit != null) {
     search.set("limit", String(params.limit));

@@ -2,15 +2,28 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
 
 from tallybadger.api.routes.import_csv import _convert_cell
+from tallybadger.ledger.models import LedgerSettingsOut
 from tallybadger.import_rules.cel_models import CelRule, CelRuleSet
 from tallybadger.import_templates.models import ImportTemplateColumn
 from tallybadger.main import app
+
+
+def _blank_ledger_settings() -> LedgerSettingsOut:
+    return LedgerSettingsOut(
+        accounts_receivable_account_id=None,
+        accounts_payable_account_id=None,
+        unearned_revenue_account_id=None,
+        unallocated_debits_account_id=None,
+        unallocated_credits_account_id=None,
+        updated_at=datetime.now(tz=timezone.utc),
+    )
 
 
 @pytest.fixture
@@ -18,6 +31,7 @@ def import_execute_client() -> TestClient:
     ledger = MagicMock()
     ledger.list_accounts.return_value = []
     ledger.list_parties.return_value = []
+    ledger.get_ledger_settings.return_value = _blank_ledger_settings()
 
     from tallybadger.api.routes.import_csv import get_ledger_service
 
@@ -30,6 +44,7 @@ def _client_with_cel_rule(expression: str) -> TestClient:
     ledger = MagicMock()
     ledger.list_accounts.return_value = []
     ledger.list_parties.return_value = []
+    ledger.get_ledger_settings.return_value = _blank_ledger_settings()
     cel_svc = MagicMock()
     cel_svc.get_rule_set.return_value = MagicMock(
         rule_set=CelRuleSet(rules=[CelRule(sort_order=10, expression=expression)]),

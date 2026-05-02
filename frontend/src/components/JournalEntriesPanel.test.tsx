@@ -47,6 +47,7 @@ describe("JournalEntriesPanel", () => {
         entry_date: "2026-04-10",
         summary: "Rent accrual",
         description: "Test",
+        requires_review: false,
         created_at: "2026-04-01T00:00:00Z",
         updated_at: "2026-04-01T00:00:00Z",
         debit_side_label: "Cash",
@@ -60,6 +61,7 @@ describe("JournalEntriesPanel", () => {
       entry_date: "2026-04-10",
       summary: "Rent accrual",
       description: "Test",
+      requires_review: false,
       created_at: "2026-04-01T00:00:00Z",
       updated_at: "2026-04-01T00:00:00Z",
       lines: [
