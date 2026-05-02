@@ -15,20 +15,16 @@ SELECT 'Accounts Receivable', 'asset', TRUE
 WHERE NOT EXISTS (SELECT 1 FROM accounts a WHERE LOWER(a.name) = LOWER('Accounts Receivable'));
 
 INSERT INTO accounts (name, type, is_active)
-SELECT 'Rent Revenue', 'revenue', TRUE
-WHERE NOT EXISTS (SELECT 1 FROM accounts a WHERE LOWER(a.name) = LOWER('Rent Revenue'));
+SELECT 'Unallocated Credits', 'suspense', TRUE
+WHERE NOT EXISTS (SELECT 1 FROM accounts a WHERE LOWER(a.name) = LOWER('Unallocated Credits'));
 
 INSERT INTO accounts (name, type, is_active)
 SELECT 'Unallocated Debits', 'suspense', TRUE
 WHERE NOT EXISTS (SELECT 1 FROM accounts a WHERE LOWER(a.name) = LOWER('Unallocated Debits'));
 
 INSERT INTO accounts (name, type, is_active)
-SELECT 'Unallocated Credits', 'suspense', TRUE
-WHERE NOT EXISTS (SELECT 1 FROM accounts a WHERE LOWER(a.name) = LOWER('Unallocated Credits'));
-
--- Align legacy dev DBs that still have pre-#48 types on these names.
-UPDATE accounts SET type = 'suspense'
-WHERE LOWER(name) IN ('unallocated debits', 'unallocated credits');
+SELECT 'Rent Revenue', 'revenue', TRUE
+WHERE NOT EXISTS (SELECT 1 FROM accounts a WHERE LOWER(a.name) = LOWER('Rent Revenue'));
 
 INSERT INTO accounts (name, type, is_active)
 SELECT 'Chequing', 'asset', TRUE
@@ -128,19 +124,6 @@ WHERE NOT EXISTS (SELECT 1 FROM import_templates t WHERE LOWER(t.name) = LOWER('
 INSERT INTO import_templates (name, has_header_row, columns_definition, cel_rule_set_id)
 SELECT 'Bootstrap — simple journal columns', TRUE, '[{"data_type":"date","date_format":"YYYY-MM-DD","attribute_name":"posted_on"},{"data_type":"string","date_format":null,"attribute_name":"summary"},{"data_type":"string","date_format":null,"attribute_name":"dr-account"},{"data_type":"string","date_format":null,"attribute_name":"cr-account"},{"data_type":"numeric","date_format":null,"attribute_name":"amount"}]'::jsonb, (SELECT id FROM cel_rule_sets WHERE LOWER(name) = LOWER('Bootstrap (no-op rules)') LIMIT 1)
 WHERE NOT EXISTS (SELECT 1 FROM import_templates t WHERE LOWER(t.name) = LOWER('Bootstrap — simple journal columns'));
-
-UPDATE ledger_settings
-SET
-  unallocated_debits_account_id = COALESCE(
-    unallocated_debits_account_id,
-    (SELECT id FROM accounts WHERE LOWER(name) = 'unallocated debits' LIMIT 1)
-  ),
-  unallocated_credits_account_id = COALESCE(
-    unallocated_credits_account_id,
-    (SELECT id FROM accounts WHERE LOWER(name) = 'unallocated credits' LIMIT 1)
-  ),
-  updated_at = NOW()
-WHERE id = 1;
 
 
 -- End dev seed (no schema_migrations row — this file is not a numbered migration).
