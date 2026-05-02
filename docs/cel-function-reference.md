@@ -84,9 +84,9 @@ These functions read **current ledger state** (active parties, accounts) passed 
 
 ### `match_date(d, n, t) -> bool`
 
-- **Arguments:** `d` — date (or date-time, using calendar date part); `n` — target day-of-month (1–31); `t` — non-negative integer **tolerance** in days.
-- **Returns:** `true` if the day-of-month of `d` lies in the **closed interval** `[n - t, n + t]` intersected with valid calendar days for that month (define edge behaviour for month lengths explicitly in implementation—e.g. clamp or compare in date space).
-- **Example:** For date **2026-04-10**, `match_date(d, 8, 2)` is **true** (10 ∈ [6, 10]); `match_date(d, 8, 1)` is **false** (10 ∉ [7, 9]).
+- **Arguments:** `d` — date (or date-time; use the **calendar date** in the evaluation timezone documented for #50); `n` — target day-of-month (**1–31**); `t` — non-negative integer **tolerance** (days).
+- **Returns:** Let `dom` be the day-of-month of `d`, and `dim` the number of days in that month. Let `low = max(1, n - t)` and `high = min(dim, n + t)`. Returns **`true`** iff **`low <= dom <= high`** (inclusive). This matches calendar-month-local “near day *n*” without wrapping to adjacent months.
+- **Examples:** For **2026-04-10**, `match_date(d, 8, 2)` → **true** (`dom` 10 ∈ [6, 10]); `match_date(d, 8, 1)` → **false** (10 ∉ [7, 9]).
 
 ---
 
