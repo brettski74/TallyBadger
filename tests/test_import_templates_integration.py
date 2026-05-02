@@ -108,6 +108,8 @@ def test_import_template_crud_with_rule_set(import_api_client: TestClient) -> No
     assert body["cel_rule_set_id"] == rs_id
     assert len(body["columns"]) == 3
     assert body["columns"][0]["date_format"] == "YYYY-MM-DD"
+    assert body["default_import_account_id"] is None
+    assert body["default_import_normal_balance"] is None
     tid = body["id"]
 
     listed = import_api_client.get("/import-templates")
@@ -189,6 +191,49 @@ def test_date_column_posix_format_rejected_422(import_api_client: TestClient) ->
         json={
             "name": "bad-date-format",
             "columns": [{"attribute_name": "d", "data_type": "date", "date_format": "%Y-%m-%d"}],
+        },
+    )
+    assert r.status_code == 422
+
+
+def test_import_template_default_import_account_roundtrip(import_api_client: TestClient) -> None:
+    acc = import_api_client.post(
+        "/accounts",
+        json={"name": "Default imp acct", "type": "asset", "is_active": True},
+    )
+    assert acc.status_code == 201, acc.text
+    aid = acc.json()["id"]
+
+    create = import_api_client.post(
+        "/import-templates",
+        json={
+            "name": "with-default",
+            "columns": [],
+            "default_import_account_id": aid,
+            "default_import_normal_balance": "debit",
+        },
+    )
+    assert create.status_code == 201, create.text
+    body = create.json()
+    assert body["default_import_account_id"] == aid
+    assert body["default_import_normal_balance"] == "debit"
+
+    cleared = import_api_client.patch(
+        f"/import-templates/{body['id']}",
+        json={"default_import_account_id": None},
+    )
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["default_import_account_id"] is None
+    assert cleared.json()["default_import_normal_balance"] is None
+
+
+def test_import_template_create_normal_without_account_422(import_api_client: TestClient) -> None:
+    r = import_api_client.post(
+        "/import-templates",
+        json={
+            "name": "bad-pair",
+            "columns": [],
+            "default_import_normal_balance": "debit",
         },
     )
     assert r.status_code == 422

@@ -286,6 +286,73 @@ def test_csv_import_defaults_unallocated_debit_and_marks_requires_review(
     assert credit_names == ["Rent Revenue"]
 
 
+def test_csv_import_execute_default_import_account_avoids_unallocated_and_review_flag(
+    import_api_client: TestClient,
+    integration_db_url: str,
+) -> None:
+    _ensure_ledger_settings_row(integration_db_url)
+    created: dict[str, int] = {}
+    for name, typ in (
+        ("Chequing", "asset"),
+        ("Unallocated Debits", "suspense"),
+        ("Unallocated Credits", "suspense"),
+        ("Rent Revenue", "revenue"),
+    ):
+        r = import_api_client.post("/accounts", json={"name": name, "type": typ, "is_active": True})
+        assert r.status_code == 201, r.text
+        created[name] = r.json()["id"]
+
+    patch = import_api_client.patch(
+        "/ledger-settings",
+        json={
+            "unallocated_debits_account_id": created["Unallocated Debits"],
+            "unallocated_credits_account_id": created["Unallocated Credits"],
+        },
+    )
+    assert patch.status_code == 200, patch.text
+
+    csv_text = "date,summary,dr,cr,amount\n2026-07-01,Mystery,,Rent Revenue,50.00\n"
+    base_columns = [
+        {"attribute_name": "date", "data_type": "date", "date_format": "YYYY-MM-DD"},
+        {"attribute_name": "summary", "data_type": "string"},
+        {"attribute_name": "dr-account", "data_type": "string"},
+        {"attribute_name": "cr-account", "data_type": "string"},
+        {"attribute_name": "amount", "data_type": "numeric"},
+    ]
+
+    r_explicit = import_api_client.post(
+        "/imports/csv/execute",
+        json={
+            "csv_text": csv_text,
+            "has_header_row": True,
+            "default_import_account_id": created["Chequing"],
+            "default_import_normal_balance": "debit",
+            "columns": base_columns,
+        },
+    )
+    assert r_explicit.status_code == 200, r_explicit.text
+    body_explicit = r_explicit.json()
+    assert body_explicit["entries"][0]["requires_review"] is False
+    lines_e = body_explicit["entries"][0]["lines"]
+    assert [ln["account_name"] for ln in lines_e if Decimal(ln["amount"]) > 0] == ["Chequing"]
+    assert [ln["account_name"] for ln in lines_e if Decimal(ln["amount"]) < 0] == ["Rent Revenue"]
+
+    r_infer = import_api_client.post(
+        "/imports/csv/execute",
+        json={
+            "csv_text": csv_text,
+            "has_header_row": True,
+            "default_import_account_id": created["Chequing"],
+            "columns": base_columns,
+        },
+    )
+    assert r_infer.status_code == 200, r_infer.text
+    body_infer = r_infer.json()
+    assert body_infer["entries"][0]["requires_review"] is False
+    lines_i = body_infer["entries"][0]["lines"]
+    assert [ln["account_name"] for ln in lines_i if Decimal(ln["amount"]) > 0] == ["Chequing"]
+
+
 def test_ledger_settings_rejects_non_suspense_unallocated_account(
     import_api_client: TestClient,
     integration_db_url: str,

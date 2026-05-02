@@ -17,11 +17,16 @@ export interface ImportTemplateSummary {
   updated_at: string;
 }
 
+export type ImportTemplateNormalBalance = "debit" | "credit";
+
 export interface ImportTemplate extends ImportTemplateSummary {
   has_header_row: boolean;
   columns: ImportTemplateColumn[];
   cel_rule_set_id: number | null;
+  default_import_account_id: number | null;
+  default_import_normal_balance: ImportTemplateNormalBalance | null;
   created_at: string;
+  updated_at: string;
 }
 
 export interface SaveImportTemplatePayload {
@@ -29,6 +34,8 @@ export interface SaveImportTemplatePayload {
   has_header_row: boolean;
   columns: ImportTemplateColumn[];
   cel_rule_set_id: number | null;
+  default_import_account_id?: number | null;
+  default_import_normal_balance?: ImportTemplateNormalBalance | null;
 }
 
 export interface CsvImportExecutePayload {
@@ -36,6 +43,8 @@ export interface CsvImportExecutePayload {
   has_header_row: boolean;
   columns: ImportTemplateColumn[];
   cel_rule_set_id: number | null;
+  default_import_account_id?: number | null;
+  default_import_normal_balance?: ImportTemplateNormalBalance | null;
 }
 
 export interface CsvImportRowError {

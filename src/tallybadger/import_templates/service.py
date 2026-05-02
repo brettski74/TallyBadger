@@ -32,6 +32,8 @@ class ImportTemplateStored:
         "has_header_row",
         "columns",
         "cel_rule_set_id",
+        "default_import_account_id",
+        "default_import_normal_balance",
         "created_at",
         "updated_at",
     )
@@ -44,6 +46,8 @@ class ImportTemplateStored:
         has_header_row: bool,
         columns: list[ImportTemplateColumn],
         cel_rule_set_id: int | None,
+        default_import_account_id: int | None,
+        default_import_normal_balance: str | None,
         created_at: datetime,
         updated_at: datetime,
     ) -> None:
@@ -52,6 +56,8 @@ class ImportTemplateStored:
         self.has_header_row = has_header_row
         self.columns = columns
         self.cel_rule_set_id = cel_rule_set_id
+        self.default_import_account_id = default_import_account_id
+        self.default_import_normal_balance = default_import_normal_balance
         self.created_at = created_at
         self.updated_at = updated_at
 
@@ -74,12 +80,17 @@ def _parse_columns(raw: Any) -> list[ImportTemplateColumn]:
 
 
 def _row_to_stored(row: dict[str, Any]) -> ImportTemplateStored:
+    normal = row.get("default_import_normal_balance")
     return ImportTemplateStored(
         id=int(row["id"]),
         name=str(row["name"]),
         has_header_row=bool(row["has_header_row"]),
         columns=_parse_columns(row["columns_definition"]),
         cel_rule_set_id=int(row["cel_rule_set_id"]) if row["cel_rule_set_id"] is not None else None,
+        default_import_account_id=int(row["default_import_account_id"])
+        if row.get("default_import_account_id") is not None
+        else None,
+        default_import_normal_balance=str(normal) if normal is not None else None,
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -114,6 +125,7 @@ class ImportTemplateService:
                 cur.execute(
                     """
                     SELECT id, name, has_header_row, columns_definition, cel_rule_set_id,
+                           default_import_account_id, default_import_normal_balance,
                            created_at, updated_at
                     FROM import_templates
                     WHERE id = %s
@@ -131,6 +143,9 @@ class ImportTemplateService:
         has_header_row: bool,
         columns: list[ImportTemplateColumn],
         cel_rule_set_id: int | None = None,
+        *,
+        default_import_account_id: int | None = None,
+        default_import_normal_balance: str | None = None,
     ) -> ImportTemplateStored:
         clean = name.strip()
         if not clean:
@@ -143,12 +158,21 @@ class ImportTemplateService:
                         cur.execute(
                             """
                             INSERT INTO import_templates
-                              (name, has_header_row, columns_definition, cel_rule_set_id)
-                            VALUES (%s, %s, %s::jsonb, %s)
+                              (name, has_header_row, columns_definition, cel_rule_set_id,
+                               default_import_account_id, default_import_normal_balance)
+                            VALUES (%s, %s, %s::jsonb, %s, %s, %s)
                             RETURNING id, name, has_header_row, columns_definition,
-                                      cel_rule_set_id, created_at, updated_at
+                                      cel_rule_set_id, default_import_account_id,
+                                      default_import_normal_balance, created_at, updated_at
                             """,
-                            (clean, has_header_row, json.dumps(payload), cel_rule_set_id),
+                            (
+                                clean,
+                                has_header_row,
+                                json.dumps(payload),
+                                cel_rule_set_id,
+                                default_import_account_id,
+                                default_import_normal_balance,
+                            ),
                         )
                         row = cur.fetchone()
             except errors.UniqueViolation as exc:
@@ -188,6 +212,14 @@ class ImportTemplateService:
             set_parts.append("cel_rule_set_id = %s")
             args.append(patch["cel_rule_set_id"])
 
+        if "default_import_account_id" in patch:
+            set_parts.append("default_import_account_id = %s")
+            args.append(patch["default_import_account_id"])
+
+        if "default_import_normal_balance" in patch:
+            set_parts.append("default_import_normal_balance = %s")
+            args.append(patch["default_import_normal_balance"])
+
         if not set_parts:
             raise ValueError("at least one field must be provided")
 
@@ -199,6 +231,7 @@ class ImportTemplateService:
             SET {", ".join(set_parts)}
             WHERE id = %s
             RETURNING id, name, has_header_row, columns_definition, cel_rule_set_id,
+                      default_import_account_id, default_import_normal_balance,
                       created_at, updated_at
         """
 

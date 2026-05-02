@@ -161,7 +161,9 @@ function App() {
         {tab === "configuration" && <ConfigurationSection accounts={accounts} />}
         {tab === "settlements" && <SettlementsSection accounts={accounts} parties={parties} />}
         {tab === "import_rules" && <CelRuleSetsSection />}
-        {tab === "csv_import" && <CsvImportSection onImportSucceeded={() => setTab("journal")} />}
+        {tab === "csv_import" && (
+          <CsvImportSection accounts={accounts} onImportSucceeded={() => setTab("journal")} />
+        )}
       </main>
     </div>
   );
