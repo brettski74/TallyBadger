@@ -280,3 +280,38 @@ def test_equity_account_alias_matches_revenue_account() -> None:
     out = evaluate_cel(rs, {}, parties=[p])
     assert out.attributes["r"] == "Owner Capital"
     assert out.attributes["q"] == "Owner Capital"
+
+
+def test_cel_party_type_subtype_and_accounts_blank_arg_returns_null() -> None:
+    """Blank / whitespace-only party name args behave like a non-match (null), not an error."""
+    p = _party_row(
+        id=9,
+        name="Zed",
+        role="vendor",
+        subtype=None,
+        match_patterns=[],
+        default_expense_account_name="Tools",
+    )
+    rs = CelRuleSet(
+        rules=[
+            CelRule(
+                expression=(
+                    '{"set":{'
+                    '"pt": party_type(""), '
+                    '"ps": party_subtype("  \\t"), '
+                    '"ps2": party_subtype("Zed"), '
+                    '"rv": revenue_account(""), '
+                    '"eq": equity_account("   "), '
+                    '"ex": expense_account("") '
+                    "}}"
+                ),
+            ),
+        ],
+    )
+    out = evaluate_cel(rs, {}, parties=[p])
+    assert out.attributes["pt"] is None
+    assert out.attributes["ps"] is None
+    assert out.attributes["ps2"] == ""
+    assert out.attributes["rv"] is None
+    assert out.attributes["eq"] is None
+    assert out.attributes["ex"] is None

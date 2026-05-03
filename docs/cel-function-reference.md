@@ -4,7 +4,7 @@ This document is the **authoritative reference** for **custom functions** availa
 
 **Related:** [Import rules engine](import-rules-engine.md) ([#8](https://github.com/brettski74/TallyBadger/issues/8)) — CEL spike contract, `attributes` / `match` activation map, capture gating.
 
-**Convention:** Unless stated otherwise, string arguments are trimmed for lookup; empty strings after trim are invalid input and should surface a **CEL evaluation error** (same class as today: `ImportRulesCelError` → 422 on import). Exact spelling of function names in CEL follows the identifiers registered in code (typically `party`, `party_type`, …).
+**Convention:** String arguments are trimmed for lookup. For **`party_type`**, **`party_subtype`**, **`revenue_account`**, **`equity_account`**, and **`expense_account`**, a **null** or **blank** argument (after trim) is treated like a non-match and returns **null**—no evaluation error. Other helpers may still error on invalid input where documented. Exact spelling of function names in CEL follows the identifiers registered in code (typically `party`, `party_type`, …).
 
 ---
 
@@ -31,35 +31,39 @@ These functions read **current ledger state** (active parties, accounts) passed 
 
 *Note:* Parties with **no** patterns never contribute to `party(str)`; exact-name resolution for posting is unchanged and separate.
 
-### `party_type(str) -> string`
+### `party_type(str) -> string | null`
 
 - **Argument `str`:** Canonical **party `name`** (not arbitrary haystack).
 - **Returns:** Party **role** as a string: `customer`, `vendor`, `both`, or `other` (aligned with `PartyRole` / API).
-- **Errors:** Unknown party name, inactive party, or blank input → evaluation error with a clear message.
+- **Blank / null argument:** Return **null** (same idea as “no party to describe”).
+- **Errors:** Unknown party name or inactive party → evaluation error with a clear message.
 
-### `party_subtype(str) -> string`
+### `party_subtype(str) -> string | null`
 
 - **Argument `str`:** Canonical party **name**.
-- **Returns:** That party’s **`subtype`** text; when unset, return an **empty string** (document if implementation chooses CEL `null` instead—keep this file in sync).
+- **Returns:** That party’s **`subtype`** text; when the party has no subtype configured, return an **empty string**.
+- **Blank / null argument:** Return **null** (no lookup).
 - **Errors:** Unknown or inactive party → evaluation error.
 
-### `revenue_account(str) -> string`
+### `revenue_account(str) -> string | null`
 
 - **Argument `str`:** Canonical party **name**.
 - **Returns:** **`name`** of the party’s configured **default revenue or equity account** (for posting into account-name fields)—same field as in the UI (“Default revenue / equity account”).
 - **Eligibility:** Party **`role`** must be **`customer`** or **`both`**. The party must have **`default_revenue_account_id`** set to an **active** account with **`type`** **`revenue`** or **`equity`** (validated at party save).
+- **Blank / null argument:** Return **null**.
 - **Errors:** Wrong role, missing default, inactive party, unknown name, inactive account, or wrong account type → evaluation error with explicit reason.
 
-### `equity_account(str) -> string`
+### `equity_account(str) -> string | null`
 
-- **Alias of `revenue_account(str)`** — same argument, same return value, same validation. Lets rules read more naturally (`equity_account("Owner")` vs `revenue_account("Owner")`) when the linked account is equity; either function may return a **revenue** or **equity** account name.
+- **Alias of `revenue_account(str)`** — same argument, same return value, same validation (including **null** on blank argument). Lets rules read more naturally (`equity_account("Owner")` vs `revenue_account("Owner")`) when the linked account is equity; either function may return a **revenue** or **equity** account name.
 
-### `expense_account(str) -> string`
+### `expense_account(str) -> string | null`
 
 - **Argument `str`:** Canonical party **name**.
 - **Returns:** **`name`** of the party’s configured **default expense account**.
 - **Eligibility:** Party **`role`** must be **`vendor`** or **`both`**. Validate at party save: account `type == expense`.
-- **Errors:** Same style as `revenue_account`.
+- **Blank / null argument:** Return **null**.
+- **Errors:** Same style as `revenue_account` for non-blank names (wrong role, missing default, unknown party, etc.).
 
 ---
 

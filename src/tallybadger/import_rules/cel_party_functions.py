@@ -92,7 +92,7 @@ def build_party_cel_functions(parties: list[PartyOut]) -> dict[str, CELFunction]
     def party_type(name: Any) -> Result:
         key = _cel_str(name)
         if not key:
-            raise ImportRulesCelError("party_type() requires a non-blank party name")
+            return None
         snap = by_name.get(key)
         if snap is None:
             raise ImportRulesCelError(f"unknown active party {key!r}")
@@ -101,7 +101,7 @@ def build_party_cel_functions(parties: list[PartyOut]) -> dict[str, CELFunction]
     def party_subtype(name: Any) -> Result:
         key = _cel_str(name)
         if not key:
-            raise ImportRulesCelError("party_subtype() requires a non-blank party name")
+            return None
         snap = by_name.get(key)
         if snap is None:
             raise ImportRulesCelError(f"unknown active party {key!r}")
@@ -112,7 +112,7 @@ def build_party_cel_functions(parties: list[PartyOut]) -> dict[str, CELFunction]
         """Shared implementation for revenue_account() and equity_account() (same party field, no type split in CEL)."""
         key = _cel_str(name)
         if not key:
-            raise ImportRulesCelError("revenue_account() / equity_account() require a non-blank party name")
+            return None
         snap = by_name.get(key)
         if snap is None:
             raise ImportRulesCelError(f"unknown active party {key!r}")
@@ -130,7 +130,7 @@ def build_party_cel_functions(parties: list[PartyOut]) -> dict[str, CELFunction]
     def expense_account(name: Any) -> Result:
         key = _cel_str(name)
         if not key:
-            raise ImportRulesCelError("expense_account() requires a non-blank party name")
+            return None
         snap = by_name.get(key)
         if snap is None:
             raise ImportRulesCelError(f"unknown active party {key!r}")
