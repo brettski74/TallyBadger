@@ -732,10 +732,13 @@ th {
   position: relative;
   width: 100%;
   margin-top: 0.25rem;
+  font: inherit;
 }
 
 .subtype-ghost-wrap input {
   margin-top: 0;
+  font: inherit;
+  line-height: 1.4;
 }
 
 .subtype-ghost-underlay {
@@ -752,7 +755,8 @@ th {
   overflow: hidden;
   text-overflow: ellipsis;
   pointer-events: none;
-  line-height: normal;
+  font: inherit;
+  line-height: 1.4;
 }
 
 .subtype-ghost-typed {

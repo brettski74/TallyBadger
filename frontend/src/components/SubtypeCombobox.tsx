@@ -143,7 +143,7 @@ export function SubtypeCombobox({
         aria-autocomplete="inline"
         placeholder={placeholder}
         value={value}
-        className={value.length > 0 ? "subtype-ghost-input" : undefined}
+        className={showUnderlay ? "subtype-ghost-input" : undefined}
         onChange={(e) => onChange(e.target.value)}
         onInput={() => setGhostSuppressed(false)}
         onKeyDown={handleKeyDown}
