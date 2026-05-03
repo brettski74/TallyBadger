@@ -224,6 +224,18 @@ th {
   margin-top: 0;
 }
 
+.backup-export-scope,
+.backup-import-policy {
+  display: block;
+  margin-top: 0.75rem;
+}
+
+.backup-export-scope select,
+.backup-import-policy select {
+  display: block;
+  margin-top: 0.25rem;
+}
+
 .backup-actions {
   display: flex;
   flex-wrap: wrap;

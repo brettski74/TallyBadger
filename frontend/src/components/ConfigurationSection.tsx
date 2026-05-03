@@ -1,7 +1,12 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 
 import type { Account } from "../api/accounts";
-import { exportCompleteBackup, importCompleteBackup } from "../api/backup";
+import {
+  type BackupExportType,
+  type DuplicateImportPolicy,
+  exportBackup,
+  importBackup,
+} from "../api/backup";
 import { getLedgerSettings, updateLedgerSettings } from "../api/settlements";
 
 interface ConfigurationSectionProps {
@@ -19,6 +24,8 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
   const [backupError, setBackupError] = useState<string | null>(null);
   const [backupMessage, setBackupMessage] = useState<string | null>(null);
   const [backupBusy, setBackupBusy] = useState(false);
+  const [backupExportType, setBackupExportType] = useState<BackupExportType>("complete");
+  const [importDuplicatePolicy, setImportDuplicatePolicy] = useState<DuplicateImportPolicy>("abort");
   const restoreInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -156,13 +163,37 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
 
       <h3 className="config-subheading">Backup &amp; restore</h3>
       <p className="muted">
-        Complete snapshot (ZIP of JSON) for bare-metal restore. Import only works when ledger data tables are
-        empty—use a fresh database or truncate in dev. See{" "}
+        Versioned ZIP (JSON tables) per{" "}
         <a href="https://github.com/brettski74/TallyBadger/blob/main/docs/backup-snapshot-format.md">
           docs/backup-snapshot-format.md
         </a>
-        .
+        . <strong>Financial</strong> exports need matching configuration already in the database when you
+        import. Default import policy (<strong>abort</strong>) requires empty tables in that snapshot&apos;s
+        scope.
       </p>
+      <label className="backup-export-scope">
+        Export scope
+        <select
+          value={backupExportType}
+          onChange={(e) => setBackupExportType(e.target.value as BackupExportType)}
+          disabled={backupBusy}
+        >
+          <option value="complete">Complete (configuration + financial)</option>
+          <option value="configuration">Configuration only</option>
+          <option value="financial">Financial only (ledger + settlements)</option>
+        </select>
+      </label>
+      <label className="backup-import-policy">
+        On restore, if target tables already have rows in this scope
+        <select
+          value={importDuplicatePolicy}
+          onChange={(e) => setImportDuplicatePolicy(e.target.value as DuplicateImportPolicy)}
+          disabled={backupBusy}
+        >
+          <option value="abort">Abort (fail; default)</option>
+          <option value="overwrite">Overwrite (replace scope — see docs)</option>
+        </select>
+      </label>
       <div className="backup-actions">
         <button
           type="button"
@@ -173,7 +204,7 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
               setBackupMessage(null);
               setBackupBusy(true);
               try {
-                const blob = await exportCompleteBackup();
+                const blob = await exportBackup(backupExportType);
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement("a");
                 a.href = url;
@@ -189,7 +220,7 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
             })();
           }}
         >
-          Download complete backup
+          Download backup
         </button>
         <input
           ref={restoreInputRef}
@@ -205,7 +236,7 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
               setBackupMessage(null);
               setBackupBusy(true);
               try {
-                await importCompleteBackup(file);
+                await importBackup(file, importDuplicatePolicy);
                 setBackupMessage("Restore completed. Reload the app to see imported data.");
               } catch (err) {
                 setBackupError(err instanceof Error ? err.message : "Restore failed");

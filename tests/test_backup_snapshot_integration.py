@@ -21,6 +21,7 @@ import tallybadger.core.config as core_config
 from tallybadger.main import app
 
 from tallybadger.backup.errors import (
+    IncompleteSnapshotError,
     SchemaVersionMismatchError,
     SnapshotIntegrityError,
     SnapshotValidationError,
@@ -29,8 +30,12 @@ from tallybadger.backup.errors import (
 )
 from tallybadger.backup.snapshot import (
     COMPLETE_TABLES,
+    CONFIGURATION_TABLES,
+    FINANCIAL_TABLES,
     export_complete_snapshot,
+    export_snapshot,
     import_complete_snapshot,
+    import_snapshot,
     snapshot_table_counts,
 )
 from tallybadger.db_migrations import apply_sql_migrations
@@ -315,6 +320,180 @@ def test_backup_export_and_import_api_round_trip(
         assert counts["journal_lines"] == 2
     finally:
         core_config.get_settings.cache_clear()
+
+
+def test_backup_export_query_and_import_duplicate_policy_form(
+    integration_db_url: str,
+    ledger_service: LedgerService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TALLYBADGER_DATABASE_URL", integration_db_url)
+    core_config.get_settings.cache_clear()
+    try:
+        _seed_minimal_ledger(ledger_service)
+        client = TestClient(app)
+        with connect(integration_db_url, row_factory=dict_row) as conn:
+            cfg = export_snapshot(conn, "configuration")
+        exp = client.post("/backup/export?export_type=financial")
+        assert exp.status_code == 200
+        fin_zip = exp.content
+
+        _truncate_all_data(integration_db_url)
+        imp_cfg = client.post(
+            "/backup/import",
+            files={"snapshot": ("c.zip", cfg, "application/zip")},
+            data={"duplicate_policy": "abort"},
+        )
+        assert imp_cfg.status_code == 200
+
+        imp_fin = client.post(
+            "/backup/import",
+            files={"snapshot": ("f.zip", fin_zip, "application/zip")},
+            data={"duplicate_policy": "abort"},
+        )
+        assert imp_fin.status_code == 200
+        with connect(integration_db_url, row_factory=dict_row) as conn:
+            assert snapshot_table_counts(conn)["journal_entries"] == 1
+    finally:
+        core_config.get_settings.cache_clear()
+
+
+def test_configuration_export_has_only_configuration_members(
+    integration_db_url: str,
+    ledger_service: LedgerService,
+) -> None:
+    _seed_minimal_ledger(ledger_service)
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        zip_bytes = export_snapshot(conn, "configuration")
+    zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
+    names = {n for n in zf.namelist() if not n.endswith("/")}
+    meta = json.loads(zf.read("metadata.json").decode("utf-8"))
+    assert meta["export_type"] == "configuration"
+    data_members = names - {"metadata.json"}
+    assert data_members == {f"{t}.json" for t in CONFIGURATION_TABLES}
+
+
+def test_financial_export_has_only_financial_members(
+    integration_db_url: str,
+    ledger_service: LedgerService,
+) -> None:
+    _seed_minimal_ledger(ledger_service)
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        zip_bytes = export_snapshot(conn, "financial")
+    zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
+    names = {n for n in zf.namelist() if not n.endswith("/")}
+    meta = json.loads(zf.read("metadata.json").decode("utf-8"))
+    assert meta["export_type"] == "financial"
+    data_members = names - {"metadata.json"}
+    assert data_members == {f"{t}.json" for t in FINANCIAL_TABLES}
+
+
+def test_configuration_then_financial_two_step_import(
+    integration_db_url: str,
+    ledger_service: LedgerService,
+) -> None:
+    """Each import is atomic; financial relies on configuration already in the DB (#68)."""
+    _seed_minimal_ledger(ledger_service)
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        config_zip = export_snapshot(conn, "configuration")
+        fin_zip = export_snapshot(conn, "financial")
+        full_counts = snapshot_table_counts(conn)
+
+    _truncate_all_data(integration_db_url)
+
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        import_snapshot(conn, config_zip, duplicate_policy="abort")
+        import_snapshot(conn, fin_zip, duplicate_policy="abort")
+        assert snapshot_table_counts(conn) == full_counts
+
+
+def test_financial_import_rejects_missing_account_reference(
+    integration_db_url: str,
+    ledger_service: LedgerService,
+) -> None:
+    _seed_minimal_ledger(ledger_service)
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        config_zip = export_snapshot(conn, "configuration")
+        fin_zip = export_snapshot(conn, "financial")
+
+    _truncate_all_data(integration_db_url)
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        import_snapshot(conn, config_zip, duplicate_policy="abort")
+
+    zin = zipfile.ZipFile(io.BytesIO(fin_zip))
+    try:
+        meta = json.loads(zin.read("metadata.json").decode("utf-8"))
+        members = {
+            n: zin.read(n) for n in zin.namelist() if not n.endswith("/") and n != "metadata.json"
+        }
+    finally:
+        zin.close()
+    lines = json.loads(members["journal_lines.json"].decode("utf-8"))
+    lines[0]["account_id"] = 999999
+    members["journal_lines.json"] = json.dumps(
+        lines,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    bad_fin = _rezip_table_members_with_metadata(
+        members,
+        {k: v for k, v in meta.items() if k != "member_manifest"},
+    )
+
+    with connect(integration_db_url, row_factory=dict_row) as conn, pytest.raises(
+        SnapshotValidationError,
+        match="not found in target database",
+    ):
+        import_snapshot(conn, bad_fin, duplicate_policy="abort")
+
+
+def test_import_abort_rejects_nonempty_scope(
+    integration_db_url: str,
+    ledger_service: LedgerService,
+) -> None:
+    _seed_minimal_ledger(ledger_service)
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        fin_zip = export_snapshot(conn, "financial")
+
+    with connect(integration_db_url, row_factory=dict_row) as conn, pytest.raises(
+        TargetNotEmptyError,
+        match="duplicate_policy=abort",
+    ):
+        import_snapshot(conn, fin_zip, duplicate_policy="abort")
+
+
+def test_import_overwrite_replaces_financial_scope(
+    integration_db_url: str,
+    ledger_service: LedgerService,
+) -> None:
+    _seed_minimal_ledger(ledger_service)
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        fin_zip = export_snapshot(conn, "financial")
+        before = snapshot_table_counts(conn)
+
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        import_snapshot(conn, fin_zip, duplicate_policy="overwrite")
+        assert snapshot_table_counts(conn) == before
+
+
+def test_import_rejects_member_set_mismatch_for_export_type(
+    integration_db_url: str,
+    ledger_service: LedgerService,
+) -> None:
+    """metadata export_type must match the ZIP table set."""
+    _seed_minimal_ledger(ledger_service)
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        zip_bytes = export_complete_snapshot(conn)
+    bad = _replace_metadata_only(zip_bytes, export_type="configuration")
+
+    _truncate_all_data(integration_db_url)
+
+    with connect(integration_db_url, row_factory=dict_row) as conn, pytest.raises(
+        IncompleteSnapshotError,
+        match="does not match export_type",
+    ):
+        import_snapshot(conn, bad, duplicate_policy="abort")
 
 
 def test_import_rejects_zip_with_extra_member(integration_db_url: str) -> None:
