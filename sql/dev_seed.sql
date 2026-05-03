@@ -58,58 +58,103 @@ INSERT INTO accounts (name, type, is_active)
 SELECT 'Owner Capital', 'liability', TRUE
 WHERE NOT EXISTS (SELECT 1 FROM accounts a WHERE LOWER(a.name) = LOWER('Owner Capital'));
 
+INSERT INTO accounts (name, type, is_active)
+SELECT 'Property Management', 'expense', TRUE
+WHERE NOT EXISTS (SELECT 1 FROM accounts a WHERE LOWER(a.name) = LOWER('Property Management'));
 
-INSERT INTO parties (name, role, is_active)
-SELECT 'Bill Tenant', 'customer', TRUE
+INSERT INTO accounts (name, type, is_active)
+SELECT 'Laundry', 'revenue', TRUE
+WHERE NOT EXISTS (SELECT 1 FROM accounts a WHERE LOWER(a.name) = LOWER('Laundry'));
+
+
+INSERT INTO parties (name, role, is_active, subtype, default_revenue_account_id, default_expense_account_id)
+SELECT 'Bill Tenant', 'customer', TRUE, 'tenant', (SELECT id FROM accounts WHERE LOWER(name) = LOWER('Rent Revenue') LIMIT 1), NULL::bigint
 WHERE NOT EXISTS (SELECT 1 FROM parties p WHERE LOWER(p.name) = LOWER('Bill Tenant'));
 
-INSERT INTO parties (name, role, is_active)
-SELECT 'John Property Manager', 'both', TRUE
+INSERT INTO parties (name, role, is_active, subtype, default_revenue_account_id, default_expense_account_id)
+SELECT 'John Property Manager', 'both', TRUE, 'tenant', (SELECT id FROM accounts WHERE LOWER(name) = LOWER('Rent Revenue') LIMIT 1), (SELECT id FROM accounts WHERE LOWER(name) = LOWER('Property Management') LIMIT 1)
 WHERE NOT EXISTS (SELECT 1 FROM parties p WHERE LOWER(p.name) = LOWER('John Property Manager'));
 
-INSERT INTO parties (name, role, is_active)
-SELECT 'Mower Man Yard Maintenance', 'vendor', TRUE
+INSERT INTO parties (name, role, is_active, subtype, default_revenue_account_id, default_expense_account_id)
+SELECT 'Mower Man Yard Maintenance', 'vendor', TRUE, NULL::text, NULL::bigint, (SELECT id FROM accounts WHERE LOWER(name) = LOWER('Maintenance and Repairs') LIMIT 1)
 WHERE NOT EXISTS (SELECT 1 FROM parties p WHERE LOWER(p.name) = LOWER('Mower Man Yard Maintenance'));
 
-INSERT INTO parties (name, role, is_active)
-SELECT 'Sparky Electric Company', 'vendor', TRUE
+INSERT INTO parties (name, role, is_active, subtype, default_revenue_account_id, default_expense_account_id)
+SELECT 'Sparky Electric Company', 'vendor', TRUE, 'utility', NULL::bigint, (SELECT id FROM accounts WHERE LOWER(name) = LOWER('Utilities') LIMIT 1)
 WHERE NOT EXISTS (SELECT 1 FROM parties p WHERE LOWER(p.name) = LOWER('Sparky Electric Company'));
 
-INSERT INTO parties (name, role, is_active)
-SELECT 'Pamela Person', 'customer', TRUE
+INSERT INTO parties (name, role, is_active, subtype, default_revenue_account_id, default_expense_account_id)
+SELECT 'Pamela Person', 'customer', TRUE, 'tenant', (SELECT id FROM accounts WHERE LOWER(name) = LOWER('Rent Revenue') LIMIT 1), NULL::bigint
 WHERE NOT EXISTS (SELECT 1 FROM parties p WHERE LOWER(p.name) = LOWER('Pamela Person'));
 
-INSERT INTO parties (name, role, is_active)
-SELECT 'Local Region Utilities', 'vendor', TRUE
+INSERT INTO parties (name, role, is_active, subtype, default_revenue_account_id, default_expense_account_id)
+SELECT 'Local Region Utilities', 'vendor', TRUE, 'utility', NULL::bigint, (SELECT id FROM accounts WHERE LOWER(name) = LOWER('Utilities') LIMIT 1)
 WHERE NOT EXISTS (SELECT 1 FROM parties p WHERE LOWER(p.name) = LOWER('Local Region Utilities'));
 
-INSERT INTO parties (name, role, is_active)
-SELECT 'Farm Farts Gas Company', 'vendor', TRUE
+INSERT INTO parties (name, role, is_active, subtype, default_revenue_account_id, default_expense_account_id)
+SELECT 'Farm Farts Gas Company', 'vendor', TRUE, 'utility', NULL::bigint, (SELECT id FROM accounts WHERE LOWER(name) = LOWER('Utilities') LIMIT 1)
 WHERE NOT EXISTS (SELECT 1 FROM parties p WHERE LOWER(p.name) = LOWER('Farm Farts Gas Company'));
 
-INSERT INTO parties (name, role, is_active)
-SELECT 'Archie''s Appliances', 'vendor', TRUE
+INSERT INTO parties (name, role, is_active, subtype, default_revenue_account_id, default_expense_account_id)
+SELECT 'Archie''s Appliances', 'vendor', TRUE, NULL::text, NULL::bigint, NULL::bigint
 WHERE NOT EXISTS (SELECT 1 FROM parties p WHERE LOWER(p.name) = LOWER('Archie''s Appliances'));
 
-INSERT INTO parties (name, role, is_active)
-SELECT 'Demo Tenant', 'both', TRUE
+INSERT INTO parties (name, role, is_active, subtype, default_revenue_account_id, default_expense_account_id)
+SELECT 'Demo Tenant', 'both', TRUE, NULL::text, NULL::bigint, NULL::bigint
 WHERE NOT EXISTS (SELECT 1 FROM parties p WHERE LOWER(p.name) = LOWER('Demo Tenant'));
 
-INSERT INTO parties (name, role, is_active)
-SELECT 'Demo Landlord', 'other', TRUE
+INSERT INTO parties (name, role, is_active, subtype, default_revenue_account_id, default_expense_account_id)
+SELECT 'Demo Landlord', 'other', TRUE, NULL::text, NULL::bigint, NULL::bigint
 WHERE NOT EXISTS (SELECT 1 FROM parties p WHERE LOWER(p.name) = LOWER('Demo Landlord'));
 
-INSERT INTO parties (name, role, is_active)
-SELECT 'Larry Landlord', 'both', TRUE
+INSERT INTO parties (name, role, is_active, subtype, default_revenue_account_id, default_expense_account_id)
+SELECT 'Larry Landlord', 'both', TRUE, NULL::text, NULL::bigint, NULL::bigint
 WHERE NOT EXISTS (SELECT 1 FROM parties p WHERE LOWER(p.name) = LOWER('Larry Landlord'));
 
-INSERT INTO parties (name, role, is_active)
-SELECT 'Carl Carpenter', 'customer', TRUE
+INSERT INTO parties (name, role, is_active, subtype, default_revenue_account_id, default_expense_account_id)
+SELECT 'Carl Carpenter', 'customer', TRUE, 'tenant', (SELECT id FROM accounts WHERE LOWER(name) = LOWER('Rent Revenue') LIMIT 1), NULL::bigint
 WHERE NOT EXISTS (SELECT 1 FROM parties p WHERE LOWER(p.name) = LOWER('Carl Carpenter'));
 
 
+INSERT INTO party_match_patterns (party_id, pattern, sort_order)
+SELECT p.id, 'AUTODEPOSIT BILL TENANT', 0
+FROM parties p
+WHERE LOWER(p.name) = LOWER('Bill Tenant')
+AND NOT EXISTS (
+  SELECT 1 FROM party_match_patterns pm
+  WHERE pm.party_id = p.id AND pm.sort_order = 0 AND pm.pattern = 'AUTODEPOSIT BILL TENANT'
+);
+
+INSERT INTO party_match_patterns (party_id, pattern, sort_order)
+SELECT p.id, 'AUTODEPOSIT JOHN P MANAGER', 0
+FROM parties p
+WHERE LOWER(p.name) = LOWER('John Property Manager')
+AND NOT EXISTS (
+  SELECT 1 FROM party_match_patterns pm
+  WHERE pm.party_id = p.id AND pm.sort_order = 0 AND pm.pattern = 'AUTODEPOSIT JOHN P MANAGER'
+);
+
+INSERT INTO party_match_patterns (party_id, pattern, sort_order)
+SELECT p.id, 'AUTODEPOSIT PAMELA PERSON', 0
+FROM parties p
+WHERE LOWER(p.name) = LOWER('Pamela Person')
+AND NOT EXISTS (
+  SELECT 1 FROM party_match_patterns pm
+  WHERE pm.party_id = p.id AND pm.sort_order = 0 AND pm.pattern = 'AUTODEPOSIT PAMELA PERSON'
+);
+
+INSERT INTO party_match_patterns (party_id, pattern, sort_order)
+SELECT p.id, 'AUTODEPOSIT CARL CARPENTER', 0
+FROM parties p
+WHERE LOWER(p.name) = LOWER('Carl Carpenter')
+AND NOT EXISTS (
+  SELECT 1 FROM party_match_patterns pm
+  WHERE pm.party_id = p.id AND pm.sort_order = 0 AND pm.pattern = 'AUTODEPOSIT CARL CARPENTER'
+);
+
+
 INSERT INTO cel_rule_sets (name, definition)
-SELECT 'Bank Import', '{"rules":[{"name":"Default Values","enabled":true,"captures":[],"expression":"{\n  \"set\": {\n    \"dr-account\": attr[\"CAD$\"] > 0 ? \"Chequing\" : \"Unallocated Debits\",\n    \"cr-account\": attr[\"CAD$\"] > 0 ? \"Unallocated Credits\" : \"Chequing\",\n    \"amount\": attr[\"CAD$\"] < 0 ? -attr[\"CAD$\"] : attr[\"CAD$\"],\n    \"date\": attr[\"Transaction Date\"],\n    \"summary\": attr[\"Description 1\"],\n    \"description\": attr[\"Description 1\"]\n  }\n}","sort_order":0},{"name":"Bill Tenant Rent Payment","enabled":true,"captures":[{"flags":[],"label":"Bill Tenant Rent Payment","pattern":"AUTODEPOSIT BILL TENANT","attribute":"Description 1"}],"expression":"{\n  \"set\": {\n    \"summary\": \"Bill Tenant Rent Payment\",\n    \"cr-account\": \"Rent Revenue\",\n    \"cr-party\": \"Bill Tenant\"\n  }\n}","sort_order":1},{"name":"John Manager Rent Revenue","enabled":true,"captures":[{"flags":[],"label":"John Manager Rent Revenue","pattern":"AUTODEPOSIT JOHN P MANAGER","attribute":"Description 1"}],"expression":"{\n  \"set\": {\n    \"cr-account\": \"Rent Revenue\",\n    \"cr-party\": \"John Property Manager\",\n    \"summary\": \"John Manager Rent Payment\"\n  }\n}","sort_order":2},{"name":"Pamela Person Rent Payment","enabled":true,"captures":[{"flags":[],"label":"Pamela Payment Autodeposit","pattern":"AUTODEPOSIT PAMELA PERSON","attribute":"Description 1"}],"expression":"{\n  \"set\": {\n    \"cr-account\": \"Rent Revenue\",\n    \"cr-party\": \"Pamela Person\",\n    \"summary\": \"Pamela Person Rent Payment\"\n  }\n}","sort_order":3},{"name":"Carl Carpenter Rent Payment","enabled":true,"captures":[{"flags":[],"label":"Carl Carpenter Autodeposit","pattern":"AUTODEPOSIT CARL CARPENTER","attribute":"Description 1"}],"expression":"{\n  \"set\": {\n    \"cr-account\": \"Rent Revenue\",\n    \"cr-party\": \"Carl Carpenter\",\n    \"summary\": \"Carl Carpenter Rent Payment\"\n  }\n}","sort_order":4},{"name":"Landlord Cash Injection","enabled":true,"captures":[{"flags":[],"label":"Landlord Autodeposit","pattern":"AUTODEPOSIT LARRY LANDLORD","attribute":"Description 1"}],"expression":"{\n  \"set\": {\n    \"cr-account\": \"Owner Capital\",\n    \"cr-party\": \"Larry Landlord\",\n    \"summary\": \"Larry Landlord Cash Injection\"\n  }\n}","sort_order":5},{"name":"Spark Electric Bill Payments","enabled":true,"captures":[{"flags":[],"label":"Sparky Electric Bill Payment","pattern":"BILL PAYMENT SPELECN","attribute":"Description 1"}],"expression":"{\n  \"set\": {\n    \"dr-party\": \"Sparky Electric Company\",\n    \"dr-account\": \"Utilities\",\n    \"summary\": \"Sparky Electric Bill Payment\"\n  }\n}","sort_order":6},{"name":"Mower Man Yard Maintenance","enabled":true,"captures":[{"flags":[],"label":"Mower Man Yard Maintenance","pattern":"E-TRANSFER SENT MOWER MAN LAWN CARE","attribute":"Description 1"}],"expression":"{\n  \"set\": {\n    \"dr-party\": \"Mower Man Yard Maintenance\",\n    \"dr-account\": \"Maintenance and Repairs\",\n    \"summary\": \"Mower Man Bill Payment\"\n  }\n}","sort_order":7}]}'::jsonb
+SELECT 'Bank Import', '{"rules":[{"name":"Default Values","enabled":true,"captures":[],"expression":"{\n  \"set\": {\n    \"abs-amount\": attr[\"CAD$\"] < 0 ? -attr[\"CAD$\"] : attr[\"CAD$\"],\n    \"amount\": attr[\"CAD$\"],\n    \"date\": attr[\"Transaction Date\"],\n    \"summary\": attr[\"Description 1\"],\n    \"description\": attr[\"Description 1\"],\n    \"match-party\": party(attr[\"Description 1\"])\n  },\n  \"review\": \"match-party is \"\n}","sort_order":0},{"name":"Derive Party Details","enabled":true,"captures":[],"expression":"{\n  \"set\": {\n    \"rev-account\": revenue_account(attr[\"match-party\"]),\n    \"exp-account\": expense_account(attr[\"match-party\"]),\n    \"party-type\": party_type(attr[\"match-party\"]),\n    \"party-subtype\": party_subtype(attr[\"match-party\"])\n  }\n}","sort_order":1},{"name":"Bill Payment","enabled":true,"captures":[{"flags":[],"label":"Bill Payment Strings","pattern":"(?:MISC|BILL) (?:PAYMENT|PMT)","attribute":"Description 1"}],"expression":"!has(attr[\"exp-account\"]) || attr[\"exp-account\"] == \"\"\n?\n{}\n:\n{\n  \"set\": {\n    \"dr-party\": attr[\"match-party\"],\n    \"dr-account\": attr[\"exp-account\"],\n    \"summary\": \"Bill Payment\"\n  }\n}","sort_order":2},{"name":"Rent Payments","enabled":true,"captures":[],"expression":"attr[\"rev-account\"] == \"Rent Revenue\"\n?\n{\n  \"set\": {\n    \"summary\": attr[\"party-subtype\"] == \"tenant\" ? (attr[\"match-party\"] + \" Rent Payment\")\n                                                 : attr[\"party-subtype\"] == \"owner\" ? (attr[\"match-party\"] + \" Cash Injection\")\n                                                                                    : attr[\"Description 1\"]\n  }\n}\n:\n{}","sort_order":3},{"name":"Revenue Account","enabled":true,"captures":[],"expression":"!has(attr[\"rev-account\"]) || attr[\"rev-account\"] == \"\"\n?\n{}\n:\n{\n  \"set\": {\n    \"cr-account\": attr[\"rev-account\"]\n  }\n}","sort_order":4}]}'::jsonb
 WHERE NOT EXISTS (SELECT 1 FROM cel_rule_sets crs WHERE LOWER(crs.name) = LOWER('Bank Import'));
 
 INSERT INTO cel_rule_sets (name, definition)
