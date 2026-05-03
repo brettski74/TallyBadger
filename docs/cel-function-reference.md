@@ -12,7 +12,7 @@ This document is the **authoritative reference** for **custom functions** availa
 
 | Status | Meaning |
 |--------|---------|
-| **#46** | Planned in [#46](https://github.com/brettski74/TallyBadger/issues/46); update this doc in the same PR as the implementation. |
+| **#46** | Shipped in [#46](https://github.com/brettski74/TallyBadger/issues/46); keep this doc in sync when behaviour changes. |
 | **#50** | Planned in [#50](https://github.com/brettski74/TallyBadger/issues/50); update this doc in the same PR as the implementation. |
 
 ---
@@ -21,13 +21,13 @@ This document is the **authoritative reference** for **custom functions** availa
 
 These functions read **current ledger state** (active parties, accounts) passed into the CEL runtime when rules run (e.g. CSV import execute). They do **not** change import posting rules: journal construction still requires **exact** `parties.name` (and account names) in the bag where the pipeline already enforces that.
 
-### `party(str) -> string`
+### `party(str) -> string | null`
 
 - **Argument `str`:** Haystack text (e.g. raw bank description or concatenated fields) to match against each party’s **ordered regex patterns**.
 - **Matching:** For each **active** party, consider patterns in **`sort_order`** ascending. Use Python **`re.search(pattern, haystack)`** per pattern (same engine as elsewhere; document default flags—typically none, so authors may use `(?i)` for case-insensitivity).
 - **Success:** Return the party’s canonical **`name`** (the string import posting expects).
 - **Ambiguity:** If **more than one** active party has at least one pattern that matches the haystack, **fail** the CEL evaluation with an error that **lists the matched party names** (and optionally ids in the message for support).
-- **No match:** If no active party’s patterns match, **fail** the CEL evaluation with a clear **“no party matched”** (or equivalent) message so the row surfaces as a rule failure unless product later adds a nullable variant.
+- **No match:** If no active party’s patterns match, return **null** (e.g. branch with `party(x) != null ? … : …`).
 
 *Note:* Parties with **no** patterns never contribute to `party(str)`; exact-name resolution for posting is unchanged and separate.
 
@@ -95,5 +95,6 @@ These functions read **current ledger state** (active parties, accounts) passed 
 | When | Change |
 |------|--------|
 | *(initial)* | Stub reference: #46 party helpers + #50 generic helpers split from monolithic #50 description. |
+| *#46 ship* | `party()` returns **null** when no pattern matches; errors only on **multiple** matches. Party model, API, UI, and CEL wiring documented here. |
 
 Update this table whenever functions are added or signatures/semantics change.

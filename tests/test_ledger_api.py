@@ -19,6 +19,9 @@ class StubLedgerService:
     def list_parties(self):
         return []
 
+    def list_party_subtype_suggestions(self):
+        return []
+
     def create_account(self, _payload):
         raise LedgerConflictError("account name already exists")
 

@@ -39,12 +39,20 @@ class PartyCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     role: PartyRole = "both"
     is_active: bool = True
+    subtype: str | None = Field(default=None, max_length=120)
+    match_patterns: list[str] = Field(default_factory=list)
+    default_revenue_account_id: int | None = Field(default=None, gt=0)
+    default_expense_account_id: int | None = Field(default=None, gt=0)
 
 
 class PartyUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
     role: PartyRole | None = None
     is_active: bool | None = None
+    subtype: str | None = Field(default=None, max_length=120)
+    match_patterns: list[str] | None = None
+    default_revenue_account_id: int | None = Field(default=None, gt=0)
+    default_expense_account_id: int | None = Field(default=None, gt=0)
 
 
 class PartyOut(BaseModel):
@@ -54,6 +62,12 @@ class PartyOut(BaseModel):
     name: str
     role: PartyRole
     is_active: bool
+    subtype: str | None = None
+    match_patterns: list[str] = Field(default_factory=list)
+    default_revenue_account_id: int | None = None
+    default_expense_account_id: int | None = None
+    default_revenue_account_name: str | None = None
+    default_expense_account_name: str | None = None
     created_at: datetime
     updated_at: datetime
 

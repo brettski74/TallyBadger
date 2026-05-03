@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 
 import pytest
 
 from tallybadger.import_rules.cel_engine import evaluate_cel
 from tallybadger.import_rules.cel_models import CelRegexCapture, CelRule, CelRuleSet
 from tallybadger.import_rules.errors import ImportRulesCelError
+from tallybadger.ledger.models import PartyOut
 
 
 def test_cel_rule_can_set_attributes_and_keep_types() -> None:
@@ -195,3 +196,65 @@ def test_invalid_stop_type_raises() -> None:
     rs = CelRuleSet(rules=[CelRule(expression='{"stop":true}')])
     with pytest.raises(ImportRulesCelError, match="stop"):
         evaluate_cel(rs, {})
+
+
+def _party_row(**kwargs: object) -> PartyOut:
+    base: dict[str, object] = {
+        "id": 1,
+        "name": "Alice",
+        "role": "customer",
+        "is_active": True,
+        "match_patterns": [r"A\d+"],
+        "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+        "updated_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+    }
+    base.update(kwargs)
+    return PartyOut.model_validate(base)
+
+
+def test_cel_party_resolves_with_patterns() -> None:
+    p = _party_row(id=1, name="Alice", match_patterns=[r"A\d+"])
+    rs = CelRuleSet(rules=[CelRule(expression='{"set":{"who": party(attributes["d"])}}')])
+    out = evaluate_cel(rs, {"d": "X A99 Z"}, parties=[p])
+    assert out.attributes["who"] == "Alice"
+
+
+def test_cel_party_type_and_subtype() -> None:
+    p = _party_row(id=2, name="Bob", role="vendor", subtype="gardener", match_patterns=[])
+    rs = CelRuleSet(
+        rules=[
+            CelRule(expression='{"set":{"t": party_type("Bob"), "s": party_subtype("Bob")}}'),
+        ],
+    )
+    out = evaluate_cel(rs, {}, parties=[p])
+    assert out.attributes["t"] == "vendor"
+    assert out.attributes["s"] == "gardener"
+
+
+def test_cel_revenue_and_expense_account_names() -> None:
+    rent = _party_row(
+        id=3,
+        name="Tenant",
+        role="customer",
+        match_patterns=[],
+        default_revenue_account_name="Rent Revenue",
+    )
+    vend = _party_row(
+        id=4,
+        name="Plumber",
+        role="vendor",
+        match_patterns=[],
+        default_expense_account_name="Repairs Expense",
+    )
+    rs = CelRuleSet(
+        rules=[
+            CelRule(
+                expression=(
+                    '{"set":{"r": revenue_account("Tenant"), "e": expense_account("Plumber")}}'
+                ),
+            ),
+        ],
+    )
+    out = evaluate_cel(rs, {}, parties=[rent, vend])
+    assert out.attributes["r"] == "Rent Revenue"
+    assert out.attributes["e"] == "Repairs Expense"
