@@ -109,38 +109,33 @@ def build_party_cel_functions(parties: list[PartyOut]) -> dict[str, CELFunction]
         return celtypes.StringType(st)
 
     def default_revenue_equity_line(name: Any) -> Result:
-        """Shared implementation for revenue_account() and equity_account() (same party field, no type split in CEL)."""
+        """Shared implementation for revenue_account() and equity_account() (same party field).
+
+        Retrieval ignores party role (#61); returns null when no default revenue/equity account is stored.
+        Role and account-type checks apply when saving the party, not in CEL.
+        """
         key = _cel_str(name)
         if not key:
             return None
         snap = by_name.get(key)
         if snap is None:
             raise ImportRulesCelError(f"unknown active party {key!r}")
-        if snap.role not in ("customer", "both"):
-            raise ImportRulesCelError(
-                f"party {key!r} has role {snap.role!r}; default revenue/equity account applies only to customer or both",
-            )
         acc = snap.default_revenue_account_name
         if not acc:
-            raise ImportRulesCelError(
-                f"party {key!r} has no default revenue or equity account configured",
-            )
+            return None
         return celtypes.StringType(acc)
 
     def expense_account(name: Any) -> Result:
+        """Return default expense account name or null; role is not validated here (#61)."""
         key = _cel_str(name)
         if not key:
             return None
         snap = by_name.get(key)
         if snap is None:
             raise ImportRulesCelError(f"unknown active party {key!r}")
-        if snap.role not in ("vendor", "both"):
-            raise ImportRulesCelError(
-                f"party {key!r} has role {snap.role!r}; default expense account applies only to vendor or both",
-            )
         acc = snap.default_expense_account_name
         if not acc:
-            raise ImportRulesCelError(f"party {key!r} has no default expense account configured")
+            return None
         return celtypes.StringType(acc)
 
     return {

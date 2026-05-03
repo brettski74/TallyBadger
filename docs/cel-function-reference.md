@@ -79,22 +79,22 @@ These functions read **current ledger state** (active parties, accounts) passed 
 ### `revenue_account(str) -> string | null`
 
 - **Argument `str`:** Canonical party **name**.
-- **Returns:** **`name`** of the party’s configured **default revenue or equity account** (for posting into account-name fields)—same field as in the UI (“Default revenue / equity account”).
-- **Eligibility:** Party **`role`** must be **`customer`** or **`both`**. The party must have **`default_revenue_account_id`** set to an **active** account with **`type`** **`revenue`** or **`equity`** (validated at party save).
+- **Returns:** **`name`** of the party’s configured **default revenue or equity account** (for posting into account-name fields)—same field as in the UI (“Default revenue / equity account”). Returns **null** when that default is not set (including for parties whose role would not allow setting one at save time—CEL retrieval does not enforce role; see **#61**).
+- **Party save:** **`role`** in **`customer`** or **`both`**, account **`type`** **`revenue`** or **`equity`**, etc., are enforced when persisting the party—not when evaluating this function.
 - **Blank / null argument:** Return **null**.
-- **Errors:** Wrong role, missing default, inactive party, unknown name, inactive account, or wrong account type → evaluation error with explicit reason.
+- **Errors:** Unknown or inactive party name → evaluation error.
 
 ### `equity_account(str) -> string | null`
 
-- **Alias of `revenue_account(str)`** — same argument, same return value, same validation (including **null** on blank argument). Lets rules read more naturally (`equity_account("Owner")` vs `revenue_account("Owner")`) when the linked account is equity; either function may return a **revenue** or **equity** account name.
+- **Alias of `revenue_account(str)`** — same argument, same return value, same **null** / error behavior. Lets rules read more naturally (`equity_account("Owner")` vs `revenue_account("Owner")`) when the linked account is equity; either function may return a **revenue** or **equity** account name.
 
 ### `expense_account(str) -> string | null`
 
 - **Argument `str`:** Canonical party **name**.
-- **Returns:** **`name`** of the party’s configured **default expense account**.
-- **Eligibility:** Party **`role`** must be **`vendor`** or **`both`**. Validate at party save: account `type == expense`.
+- **Returns:** **`name`** of the party’s configured **default expense account**, or **null** if none is stored (**#61**: no role check on read).
+- **Party save:** **`role`** in **`vendor`** or **`both`** and account **`type == expense`** are enforced when persisting—not in CEL.
 - **Blank / null argument:** Return **null**.
-- **Errors:** Same style as `revenue_account` for non-blank names (wrong role, missing default, unknown party, etc.).
+- **Errors:** Unknown or inactive party name → evaluation error.
 
 ---
 
