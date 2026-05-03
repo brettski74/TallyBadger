@@ -92,6 +92,21 @@ export function PartiesSection({
     [accounts],
   );
 
+  /** API list plus subtypes already on loaded parties (works offline / if suggestions request fails). */
+  const subtypeCandidates = useMemo(() => {
+    const fromRows = parties.map((p) => p.subtype?.trim()).filter((s): s is string => Boolean(s));
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const s of [...subtypeSuggestions, ...fromRows]) {
+      const key = s.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(s);
+    }
+    out.sort((a, b) => a.localeCompare(b));
+    return out;
+  }, [parties, subtypeSuggestions]);
+
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -270,7 +285,7 @@ export function PartiesSection({
               aria-label="Party subtype"
               value={subtype}
               onChange={setSubtype}
-              suggestions={subtypeSuggestions}
+              suggestions={subtypeCandidates}
               placeholder="e.g. Tenant, Utilities"
             />
           </label>
@@ -399,7 +414,7 @@ export function PartiesSection({
                 aria-label="Edit party subtype"
                 value={editSubtype}
                 onChange={setEditSubtype}
-                suggestions={subtypeSuggestions}
+                suggestions={subtypeCandidates}
               />
             </label>
 

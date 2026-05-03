@@ -20,6 +20,17 @@ const sampleParty: Party = {
   updated_at: "2026-04-01T00:00:00Z",
 };
 
+const tenantParty: Party = {
+  id: 2,
+  name: "Ridge Unit A",
+  role: "customer",
+  is_active: true,
+  subtype: "Tenant",
+  match_patterns: [],
+  created_at: "2026-04-01T00:00:00Z",
+  updated_at: "2026-04-01T00:00:00Z",
+};
+
 const emptyAccounts: Account[] = [];
 
 describe("PartiesSection", () => {
@@ -163,10 +174,36 @@ describe("PartiesSection", () => {
     await waitFor(() => {
       expect(global.fetch).toHaveBeenCalled();
     });
-    const subtype = screen.getByRole("combobox", { name: "Party subtype" });
+    const subtype = screen.getByRole("textbox", { name: "Party subtype" });
     await user.type(subtype, "Ten");
-    expect(await screen.findByRole("option", { name: "Tenant" })).toBeInTheDocument();
+    expect(document.querySelector(".subtype-ghost-suffix")).toHaveTextContent("ant");
     await user.keyboard("{Enter}");
     expect(subtype).toHaveValue("Tenant");
+  });
+
+  it("subtype ghost uses subtypes from loaded parties when suggestions API returns empty", async () => {
+    vi.spyOn(global, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes("subtype-suggestions")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      return new Response("{}", { status: 201 });
+    });
+
+    render(
+      <PartiesSection
+        accounts={emptyAccounts}
+        parties={[tenantParty, sampleParty]}
+        loading={false}
+        error={null}
+        onPartyCreated={vi.fn()}
+        onPartyUpdated={vi.fn()}
+      />,
+    );
+
+    const user = userEvent.setup();
+    const subtype = await screen.findByRole("textbox", { name: "Party subtype" });
+    await user.type(subtype, "Te");
+    expect(document.querySelector(".subtype-ghost-suffix")).toHaveTextContent("nant");
   });
 });

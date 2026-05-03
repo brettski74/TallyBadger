@@ -1,5 +1,5 @@
 import type { KeyboardEvent } from "react";
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 const MAX_OPTIONS = 20;
 
@@ -20,6 +20,15 @@ export function filterSubtypeOptions(query: string, suggestions: readonly string
   return out.slice(0, MAX_OPTIONS);
 }
 
+/** Suffix to show after `typed` to complete to `canonical` (canonical casing). */
+export function subtypeCompletionSuffix(typed: string, canonical: string): string {
+  const t = typed;
+  const c = canonical;
+  if (!c.toLowerCase().startsWith(t.toLowerCase())) return "";
+  if (t.length >= c.length) return "";
+  return c.slice(t.length);
+}
+
 export type SubtypeComboboxProps = {
   "aria-label": string;
   value: string;
@@ -29,9 +38,9 @@ export type SubtypeComboboxProps = {
 };
 
 /**
- * Free-text field with prefix-matched suggestions (not native HTML datalist).
- * Enter, Tab, or ArrowRight accepts the highlighted row; ArrowUp/Down moves highlight;
- * Escape closes the list until the user edits again (any input event).
+ * Subtype text field with **inline ghost completion** (dimmed suffix), not a dropdown.
+ * Arrow Down/Up cycles when several matches share the same prefix; Enter, Tab, or
+ * Right Arrow accepts the offered completion; Escape hides the ghost until you edit again.
  */
 export function SubtypeCombobox({
   "aria-label": ariaLabel,
@@ -40,18 +49,27 @@ export function SubtypeCombobox({
   suggestions,
   placeholder,
 }: SubtypeComboboxProps) {
-  const listboxId = useId();
-  const [highlightIndex, setHighlightIndex] = useState(0);
-  /** After accept or Escape, hide list until the user types/pastes (onInput). */
-  const [panelSuppressed, setPanelSuppressed] = useState(false);
+  const [pickIndex, setPickIndex] = useState(0);
+  /** After accept or Escape, hide ghost until the user types/pastes (onInput). */
+  const [ghostSuppressed, setGhostSuppressed] = useState(false);
   const [focused, setFocused] = useState(false);
   const blurTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const filtered = useMemo(() => filterSubtypeOptions(value, suggestions), [value, suggestions]);
+  const candidates = useMemo(() => filterSubtypeOptions(value, suggestions), [value, suggestions]);
 
   useEffect(() => {
-    setHighlightIndex(0);
-  }, [filtered]);
+    setPickIndex(0);
+  }, [candidates.join("\0")]);
+
+  const chosen = candidates[pickIndex] ?? "";
+  const ghostSuffix =
+    focused && !ghostSuppressed && value.length > 0 ? subtypeCompletionSuffix(value, chosen) : "";
+  const canNormalizeCase =
+    focused &&
+    !ghostSuppressed &&
+    chosen.length > 0 &&
+    value !== chosen &&
+    value.toLowerCase() === chosen.toLowerCase();
 
   function clearBlurTimer() {
     if (blurTimer.current != null) {
@@ -60,67 +78,74 @@ export function SubtypeCombobox({
     }
   }
 
-  function applyOption(opt: string) {
+  function applyCanonical(full: string) {
     clearBlurTimer();
-    onChange(opt);
-    setPanelSuppressed(true);
+    onChange(full);
+    setGhostSuppressed(true);
   }
 
-  const showPanel = focused && filtered.length > 0 && !panelSuppressed;
+  function acceptIfOffered() {
+    if (ghostSuffix.length > 0) {
+      applyCanonical(chosen);
+      return true;
+    }
+    if (canNormalizeCase) {
+      applyCanonical(chosen);
+      return true;
+    }
+    return false;
+  }
 
   function handleKeyDown(e: KeyboardEvent<HTMLInputElement>) {
-    if (!showPanel) {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        setPanelSuppressed(true);
-      }
+    if (e.key === "ArrowDown" && candidates.length > 1) {
+      e.preventDefault();
+      setGhostSuppressed(false);
+      setPickIndex((i) => (i + 1) % candidates.length);
       return;
     }
-
-    const choice = filtered[highlightIndex];
-    if (e.key === "ArrowDown") {
+    if (e.key === "ArrowUp" && candidates.length > 1) {
       e.preventDefault();
-      setHighlightIndex((i) => (i + 1) % filtered.length);
-      return;
-    }
-    if (e.key === "ArrowUp") {
-      e.preventDefault();
-      setHighlightIndex((i) => (i - 1 + filtered.length) % filtered.length);
+      setGhostSuppressed(false);
+      setPickIndex((i) => (i - 1 + candidates.length) % candidates.length);
       return;
     }
     if (e.key === "Enter" || e.key === "ArrowRight") {
-      if (choice != null) {
+      if (acceptIfOffered()) {
         e.preventDefault();
         e.stopPropagation();
-        applyOption(choice);
       }
       return;
     }
-    if (e.key === "Tab" && !e.shiftKey && choice != null) {
-      applyOption(choice);
+    if (e.key === "Tab" && !e.shiftKey && acceptIfOffered()) {
       return;
     }
     if (e.key === "Escape") {
       e.preventDefault();
-      setPanelSuppressed(true);
+      setGhostSuppressed(true);
     }
   }
 
+  const showUnderlay = value.length > 0 && (ghostSuffix.length > 0 || canNormalizeCase);
+
   return (
-    <div className="subtype-combobox-wrap">
+    <div className="subtype-ghost-wrap">
+      {showUnderlay ? (
+        <div className="subtype-ghost-underlay" aria-hidden>
+          <span className="subtype-ghost-typed">{value}</span>
+          {ghostSuffix ? <span className="subtype-ghost-suffix">{ghostSuffix}</span> : null}
+        </div>
+      ) : null}
       <input
         type="text"
         autoComplete="off"
         spellCheck={false}
         aria-label={ariaLabel}
-        aria-autocomplete="list"
-        aria-expanded={showPanel}
-        aria-controls={showPanel ? listboxId : undefined}
-        role="combobox"
+        aria-autocomplete="inline"
         placeholder={placeholder}
         value={value}
+        className={value.length > 0 ? "subtype-ghost-input" : undefined}
         onChange={(e) => onChange(e.target.value)}
-        onInput={() => setPanelSuppressed(false)}
+        onInput={() => setGhostSuppressed(false)}
         onKeyDown={handleKeyDown}
         onFocus={() => {
           clearBlurTimer();
@@ -134,25 +159,6 @@ export function SubtypeCombobox({
           }, 150);
         }}
       />
-      {showPanel ? (
-        <ul id={listboxId} className="subtype-combobox-list" role="listbox">
-          {filtered.map((opt, i) => (
-            <li
-              key={opt}
-              role="option"
-              aria-selected={i === highlightIndex}
-              className={`subtype-combobox-option${i === highlightIndex ? " subtype-combobox-option-active" : ""}`}
-              onMouseDown={(e) => {
-                e.preventDefault();
-                applyOption(opt);
-              }}
-              onMouseEnter={() => setHighlightIndex(i)}
-            >
-              {opt}
-            </li>
-          ))}
-        </ul>
-      ) : null}
     </div>
   );
 }

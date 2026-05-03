@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-import { filterSubtypeOptions, SubtypeCombobox } from "./SubtypeCombobox";
+import { filterSubtypeOptions, subtypeCompletionSuffix, SubtypeCombobox } from "./SubtypeCombobox";
 
 function SubtypeWrap({
   initial = "",
@@ -61,34 +61,40 @@ describe("filterSubtypeOptions", () => {
   });
 });
 
+describe("subtypeCompletionSuffix", () => {
+  it("returns remainder with canonical casing", () => {
+    expect(subtypeCompletionSuffix("Te", "Tenant")).toBe("nant");
+    expect(subtypeCompletionSuffix("tenant", "Tenant")).toBe("");
+  });
+});
+
 describe("SubtypeCombobox", () => {
-  it("accepts highlighted suggestion on Enter", async () => {
+  it("shows ghost suffix while typing and accepts on Enter", async () => {
     render(<SubtypeWrap />);
 
     const user = userEvent.setup();
-    const input = screen.getByRole("combobox", { name: "Test subtype" });
+    const input = screen.getByRole("textbox", { name: "Test subtype" });
     await user.click(input);
     await user.type(input, "Ut");
 
-    expect(await screen.findByRole("option", { name: "Utilities" })).toBeInTheDocument();
-    await user.keyboard("{Enter}");
+    expect(document.querySelector(".subtype-ghost-suffix")).toHaveTextContent("ilities");
 
+    await user.keyboard("{Enter}");
     expect(input).toHaveValue("Utilities");
   });
 
-  it("dismisses list on Escape until user edits again", async () => {
+  it("hides ghost on Escape until user edits again", async () => {
     render(<SubtypeWrap initial="Ut" />);
 
     const user = userEvent.setup();
-    const input = screen.getByRole("combobox", { name: "Test subtype" });
+    const input = screen.getByRole("textbox", { name: "Test subtype" });
     await user.click(input);
-    expect(await screen.findByRole("option", { name: "Utilities" })).toBeInTheDocument();
+    expect(document.querySelector(".subtype-ghost-suffix")).toHaveTextContent("ilities");
 
     await user.keyboard("{Escape}");
-    expect(screen.queryByRole("option", { name: "Utilities" })).not.toBeInTheDocument();
+    expect(document.querySelector(".subtype-ghost-suffix")).not.toBeInTheDocument();
 
     await user.type(input, "i");
-    expect(input).toHaveValue("Uti");
-    expect(await screen.findByRole("option", { name: "Utilities" })).toBeInTheDocument();
+    expect(document.querySelector(".subtype-ghost-suffix")).toHaveTextContent("lities");
   });
 });

@@ -78,7 +78,11 @@ export async function listPartySubtypeSuggestions(): Promise<string[]> {
   if (!response.ok) {
     throw new Error(await readApiErrorMessage(response));
   }
-  return response.json();
+  const data: unknown = await response.json();
+  if (!Array.isArray(data)) {
+    return [];
+  }
+  return data.map((x) => String(x));
 }
 
 export async function createParty(payload: PartyCreateInput): Promise<Party> {

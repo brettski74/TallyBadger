@@ -728,39 +728,45 @@ th {
   resize: vertical;
 }
 
-.subtype-combobox-wrap {
+.subtype-ghost-wrap {
   position: relative;
   width: 100%;
+  margin-top: 0.25rem;
 }
 
-.subtype-combobox-wrap > input {
-  width: 100%;
-  box-sizing: border-box;
+.subtype-ghost-wrap input {
+  margin-top: 0;
 }
 
-.subtype-combobox-list {
+.subtype-ghost-underlay {
   position: absolute;
-  left: 0;
-  right: 0;
-  top: 100%;
-  margin: 2px 0 0;
-  padding: 0.25rem 0;
-  list-style: none;
-  background: var(--bg-card);
-  border: 1px solid var(--border-input);
-  border-radius: 6px;
-  max-height: 12rem;
-  overflow-y: auto;
-  z-index: 50;
-  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.12);
+  inset: 0;
+  z-index: 0;
+  box-sizing: border-box;
+  padding: 0.55rem;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: var(--bg-page);
+  color: var(--text);
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  line-height: normal;
 }
 
-.subtype-combobox-option {
-  padding: 0.35rem 0.65rem;
-  cursor: pointer;
+.subtype-ghost-typed {
+  color: var(--text);
 }
 
-.subtype-combobox-option-active,
-.subtype-combobox-option:hover {
-  background: var(--bg-subtle);
+.subtype-ghost-suffix {
+  color: var(--text-muted);
+}
+
+.subtype-ghost-input {
+  position: relative;
+  z-index: 1;
+  background: transparent !important;
+  color: transparent !important;
+  caret-color: var(--text);
 }
