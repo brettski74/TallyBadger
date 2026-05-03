@@ -117,7 +117,7 @@ These functions read **current ledger state** (active parties, accounts) passed 
 
 ## Generic helpers (**#50**)
 
-These functions are registered on the same CEL **`Environment`** as **`party`** / **`debug`** / **`unset`**. They read the **current row attribute bag** where noted (`defined`), and **`account_type`** reads the **account snapshot** passed into `evaluate_cel` (from `list_accounts()` on **`POST /import-rules/cel/evaluate`** and CSV execute—**no per-cell DB calls** inside CEL).
+These functions are registered on the same CEL **`Environment`** as **`party`** / **`debug`** / **`unset`**. They read the **current row attribute bag** where noted (`has_attr`), and **`account_type`** reads the **account snapshot** passed into `evaluate_cel` (from `list_accounts()` on **`POST /import-rules/cel/evaluate`** and CSV execute—**no per-cell DB calls** inside CEL).
 
 ### `abs(v) -> number`
 
@@ -138,10 +138,16 @@ These functions are registered on the same CEL **`Environment`** as **`party`** 
 - **Returns:** The **map entry value** for a string key equal to **`val`’s** usual string form (booleans → **`"true"`** / **`"false"`**; numbers → decimal string; doubles use integer string when whole). If the key is missing, returns **`default`**. If **`val`** is **`null`**, returns **`default`**. If **`map`** is not a map/object, returns **`default`** (no error).
 - **Whitespace:** If the key is missing, a **second attempt** uses **`strip()`** on the string form of **`val`** only when that form differs from the non-stripped form.
 
-### `defined(key) -> bool`
+### `defined(value) -> bool`
+
+- **Argument `value`:** Any CEL value (typically **`attributes["column"]`** or another expression).
+- **Returns:** **`false`** iff **`value`** is **`null`** or the **empty string** (`""`). **All other values** (including **non-empty strings**, **numbers**, **bools**, **lists**, **maps**) → **`true`**. **Whitespace-only strings are not** `""`, so they count as **defined**.
+- **Note:** This is **not** a bag key lookup. For **`defined(attributes["rev-account"])`**, the argument is the **cell value** (e.g. **`"Rent Revenue"`**), not the name **`rev-account`**. To test whether a **column name** exists in the bag with a non-empty value, use **`has_attr`** below.
+
+### `has_attr(key) -> bool`
 
 - **Argument `key`:** String **attribute name** (trimmed); blank key → **`false`**.
-- **Returns:** **`true`** iff the attribute bag contains **`key`** and the value is **not** **`null`**, **not** Python **`None`** in the bag, and **not** the **empty string** (`""`). **Whitespace-only strings are not treated as empty** (they count as defined).
+- **Returns:** **`true`** iff the attribute bag contains **`key`** and the value is **not** **`null`**, **not** Python **`None`** in the bag, and **not** exactly the **empty string** (`""`). **Whitespace-only strings** are **not** the same as `""`, so they count as present ( **`true`** ).
 - **Semantics:** Reads the **mutable** bag for the row (so a **later** rule sees keys set by an **earlier** rule in the same evaluation).
 
 ### `account_type(str) -> string`
@@ -170,5 +176,6 @@ These functions are registered on the same CEL **`Environment`** as **`party`** 
 | *#57 ship* | **`unset()`** — zero-arg marker for **`set`** map key removal; **`null`** still assigns **`None`**; trace **`remove_attribute`**. |
 | *#57 follow-up* | CSV execute **422** **`row_errors[]`** may include **`debug`** (same shape as successful **`entries[]`**) when CEL ran before journal validation failed. |
 | *#50 ship* | **`abs`**, **`day`**, **`month`**, **`decode`**, **`defined`**, **`account_type`**, **`match_date`** — stdlib-style helpers; **`evaluate_cel(..., accounts=)`** wires **`list_accounts()`** for evaluate + CSV. Engine walks CEL results for embedded **`CELEvalError`** values so **`ImportRulesCelError`** from custom functions (including **`party_*`**) surfaces as **`ImportRulesCelError`** / HTTP **422** instead of being left inside the **`set`** map. |
+| *#71 ship* | **`defined(value)`** — value semantics (**`null`** / **`""`** only → **`false`**). **`has_attr(key)`** — former **`defined(key)`** bag-key behavior for rules that need **column name** presence. |
 
 Update this table whenever functions are added or signatures/semantics change.

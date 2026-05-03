@@ -591,13 +591,13 @@ def test_cel_decode_null_lookup_returns_default() -> None:
     assert out.attributes["x"] == "fallback"
 
 
-def test_cel_defined_respects_bag_updates_across_rules() -> None:
+def test_cel_has_attr_respects_bag_updates_across_rules() -> None:
     rs = CelRuleSet(
         rules=[
             CelRule(sort_order=1, expression='{"set":{"mid": "v"}}'),
             CelRule(
                 sort_order=2,
-                expression='defined("mid") && !defined("absent") ? {"set":{"ok": true}} : null',
+                expression='has_attr("mid") && !has_attr("absent") ? {"set":{"ok": true}} : null',
             ),
         ],
     )
@@ -605,13 +605,72 @@ def test_cel_defined_respects_bag_updates_across_rules() -> None:
     assert out.attributes["ok"] is True
 
 
-def test_cel_defined_false_for_empty_null_missing() -> None:
+def test_cel_defined_true_for_non_empty_attribute_value_issue_71() -> None:
+    """defined(attributes[...]) uses value semantics, not bag-key lookup (#71)."""
     rs = CelRuleSet(
         rules=[
             CelRule(
                 expression=(
-                    '{"set":{"m": defined("missing"), "e": defined("empty"), '
-                    '"n": defined("nullv"), "b": defined("blank_key")}}'
+                    'defined(attributes["rev-account"]) ? '
+                    '{"set":{"cr-account": attributes["rev-account"]}} : '
+                    '{"set":{"miss": true}}'
+                ),
+            ),
+        ],
+    )
+    out = evaluate_cel(rs, {"rev-account": "Rent Revenue"})
+    assert out.attributes["cr-account"] == "Rent Revenue"
+    assert "miss" not in out.attributes
+
+
+def test_cel_defined_false_for_empty_string_value_issue_71() -> None:
+    rs = CelRuleSet(
+        rules=[
+            CelRule(
+                expression=(
+                    'defined(attributes["rev-account"]) ? {"set":{"ok": true}} : {"set":{"miss": true}}'
+                ),
+            ),
+        ],
+    )
+    out = evaluate_cel(rs, {"rev-account": ""})
+    assert out.attributes.get("miss") is True
+    assert "ok" not in out.attributes
+
+
+def test_cel_defined_false_for_null_value_issue_71() -> None:
+    rs = CelRuleSet(
+        rules=[
+            CelRule(
+                expression=(
+                    'defined(attributes["rev-account"]) ? {"set":{"ok": true}} : {"set":{"miss": true}}'
+                ),
+            ),
+        ],
+    )
+    out = evaluate_cel(rs, {"rev-account": None})
+    assert out.attributes.get("miss") is True
+
+
+def test_cel_defined_string_literal_is_non_empty_value_not_key_lookup() -> None:
+    """A string literal is a value: defined("hello") is true (#71)."""
+    rs = CelRuleSet(
+        rules=[
+            CelRule(expression='{"set":{"lit": defined("hello"), "empty_lit": defined("")}}'),
+        ],
+    )
+    out = evaluate_cel(rs, {})
+    assert out.attributes["lit"] is True
+    assert out.attributes["empty_lit"] is False
+
+
+def test_cel_has_attr_false_for_empty_null_missing() -> None:
+    rs = CelRuleSet(
+        rules=[
+            CelRule(
+                expression=(
+                    '{"set":{"m": has_attr("missing"), "e": has_attr("empty"), '
+                    '"n": has_attr("nullv"), "b": has_attr("blank_key")}}'
                 ),
             ),
         ],

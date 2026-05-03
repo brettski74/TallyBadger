@@ -152,7 +152,37 @@ def build_stdlib_cel_functions(
             return keyed[stripped]
         return default_val
 
-    def defined_fn(key: Any) -> Result:
+    def defined_fn(value: Any) -> Result:
+        """True iff ``value`` is non-null and not the empty string (#71).
+
+        Use for expressions like ``defined(attributes[\"col\"])``. For whether a
+        **column name** exists in the row bag with a non-empty value, use
+        ``has_attr(\"col\")``.
+        """
+        if value is None:
+            return celtypes.BoolType(False)
+        if isinstance(value, celtypes.StringType):
+            return celtypes.BoolType(str(value) != "")
+        if isinstance(value, str):
+            return celtypes.BoolType(value != "")
+        if isinstance(value, celtypes.BoolType):
+            return celtypes.BoolType(True)
+        if isinstance(value, celtypes.IntType):
+            return celtypes.BoolType(True)
+        if isinstance(value, celtypes.UintType):
+            return celtypes.BoolType(True)
+        if isinstance(value, celtypes.DoubleType):
+            return celtypes.BoolType(True)
+        if isinstance(value, celtypes.ListType):
+            return celtypes.BoolType(True)
+        if isinstance(value, celtypes.MapType):
+            return celtypes.BoolType(True)
+        if isinstance(value, (list, dict)):
+            return celtypes.BoolType(True)
+        return celtypes.BoolType(True)
+
+    def has_attr_fn(key: Any) -> Result:
+        """True iff the attribute bag contains ``key`` with a non-null, non-empty value."""
         k = _cel_str(key)
         if not k:
             return celtypes.BoolType(False)
@@ -192,6 +222,7 @@ def build_stdlib_cel_functions(
         "month": month_fn,
         "decode": decode_fn,
         "defined": defined_fn,
+        "has_attr": has_attr_fn,
         "account_type": account_type_fn,
         "match_date": match_date_fn,
     }
