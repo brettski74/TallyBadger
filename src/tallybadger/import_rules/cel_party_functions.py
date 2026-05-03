@@ -108,10 +108,11 @@ def build_party_cel_functions(parties: list[PartyOut]) -> dict[str, CELFunction]
         st = snap.subtype or ""
         return celtypes.StringType(st)
 
-    def revenue_account(name: Any) -> Result:
+    def default_revenue_equity_line(name: Any) -> Result:
+        """Shared implementation for revenue_account() and equity_account() (same party field, no type split in CEL)."""
         key = _cel_str(name)
         if not key:
-            raise ImportRulesCelError("revenue_account() requires a non-blank party name")
+            raise ImportRulesCelError("revenue_account() / equity_account() require a non-blank party name")
         snap = by_name.get(key)
         if snap is None:
             raise ImportRulesCelError(f"unknown active party {key!r}")
@@ -146,6 +147,7 @@ def build_party_cel_functions(parties: list[PartyOut]) -> dict[str, CELFunction]
         "party": party,
         "party_type": party_type,
         "party_subtype": party_subtype,
-        "revenue_account": revenue_account,
+        "revenue_account": default_revenue_equity_line,
+        "equity_account": default_revenue_equity_line,
         "expense_account": expense_account,
     }

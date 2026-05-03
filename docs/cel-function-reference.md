@@ -50,6 +50,10 @@ These functions read **current ledger state** (active parties, accounts) passed 
 - **Eligibility:** Party **`role`** must be **`customer`** or **`both`**. The party must have **`default_revenue_account_id`** set to an **active** account with **`type`** **`revenue`** or **`equity`** (validated at party save).
 - **Errors:** Wrong role, missing default, inactive party, unknown name, inactive account, or wrong account type → evaluation error with explicit reason.
 
+### `equity_account(str) -> string`
+
+- **Alias of `revenue_account(str)`** — same argument, same return value, same validation. Lets rules read more naturally (`equity_account("Owner")` vs `revenue_account("Owner")`) when the linked account is equity; either function may return a **revenue** or **equity** account name.
+
 ### `expense_account(str) -> string`
 
 - **Argument `str`:** Canonical party **name**.
@@ -96,5 +100,6 @@ These functions read **current ledger state** (active parties, accounts) passed 
 |------|--------|
 | *(initial)* | Stub reference: #46 party helpers + #50 generic helpers split from monolithic #50 description. |
 | *#46 ship* | `party()` returns **null** when no pattern matches; errors only on **multiple** matches. Party model, API, UI, and CEL wiring documented here. |
+| *#46 follow-up* | **`equity_account(str)`** added as an alias of **`revenue_account(str)`** (same field and return value). |
 
 Update this table whenever functions are added or signatures/semantics change.

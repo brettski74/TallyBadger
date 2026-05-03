@@ -258,3 +258,25 @@ def test_cel_revenue_and_expense_account_names() -> None:
     out = evaluate_cel(rs, {}, parties=[rent, vend])
     assert out.attributes["r"] == "Rent Revenue"
     assert out.attributes["e"] == "Repairs Expense"
+
+
+def test_equity_account_alias_matches_revenue_account() -> None:
+    p = _party_row(
+        id=5,
+        name="Owner Party",
+        role="customer",
+        match_patterns=[],
+        default_revenue_account_name="Owner Capital",
+    )
+    rs = CelRuleSet(
+        rules=[
+            CelRule(
+                expression=(
+                    '{"set":{"r": revenue_account("Owner Party"), "q": equity_account("Owner Party")}}'
+                ),
+            ),
+        ],
+    )
+    out = evaluate_cel(rs, {}, parties=[p])
+    assert out.attributes["r"] == "Owner Capital"
+    assert out.attributes["q"] == "Owner Capital"

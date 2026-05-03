@@ -285,7 +285,7 @@ export function PartiesSection({
               {DOCS_CEL_HINT}
             </p>
             {createPatterns.map((pat, index) => (
-              <div key={`cp-${index}-${pat.slice(0, 20)}`} style={PATTERN_ROW_GRID}>
+              <div key={`cp-${index}`} style={PATTERN_ROW_GRID}>
                 <label style={{ minWidth: 0, width: "100%" }}>
                   Pattern {index + 1}
                   <input
@@ -418,7 +418,7 @@ export function PartiesSection({
                 {DOCS_CEL_HINT}
               </p>
               {editPatterns.map((pat, index) => (
-                <div key={`ep-${index}-${pat.slice(0, 20)}`} style={PATTERN_ROW_GRID}>
+                <div key={`ep-${editingId}-${index}`} style={PATTERN_ROW_GRID}>
                   <label style={{ minWidth: 0, width: "100%" }}>
                     Pattern {index + 1}
                     <input
