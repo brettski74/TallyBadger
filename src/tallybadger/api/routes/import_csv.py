@@ -61,9 +61,24 @@ class CsvImportExecuteRequest(BaseModel):
         return self
 
 
+def _drop_empty_debug_field(data: dict[str, Any]) -> dict[str, Any]:
+    """Omit ``debug`` when absent or empty (same JSON shape as successful ``entries[]`` rows)."""
+    dbg = data.get("debug")
+    if dbg is None or (isinstance(dbg, list) and len(dbg) == 0):
+        data.pop("debug", None)
+    return data
+
+
 class CsvImportRowError(BaseModel):
+    """422 row payload; optional CEL ``debug`` matches what that row would get in ``entries[]`` (#57)."""
+
     row_number: int
     errors: list[str]
+    debug: list[CelDebugEvent] | None = None
+
+    @model_serializer(mode="wrap")
+    def _serialize(self, handler: Any) -> dict[str, Any]:
+        return _drop_empty_debug_field(handler(self))
 
 
 class CsvJournalEntryOut(JournalEntryOut):
@@ -75,11 +90,7 @@ class CsvJournalEntryOut(JournalEntryOut):
 
     @model_serializer(mode="wrap")
     def _serialize(self, handler: Any) -> dict[str, Any]:
-        data: dict[str, Any] = handler(self)
-        dbg = data.get("debug")
-        if dbg is None or (isinstance(dbg, list) and len(dbg) == 0):
-            data.pop("debug", None)
-        return data
+        return _drop_empty_debug_field(handler(self))
 
 
 class CsvImportExecuteResult(BaseModel):
@@ -476,14 +487,16 @@ def execute_csv_import(
             )
             pending_row_debug.append(row_debug)
         except (ValueError, LedgerValidationError) as exc:
-            row_errors.append(CsvImportRowError(row_number=idx, errors=[str(exc)]))
+            row_errors.append(
+                CsvImportRowError(row_number=idx, errors=[str(exc)], debug=row_debug),
+            )
 
     if row_errors:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={
                 "message": "CSV import failed validation",
-                "row_errors": [item.model_dump() for item in row_errors],
+                "row_errors": [item.model_dump(mode="json") for item in row_errors],
             },
         )
 

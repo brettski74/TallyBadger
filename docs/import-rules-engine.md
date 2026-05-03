@@ -157,6 +157,7 @@ Interactive: **`/docs`** → **import-rules**.
 | `rule_skipped` | `rule`, `reason` |
 | `rule_tried` / `rule_not_matched` / `rule_matched` | `rule` |
 | `set_attribute` | `rule`, `name`, `value` (value may be non-string) |
+| `remove_attribute` | `rule`, `name` — key removed from bag via **`unset()`** in CEL **`set`** ([#57](https://github.com/brettski74/TallyBadger/issues/57)) |
 | `append_to_attribute` | `rule`, `name`, `fragment` |
 | `stop` | `rule` |
 | `drop_row` | `rule`, `reason` |
@@ -217,7 +218,7 @@ There is now a **spike implementation** that models each rule as one CEL express
 - API: `POST /import-rules/cel/evaluate` via `src/tallybadger/api/routes/import_rules_cel.py`
 - Tests: `tests/test_import_rules_cel_engine.py`, `tests/test_import_rules_cel_api.py`
 
-**Custom CEL functions** (party helpers, generic helpers): see **[CEL function reference](cel-function-reference.md)** — tracked in GitHub [#46](https://github.com/brettski74/TallyBadger/issues/46) and [#50](https://github.com/brettski74/TallyBadger/issues/50). Update that doc in the same PR whenever a listed function ships or its contract changes.
+**Custom CEL functions** (party helpers, generic helpers): see **[CEL function reference](cel-function-reference.md)** — tracked in GitHub [#46](https://github.com/brettski74/TallyBadger/issues/46), [#50](https://github.com/brettski74/TallyBadger/issues/50), and [#57](https://github.com/brettski74/TallyBadger/issues/57) (`unset()`). Update that doc in the same PR whenever a listed function ships or its contract changes.
 
 ### CEL rule contract (spike)
 
@@ -234,7 +235,7 @@ The expression should return either:
 
 Top-level reserved payload keys:
 
-- `set`: map of attribute updates
+- `set`: map of attribute updates. Values are assigned into the bag; use CEL **`unset()`** as the value to **remove** a key instead (**[#57](https://github.com/brettski74/TallyBadger/issues/57)**). A **`null`** value still **sets** the attribute to null with the key **present**—it does **not** delete the key.
 - `stop`: `null` or **string reason** (non-null string stops further rules)
 - `drop`: `null` or **string reason** (non-null string drops row + stops)
 - `review`: `null` or **string reason** (non-null string marks require-review; processing continues)

@@ -96,6 +96,32 @@ def test_execute_csv_non_iso_date_after_cel_returns_422_not_500() -> None:
         _teardown_cel_client()
 
 
+def test_execute_csv_row_error_includes_cel_debug_when_journal_build_fails() -> None:
+    """422 row_errors include the same ``debug`` array a successful entry row would have (#57)."""
+    client = _client_with_cel_rule(
+        '{"set":{"date": attributes["summary"], "marker": debug(99)}}',
+    )
+    try:
+        payload = {
+            "csv_text": "date,summary\n2026-01-01,not-an-iso-date\n",
+            "has_header_row": True,
+            "columns": [
+                {"attribute_name": "date", "data_type": "date", "date_format": "YYYY-MM-DD"},
+                {"attribute_name": "summary", "data_type": "string", "date_format": None},
+            ],
+            "cel_rule_set_id": 1,
+        }
+        r = client.post("/imports/csv/execute", json=payload)
+        assert r.status_code == 422, r.text
+        detail = r.json()["detail"]
+        row0 = detail["row_errors"][0]
+        assert row0["row_number"] == 2
+        assert "debug" in row0
+        assert row0["debug"] == [{"rule": "rule[0]", "value": 99, "row_number": 2}]
+    finally:
+        _teardown_cel_client()
+
+
 def test_execute_csv_non_date_type_after_cel_returns_422_not_500() -> None:
     """CEL set ``date`` to a number; :func:`_to_entry_date` rejects it — row error, not 500."""
     client = _client_with_cel_rule('{"set":{"date": 42}}')

@@ -47,9 +47,18 @@ export interface CsvImportExecutePayload {
   default_import_normal_balance?: ImportTemplateNormalBalance | null;
 }
 
+/** One `debug(x)` record from CEL (same shape as optional `entries[].debug` on success). */
+export interface CsvImportCelDebugEvent {
+  rule: string;
+  value: unknown;
+  row_number?: number;
+}
+
 export interface CsvImportRowError {
   row_number: number;
   errors: string[];
+  /** Present when CEL ran and `debug()` was used — same as for a successful `entries[]` row (#57). */
+  debug?: CsvImportCelDebugEvent[];
 }
 
 export interface CsvImportExecuteResult {
