@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from tallybadger import __version__
 from tallybadger.api.routes import (
+    backup,
     cel_rule_sets,
     health,
     import_csv,
@@ -33,6 +34,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(backup.router)
 app.include_router(health.router)
 app.include_router(import_rules.router)
 app.include_router(import_rules_cel.router)

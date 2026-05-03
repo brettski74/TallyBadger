@@ -1,6 +1,7 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 
 import type { Account } from "../api/accounts";
+import { exportCompleteBackup, importCompleteBackup } from "../api/backup";
 import { getLedgerSettings, updateLedgerSettings } from "../api/settlements";
 
 interface ConfigurationSectionProps {
@@ -15,6 +16,10 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
   const [unallocCrId, setUnallocCrId] = useState("");
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [savedMessage, setSavedMessage] = useState<string | null>(null);
+  const [backupError, setBackupError] = useState<string | null>(null);
+  const [backupMessage, setBackupMessage] = useState<string | null>(null);
+  const [backupBusy, setBackupBusy] = useState(false);
+  const restoreInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     async function loadSettings() {
@@ -148,6 +153,88 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
           </p>
         )}
       </form>
+
+      <h3 className="config-subheading">Backup &amp; restore</h3>
+      <p className="muted">
+        Complete snapshot (ZIP of JSON) for bare-metal restore. Import only works when ledger data tables are
+        empty—use a fresh database or truncate in dev. See{" "}
+        <a href="https://github.com/brettski74/TallyBadger/blob/main/docs/backup-snapshot-format.md">
+          docs/backup-snapshot-format.md
+        </a>
+        .
+      </p>
+      <div className="backup-actions">
+        <button
+          type="button"
+          disabled={backupBusy}
+          onClick={() => {
+            void (async () => {
+              setBackupError(null);
+              setBackupMessage(null);
+              setBackupBusy(true);
+              try {
+                const blob = await exportCompleteBackup();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = "tallybadger-backup.zip";
+                a.click();
+                URL.revokeObjectURL(url);
+                setBackupMessage("Download started.");
+              } catch (err) {
+                setBackupError(err instanceof Error ? err.message : "Export failed");
+              } finally {
+                setBackupBusy(false);
+              }
+            })();
+          }}
+        >
+          Download complete backup
+        </button>
+        <input
+          ref={restoreInputRef}
+          type="file"
+          accept=".zip,application/zip"
+          hidden
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            e.target.value = "";
+            if (!file) return;
+            void (async () => {
+              setBackupError(null);
+              setBackupMessage(null);
+              setBackupBusy(true);
+              try {
+                await importCompleteBackup(file);
+                setBackupMessage("Restore completed. Reload the app to see imported data.");
+              } catch (err) {
+                setBackupError(err instanceof Error ? err.message : "Restore failed");
+              } finally {
+                setBackupBusy(false);
+              }
+            })();
+          }}
+        />
+        <button
+          type="button"
+          disabled={backupBusy}
+          onClick={() => {
+            restoreInputRef.current?.click();
+          }}
+        >
+          Restore from ZIP…
+        </button>
+      </div>
+      {backupError && (
+        <p className="error" role="alert">
+          {backupError}
+        </p>
+      )}
+      {backupMessage && (
+        <p className="muted" role="status">
+          {backupMessage}
+        </p>
+      )}
     </section>
   );
 }
