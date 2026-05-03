@@ -1,12 +1,23 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { exportBackup, exportCompleteBackup, importBackup, importCompleteBackup } from "./backup";
+import {
+  backupDownloadFilename,
+  exportBackup,
+  exportCompleteBackup,
+  importBackup,
+  importCompleteBackup,
+} from "./backup";
 
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
 describe("backup API", () => {
+  it("backupDownloadFilename uses local time tally-badger-backup-yyyymmdd-hhmmss.zip", () => {
+    const name = backupDownloadFilename(new Date(2026, 4, 3, 14, 9, 7));
+    expect(name).toBe("tally-badger-backup-20260503-140907.zip");
+  });
+
   it("exportBackup POSTs /backup/export with export_type and returns blob", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(new Blob(["zip-bytes"]), {

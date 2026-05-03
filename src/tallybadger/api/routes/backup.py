@@ -1,5 +1,6 @@
 """Backup export / restore API (#67, #68)."""
 
+from datetime import datetime
 from typing import Literal
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, Response, UploadFile, status
@@ -27,10 +28,12 @@ def backup_export(
 ) -> Response:
     with get_connection() as conn:
         data = export_snapshot(conn, export_type)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    filename = f"tally-badger-backup-{stamp}.zip"
     return Response(
         content=data,
         media_type="application/zip",
-        headers={"Content-Disposition": 'attachment; filename="tallybadger-backup.zip"'},
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
