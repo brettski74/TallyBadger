@@ -18,7 +18,15 @@ const accounts: Account[] = [
 ];
 
 const parties: Party[] = [
-  { id: 1, name: "Acme Yard Maintenance", role: "customer", is_active: true, created_at: "", updated_at: "" },
+  {
+    id: 1,
+    name: "Acme Yard Maintenance",
+    role: "customer",
+    is_active: true,
+    match_patterns: [],
+    created_at: "",
+    updated_at: "",
+  },
 ];
 
 describe("AccrualPlansSection", () => {

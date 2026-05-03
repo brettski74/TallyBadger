@@ -428,7 +428,7 @@ def execute_csv_import(
 
         if rule_set is not None:
             try:
-                result = evaluate_cel(rule_set, bag)
+                result = evaluate_cel(rule_set, bag, parties=ledger_service.list_parties())
             except ImportRulesCelError as exc:
                 row_errors.append(CsvImportRowError(row_number=idx, errors=[str(exc)]))
                 continue

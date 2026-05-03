@@ -727,3 +727,50 @@ th {
   min-height: calc(16 * 1.35em + 1.5rem);
   resize: vertical;
 }
+
+.subtype-ghost-wrap {
+  position: relative;
+  width: 100%;
+  margin-top: 0.25rem;
+  font: inherit;
+}
+
+.subtype-ghost-wrap input {
+  margin-top: 0;
+  font: inherit;
+  line-height: 1.4;
+}
+
+.subtype-ghost-underlay {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  box-sizing: border-box;
+  padding: 0.55rem;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: var(--bg-page);
+  color: var(--text);
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  font: inherit;
+  line-height: 1.4;
+}
+
+.subtype-ghost-typed {
+  color: var(--text);
+}
+
+.subtype-ghost-suffix {
+  color: var(--text-muted);
+}
+
+.subtype-ghost-input {
+  position: relative;
+  z-index: 1;
+  background: transparent !important;
+  color: transparent !important;
+  caret-color: var(--text);
+}

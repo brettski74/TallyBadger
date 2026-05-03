@@ -1,4 +1,4 @@
-"""Dev-only Postgres seed: export/import accounts, parties, CEL rule sets, import templates.
+"""Dev-only Postgres seed: export/import accounts, parties (and match patterns), CEL rule sets, import templates.
 
 This file is **not** run by ``tallybadger.db_migrations``. Production deploys should only
 apply numbered ``sql/NNN_*.sql`` migrations; local manual testing uses ``sql/dev_seed.sql``.
@@ -31,6 +31,28 @@ def _sql_json_literal(value: object) -> str:
     return "'" + raw.replace("'", "''") + "'::jsonb"
 
 
+def _account_id_subselect_by_name(account_name: str | None) -> str:
+    """SQL expression resolving an account id by name, or NULL."""
+    if account_name is None:
+        return "NULL::bigint"
+    name = str(account_name).strip()
+    if not name:
+        return "NULL::bigint"
+    return (
+        "(SELECT id FROM accounts WHERE LOWER(name) = LOWER("
+        f"{_sql_text_literal(name)}) LIMIT 1)"
+    )
+
+
+def _subtype_sql_expr(subtype: object) -> str:
+    if subtype is None:
+        return "NULL::text"
+    s = str(subtype).strip()
+    if not s:
+        return "NULL::text"
+    return _sql_text_literal(s)
+
+
 def export_dev_seed_sql(*, database_url: str | None = None, destination: Path | None = None) -> Path:
     """Write idempotent INSERT statements for dev-relevant tables."""
     url = database_url or get_settings().database_url
@@ -55,13 +77,27 @@ def export_dev_seed_sql(*, database_url: str | None = None, destination: Path | 
             accounts = list(cur.fetchall())
             cur.execute(
                 """
-                SELECT name, role
-                FROM parties
-                WHERE is_active = TRUE
-                ORDER BY id
+                SELECT p.name, p.role, p.is_active, p.subtype,
+                       ra.name AS default_revenue_account_name,
+                       ea.name AS default_expense_account_name
+                FROM parties p
+                LEFT JOIN accounts ra ON ra.id = p.default_revenue_account_id
+                LEFT JOIN accounts ea ON ea.id = p.default_expense_account_id
+                WHERE p.is_active = TRUE
+                ORDER BY p.id
                 """,
             )
             parties = list(cur.fetchall())
+            cur.execute(
+                """
+                SELECT p.name AS party_name, pm.pattern, pm.sort_order
+                FROM party_match_patterns pm
+                INNER JOIN parties p ON p.id = pm.party_id
+                WHERE p.is_active = TRUE
+                ORDER BY p.id, pm.sort_order, pm.id
+                """,
+            )
+            party_patterns = list(cur.fetchall())
             cur.execute(
                 """
                 SELECT name, definition
@@ -93,13 +129,38 @@ def export_dev_seed_sql(*, database_url: str | None = None, destination: Path | 
 
     for row in parties:
         name, role = row["name"], row["role"]
+        subtype_sql = _subtype_sql_expr(row.get("subtype"))
+        rev_sql = _account_id_subselect_by_name(row.get("default_revenue_account_name"))
+        exp_sql = _account_id_subselect_by_name(row.get("default_expense_account_name"))
         lines.append(
-            "INSERT INTO parties (name, role, is_active)\n"
-            f"SELECT {_sql_text_literal(name)}, {_sql_text_literal(role)}, TRUE\n"
+            "INSERT INTO parties (name, role, is_active, subtype, "
+            "default_revenue_account_id, default_expense_account_id)\n"
+            f"SELECT {_sql_text_literal(name)}, {_sql_text_literal(role)}, TRUE, "
+            f"{subtype_sql}, {rev_sql}, {exp_sql}\n"
             "WHERE NOT EXISTS (SELECT 1 FROM parties p WHERE LOWER(p.name) = LOWER("
             f"{_sql_text_literal(name)}));\n",
         )
     if parties:
+        lines.append("")
+
+    for prow in party_patterns:
+        party_name = str(prow["party_name"])
+        pattern = str(prow["pattern"])
+        sort_order = int(prow["sort_order"])
+        pat_lit = _sql_text_literal(pattern)
+        party_lit = _sql_text_literal(party_name)
+        lines.append(
+            "INSERT INTO party_match_patterns (party_id, pattern, sort_order)\n"
+            f"SELECT p.id, {pat_lit}, {sort_order}\n"
+            "FROM parties p\n"
+            f"WHERE LOWER(p.name) = LOWER({party_lit})\n"
+            "AND NOT EXISTS (\n"
+            "  SELECT 1 FROM party_match_patterns pm\n"
+            "  WHERE pm.party_id = p.id AND pm.sort_order = "
+            f"{sort_order} AND pm.pattern = {pat_lit}\n"
+            ");\n",
+        )
+    if party_patterns:
         lines.append("")
 
     for row in rule_sets:

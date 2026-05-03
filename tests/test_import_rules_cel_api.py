@@ -1,11 +1,22 @@
+from unittest.mock import MagicMock
+
+import pytest
 from fastapi.testclient import TestClient
 
+from tallybadger.api.routes.ledger import get_ledger_service
 from tallybadger.main import app
 
-client = TestClient(app)
+
+@pytest.fixture
+def cel_evaluate_client() -> TestClient:
+    ledger = MagicMock()
+    ledger.list_parties.return_value = []
+    app.dependency_overrides[get_ledger_service] = lambda: ledger
+    yield TestClient(app)
+    app.dependency_overrides.pop(get_ledger_service, None)
 
 
-def test_cel_evaluate_endpoint_happy_path() -> None:
+def test_cel_evaluate_endpoint_happy_path(cel_evaluate_client: TestClient) -> None:
     body = {
         "attributes": {"amount": 150.5, "description": "EMT - BOB, ref 1"},
         "rule_set": {
@@ -27,7 +38,7 @@ def test_cel_evaluate_endpoint_happy_path() -> None:
             ],
         },
     }
-    r = client.post("/import-rules/cel/evaluate", json=body)
+    r = cel_evaluate_client.post("/import-rules/cel/evaluate", json=body)
     assert r.status_code == 200
     data = r.json()
     assert data["attributes"]["party"] == "BOB"
@@ -36,7 +47,7 @@ def test_cel_evaluate_endpoint_happy_path() -> None:
     assert data["review_reason"] == "confirm party"
 
 
-def test_cel_evaluate_endpoint_bad_control_type_422() -> None:
+def test_cel_evaluate_endpoint_bad_control_type_422(cel_evaluate_client: TestClient) -> None:
     body = {
         "attributes": {},
         "rule_set": {
@@ -47,5 +58,5 @@ def test_cel_evaluate_endpoint_bad_control_type_422() -> None:
             ],
         },
     }
-    r = client.post("/import-rules/cel/evaluate", json=body)
+    r = cel_evaluate_client.post("/import-rules/cel/evaluate", json=body)
     assert r.status_code == 422

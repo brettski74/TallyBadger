@@ -2,6 +2,7 @@ from collections import defaultdict
 from collections.abc import Callable
 from datetime import date, timedelta
 import calendar
+import re
 from contextlib import AbstractContextManager
 from decimal import Decimal
 
@@ -42,6 +43,116 @@ class LedgerValidationError(LedgerError):
 
 
 JOURNAL_LIST_SPLIT_LABEL = "-- Split --"
+
+
+def _normalize_party_match_patterns(patterns: list[str]) -> list[str]:
+    out: list[str] = []
+    for raw in patterns:
+        pat = raw.strip()
+        if not pat:
+            continue
+        try:
+            re.compile(pat)
+        except re.error as exc:
+            raise LedgerValidationError(f"invalid regex pattern: {exc}") from exc
+        out.append(pat)
+    return out
+
+
+def _validate_party_default_accounts(
+    cur,
+    *,
+    role: str,
+    revenue_id: int | None,
+    expense_id: int | None,
+) -> None:
+    if revenue_id is not None and role not in ("customer", "both"):
+        raise LedgerValidationError(
+            "default revenue account is only allowed when party role is customer or both",
+        )
+    if expense_id is not None and role not in ("vendor", "both"):
+        raise LedgerValidationError(
+            "default expense account is only allowed when party role is vendor or both",
+        )
+    if revenue_id is not None:
+        cur.execute(
+            "SELECT name, type, is_active FROM accounts WHERE id = %s",
+            (revenue_id,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            raise LedgerValidationError("default revenue/equity account not found")
+        if not row["is_active"]:
+            raise LedgerValidationError("default revenue/equity account must be active")
+        if row["type"] not in ("revenue", "equity"):
+            raise LedgerValidationError(
+                "default revenue/equity account must have account type revenue or equity",
+            )
+    if expense_id is not None:
+        cur.execute(
+            "SELECT name, type, is_active FROM accounts WHERE id = %s",
+            (expense_id,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            raise LedgerValidationError("default expense account not found")
+        if not row["is_active"]:
+            raise LedgerValidationError("default expense account must be active")
+        if row["type"] != "expense":
+            raise LedgerValidationError("default expense account must have account type expense")
+
+
+def _row_to_party_out(row: dict[str, object]) -> PartyOut:
+    mp = row.get("match_patterns")
+    if mp is None:
+        patterns: list[str] = []
+    elif isinstance(mp, list):
+        patterns = [str(x) for x in mp]
+    else:
+        patterns = [str(x) for x in list(mp)]  # type: ignore[arg-type]
+    payload = {
+        **{k: v for k, v in row.items() if k != "match_patterns"},
+        "match_patterns": patterns,
+    }
+    return PartyOut.model_validate(payload)
+
+
+def _party_out_by_id(cur, party_id: int) -> PartyOut | None:
+    cur.execute(
+        """
+        SELECT p.id, p.name, p.role, p.is_active, p.subtype,
+               p.default_revenue_account_id, p.default_expense_account_id,
+               ra.name AS default_revenue_account_name,
+               ea.name AS default_expense_account_name,
+               p.created_at, p.updated_at,
+               COALESCE(
+                 (SELECT json_agg(pm.pattern ORDER BY pm.sort_order, pm.id)
+                  FROM party_match_patterns pm WHERE pm.party_id = p.id),
+                 '[]'::json
+               ) AS match_patterns
+        FROM parties p
+        LEFT JOIN accounts ra ON ra.id = p.default_revenue_account_id
+        LEFT JOIN accounts ea ON ea.id = p.default_expense_account_id
+        WHERE p.id = %s
+        """,
+        (party_id,),
+    )
+    row = cur.fetchone()
+    if not row:
+        return None
+    return _row_to_party_out(row)
+
+
+def _replace_party_patterns(cur, party_id: int, patterns: list[str]) -> None:
+    cur.execute("DELETE FROM party_match_patterns WHERE party_id = %s", (party_id,))
+    for i, pat in enumerate(patterns):
+        cur.execute(
+            """
+            INSERT INTO party_match_patterns (party_id, pattern, sort_order)
+            VALUES (%s, %s, %s)
+            """,
+            (party_id, pat, i),
+        )
 
 
 def labels_and_amount_for_journal_list_lines(
@@ -126,66 +237,173 @@ class LedgerService:
             with conn.cursor(row_factory=dict_row) as cur:
                 cur.execute(
                     """
-                    SELECT id, name, role, is_active, created_at, updated_at
-                    FROM parties
-                    ORDER BY name ASC
+                    SELECT p.id, p.name, p.role, p.is_active, p.subtype,
+                           p.default_revenue_account_id, p.default_expense_account_id,
+                           ra.name AS default_revenue_account_name,
+                           ea.name AS default_expense_account_name,
+                           p.created_at, p.updated_at,
+                           COALESCE(
+                             (SELECT json_agg(pm.pattern ORDER BY pm.sort_order, pm.id)
+                              FROM party_match_patterns pm WHERE pm.party_id = p.id),
+                             '[]'::json
+                           ) AS match_patterns
+                    FROM parties p
+                    LEFT JOIN accounts ra ON ra.id = p.default_revenue_account_id
+                    LEFT JOIN accounts ea ON ea.id = p.default_expense_account_id
+                    ORDER BY p.name ASC
                     """
                 )
                 rows = cur.fetchall()
-        return [PartyOut.model_validate(row) for row in rows]
+        return [_row_to_party_out(row) for row in rows]
+
+    def list_party_subtype_suggestions(self) -> list[str]:
+        with self._connection_factory() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT DISTINCT BTRIM(subtype) AS s
+                    FROM parties
+                    WHERE subtype IS NOT NULL AND BTRIM(subtype) <> ''
+                    ORDER BY 1 ASC
+                    """
+                )
+                return [str(r[0]) for r in cur.fetchall()]
 
     def create_party(self, party: PartyCreate) -> PartyOut:
+        patterns = _normalize_party_match_patterns(party.match_patterns)
+        subtype = party.subtype.strip() if party.subtype and party.subtype.strip() else None
+        with self._connection_factory() as conn:
+            try:
+                with conn.transaction():
+                    with conn.cursor(row_factory=dict_row) as cur:
+                        _validate_party_default_accounts(
+                            cur,
+                            role=party.role,
+                            revenue_id=party.default_revenue_account_id,
+                            expense_id=party.default_expense_account_id,
+                        )
+                        cur.execute(
+                            """
+                            INSERT INTO parties (
+                                name, role, is_active, subtype,
+                                default_revenue_account_id, default_expense_account_id
+                            )
+                            VALUES (%s, %s, %s, %s, %s, %s)
+                            RETURNING id
+                            """,
+                            (
+                                party.name.strip(),
+                                party.role,
+                                party.is_active,
+                                subtype,
+                                party.default_revenue_account_id,
+                                party.default_expense_account_id,
+                            ),
+                        )
+                        row = cur.fetchone()
+                        assert row is not None
+                        party_id = int(row["id"])
+                        _replace_party_patterns(cur, party_id, patterns)
+                        out = _party_out_by_id(cur, party_id)
+            except errors.CheckViolation as exc:
+                raise LedgerValidationError(
+                    "party role is incompatible with default account columns",
+                ) from exc
+            except errors.UniqueViolation as exc:
+                raise LedgerConflictError("party name already exists") from exc
+        assert out is not None
+        return out
+
+    def update_party(self, party_id: int, payload: PartyUpdate) -> PartyOut:
+        data = payload.model_dump(exclude_unset=True)
+        if not data:
+            raise LedgerValidationError("at least one party field must be updated")
+
         with self._connection_factory() as conn:
             try:
                 with conn.transaction():
                     with conn.cursor(row_factory=dict_row) as cur:
                         cur.execute(
                             """
-                            INSERT INTO parties (name, role, is_active)
-                            VALUES (%s, %s, %s)
-                            RETURNING id, name, role, is_active, created_at, updated_at
+                            SELECT id, name, role, is_active, subtype,
+                                   default_revenue_account_id, default_expense_account_id,
+                                   created_at, updated_at
+                            FROM parties WHERE id = %s
                             """,
-                            (party.name.strip(), party.role, party.is_active),
+                            (party_id,),
                         )
-                        row = cur.fetchone()
-            except errors.UniqueViolation as exc:
-                raise LedgerConflictError("party name already exists") from exc
-        return PartyOut.model_validate(row)
-
-    def update_party(self, party_id: int, payload: PartyUpdate) -> PartyOut:
-        if payload.name is None and payload.role is None and payload.is_active is None:
-            raise LedgerValidationError("at least one party field must be updated")
-
-        updates: list[str] = []
-        params: list[object] = []
-        if payload.name is not None:
-            updates.append("name = %s")
-            params.append(payload.name.strip())
-        if payload.role is not None:
-            updates.append("role = %s")
-            params.append(payload.role)
-        if payload.is_active is not None:
-            updates.append("is_active = %s")
-            params.append(payload.is_active)
-        params.append(party_id)
-
-        query = f"""
-            UPDATE parties
-            SET {", ".join(updates)}, updated_at = NOW()
-            WHERE id = %s
-            RETURNING id, name, role, is_active, created_at, updated_at
-        """
-        with self._connection_factory() as conn:
-            try:
-                with conn.transaction():
-                    with conn.cursor(row_factory=dict_row) as cur:
-                        cur.execute(query, params)
-                        row = cur.fetchone()
-                        if not row:
+                        current = cur.fetchone()
+                        if not current:
                             raise LedgerNotFoundError(f"party {party_id} not found")
+
+                        effective_role = data.get("role", current["role"])
+                        effective_rev = current["default_revenue_account_id"]
+                        if "default_revenue_account_id" in data:
+                            effective_rev = data["default_revenue_account_id"]
+                        effective_exp = current["default_expense_account_id"]
+                        if "default_expense_account_id" in data:
+                            effective_exp = data["default_expense_account_id"]
+
+                        _validate_party_default_accounts(
+                            cur,
+                            role=str(effective_role),
+                            revenue_id=effective_rev,
+                            expense_id=effective_exp,
+                        )
+
+                        updates: list[str] = []
+                        params: list[object] = []
+                        if "name" in data:
+                            updates.append("name = %s")
+                            params.append(str(data["name"]).strip())
+                        if "role" in data:
+                            updates.append("role = %s")
+                            params.append(data["role"])
+                        if "is_active" in data:
+                            updates.append("is_active = %s")
+                            params.append(data["is_active"])
+                        if "subtype" in data:
+                            updates.append("subtype = %s")
+                            st = data["subtype"]
+                            if st is None:
+                                params.append(None)
+                            else:
+                                params.append(str(st).strip() or None)
+                        if "default_revenue_account_id" in data:
+                            updates.append("default_revenue_account_id = %s")
+                            params.append(data["default_revenue_account_id"])
+                        if "default_expense_account_id" in data:
+                            updates.append("default_expense_account_id = %s")
+                            params.append(data["default_expense_account_id"])
+
+                        if updates:
+                            params.append(party_id)
+                            cur.execute(
+                                f"""
+                                UPDATE parties
+                                SET {", ".join(updates)}, updated_at = NOW()
+                                WHERE id = %s
+                                """,
+                                params,
+                            )
+
+                        if "match_patterns" in data:
+                            raw_patterns = data["match_patterns"]
+                            if raw_patterns is None:
+                                raise LedgerValidationError("match_patterns cannot be null")
+                            patterns = _normalize_party_match_patterns(list(raw_patterns))
+                            _replace_party_patterns(cur, party_id, patterns)
+
+                        out = _party_out_by_id(cur, party_id)
+            except errors.CheckViolation as exc:
+                raise LedgerValidationError(
+                    "party role is incompatible with default account columns",
+                ) from exc
             except errors.UniqueViolation as exc:
                 raise LedgerConflictError("party name already exists") from exc
-        return PartyOut.model_validate(row)
+
+        assert out is not None
+        return out
 
     def update_account(self, account_id: int, payload: AccountUpdate) -> AccountOut:
         if payload.name is None and payload.is_active is None:

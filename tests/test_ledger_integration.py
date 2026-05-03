@@ -9,6 +9,9 @@ from psycopg import connect
 from psycopg.rows import dict_row
 
 from tallybadger.db_migrations import apply_sql_migrations
+from tallybadger.import_rules.cel_engine import evaluate_cel
+from tallybadger.import_rules.cel_models import CelRule, CelRuleSet
+from tallybadger.import_rules.errors import ImportRulesCelError
 from tallybadger.ledger.models import (
     AccountCreate,
     AccountUpdate,
@@ -61,7 +64,7 @@ def clean_database(integration_db_url: str) -> Iterator[None]:
                 cur.execute(
                     """
                     TRUNCATE TABLE import_templates, journal_lines, journal_entries,
-                      accrual_plans, parties, accounts, cel_rule_sets
+                      accrual_plans, party_match_patterns, parties, accounts, cel_rule_sets
                     RESTART IDENTITY CASCADE
                     """
                 )
@@ -659,3 +662,81 @@ def test_same_day_overpayment_adds_cash_and_unearned_on_accrual_entry(
     assert sum(line.amount for line in entry.lines if line.account_id == ur.id) == Decimal("-500.00")
     assert sum(line.amount for line in entry.lines if line.account_id == rent.id) == Decimal("-1500.00")
     assert not any(line.account_id == ar.id for line in entry.lines)
+
+
+def test_party_default_revenue_and_cel_party_and_revenue_account(ledger_service: LedgerService) -> None:
+    rent = ledger_service.create_account(AccountCreate(name="Rent Revenue", type="revenue"))
+    ledger_service.create_party(
+        PartyCreate(
+            name="Bob Tenant",
+            role="customer",
+            is_active=True,
+            match_patterns=[r"BANK.*BOB"],
+            default_revenue_account_id=rent.id,
+        ),
+    )
+    parties = ledger_service.list_parties()
+    bob = next(p for p in parties if p.name == "Bob Tenant")
+    assert bob.match_patterns == [r"BANK.*BOB"]
+    assert bob.default_revenue_account_name == "Rent Revenue"
+
+    rs = CelRuleSet(
+        rules=[
+            CelRule(
+                sort_order=10,
+                expression=(
+                    '{"set": {"party": party(attributes["desc"]), '
+                    '"acct": revenue_account("Bob Tenant")}}'
+                ),
+            ),
+        ],
+    )
+    out = evaluate_cel(rs, {"desc": "BANK PAY BOB"}, parties=parties)
+    assert out.attributes["party"] == "Bob Tenant"
+    assert out.attributes["acct"] == "Rent Revenue"
+
+
+def test_cel_party_returns_null_when_no_pattern_match(ledger_service: LedgerService) -> None:
+    ledger_service.create_party(
+        PartyCreate(name="Only", role="customer", is_active=True, match_patterns=[r"^X$"]),
+    )
+    rs = CelRuleSet(rules=[CelRule(expression='{"set": {"p": party(attributes["desc"])}}')])
+    out = evaluate_cel(rs, {"desc": "no way"}, parties=ledger_service.list_parties())
+    assert out.attributes.get("p") is None
+
+
+def test_party_default_equity_allowed_for_revenue_slot_and_cel(
+    ledger_service: LedgerService,
+) -> None:
+    """Owner capital (equity) is allowed as the party's default for revenue_account() CEL."""
+    owner_eq = ledger_service.create_account(AccountCreate(name="Owner Capital – Building A", type="equity"))
+    ledger_service.create_party(
+        PartyCreate(
+            name="Building A LLC",
+            role="customer",
+            is_active=True,
+            match_patterns=[],
+            default_revenue_account_id=owner_eq.id,
+        ),
+    )
+    parties = ledger_service.list_parties()
+    p = next(x for x in parties if x.name == "Building A LLC")
+    assert p.default_revenue_account_name == "Owner Capital – Building A"
+
+    rs = CelRuleSet(
+        rules=[CelRule(expression='{"set":{"cap": revenue_account("Building A LLC")}}')],
+    )
+    out = evaluate_cel(rs, {}, parties=parties)
+    assert out.attributes["cap"] == "Owner Capital – Building A"
+
+
+def test_cel_party_ambiguous_match_raises(ledger_service: LedgerService) -> None:
+    ledger_service.create_party(
+        PartyCreate(name="Alpha", role="customer", is_active=True, match_patterns=[r"REF"]),
+    )
+    ledger_service.create_party(
+        PartyCreate(name="Beta", role="customer", is_active=True, match_patterns=[r"REF"]),
+    )
+    rs = CelRuleSet(rules=[CelRule(expression='{"set": {"p": party(attributes["desc"])}}')])
+    with pytest.raises(ImportRulesCelError, match="multiple parties"):
+        evaluate_cel(rs, {"desc": "REF 123"}, parties=ledger_service.list_parties())

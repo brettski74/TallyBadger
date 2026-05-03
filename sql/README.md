@@ -19,7 +19,7 @@ When the schema stabilizes, consider `sqitch`, `yoyo-migrations`, or Alembic.
 
 Numbered `NNN_*.sql` files are **schema migrations** and run in all environments via `tallybadger-migrate`.
 
-**`sql/dev_seed.sql`** is **dev-only**: idempotent `INSERT`s for accounts, parties, `cel_rule_sets`, and `import_templates`. It is **not** part of the migration glob and is **not** applied in production unless someone runs it manually.
+**`sql/dev_seed.sql`** is **dev-only**: idempotent `INSERT`s for accounts, parties (including subtype, default GL accounts, and `party_match_patterns` rows), `cel_rule_sets`, and `import_templates`. It is **not** part of the migration glob and is **not** applied in production unless someone runs it manually.
 
 Workflow:
 

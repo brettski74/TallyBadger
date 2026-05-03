@@ -51,6 +51,11 @@ def list_parties(service: LedgerService = Depends(get_ledger_service)) -> list[P
     return service.list_parties()
 
 
+@router.get("/parties/subtype-suggestions", response_model=list[str])
+def list_party_subtype_suggestions(service: LedgerService = Depends(get_ledger_service)) -> list[str]:
+    return service.list_party_subtype_suggestions()
+
+
 @router.post("/accounts", response_model=AccountOut, status_code=status.HTTP_201_CREATED)
 def create_account(
     payload: AccountCreate,

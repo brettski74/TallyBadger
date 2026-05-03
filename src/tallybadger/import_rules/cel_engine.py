@@ -15,7 +15,9 @@ from tallybadger.import_rules.cel_models import (
     CelRuleSet,
     CelTraceEvent,
 )
+from tallybadger.import_rules.cel_party_functions import build_party_cel_functions
 from tallybadger.import_rules.errors import ImportRulesCelError
+from tallybadger.ledger.models import PartyOut
 
 
 def _compile_regex_flags(names: list[str]) -> int:
@@ -120,7 +122,12 @@ def _normalize_rule_output(result: Any, rule_label: str) -> dict[str, Any] | Non
     return py
 
 
-def evaluate_cel(rule_set: CelRuleSet, attributes: dict[str, Any]) -> CelEvaluationResult:
+def evaluate_cel(
+    rule_set: CelRuleSet,
+    attributes: dict[str, Any],
+    *,
+    parties: list[PartyOut] | None = None,
+) -> CelEvaluationResult:
     bag: dict[str, Any] = {k: copy(v) if isinstance(v, (list, dict)) else v for k, v in attributes.items()}
     trace: list[CelTraceEvent] = []
     dropped = False
@@ -130,6 +137,7 @@ def evaluate_cel(rule_set: CelRuleSet, attributes: dict[str, Any]) -> CelEvaluat
     stopped_after_rule: str | None = None
 
     env = Environment()
+    party_functions = build_party_cel_functions(parties or [])
     ordered = sorted(enumerate(rule_set.rules), key=lambda x: (x[1].sort_order, x[0]))
     for idx, rule in ordered:
         if dropped:
@@ -172,7 +180,7 @@ def evaluate_cel(rule_set: CelRuleSet, attributes: dict[str, Any]) -> CelEvaluat
         }
         try:
             ast = env.compile(rule.expression)
-            program = env.program(ast)
+            program = env.program(ast, functions=party_functions)
             out = program.evaluate(activation)
         except Exception as exc:  # celpy raises parser/runtime specific errors
             raise ImportRulesCelError(f"CEL rule {label} failed: {exc}") from exc

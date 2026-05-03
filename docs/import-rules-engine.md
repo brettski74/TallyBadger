@@ -217,6 +217,8 @@ There is now a **spike implementation** that models each rule as one CEL express
 - API: `POST /import-rules/cel/evaluate` via `src/tallybadger/api/routes/import_rules_cel.py`
 - Tests: `tests/test_import_rules_cel_engine.py`, `tests/test_import_rules_cel_api.py`
 
+**Custom CEL functions** (party helpers, generic helpers): see **[CEL function reference](cel-function-reference.md)** — tracked in GitHub [#46](https://github.com/brettski74/TallyBadger/issues/46) and [#50](https://github.com/brettski74/TallyBadger/issues/50). Update that doc in the same PR whenever a listed function ships or its contract changes.
+
 ### CEL rule contract (spike)
 
 Each rule has:
