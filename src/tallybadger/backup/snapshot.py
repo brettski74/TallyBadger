@@ -707,6 +707,12 @@ def import_snapshot(
         _validate_financial_fks(conn, payloads)
 
     with conn.transaction():
+        # Foreign keys on snapshot tables are DEFERRABLE INITIALLY IMMEDIATE (migration 015).
+        # Defer to COMMIT so bulk INSERT/DELETE can reorder without intermediate FK failures.
+        # PK/UNIQUE/CHECK stay immediate (PostgreSQL cannot ALTER those to deferrable here).
+        with conn.cursor() as cur:
+            cur.execute("SET CONSTRAINTS ALL DEFERRED")
+
         if mode == "erase_reload":
             _truncate_complete_scope(conn)
         elif mode == "overwrite":

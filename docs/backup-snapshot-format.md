@@ -82,7 +82,7 @@ Order for the **full** set (partial archives load only the files present, in thi
 
 ## Validation rules (import)
 
-Imports run in a **single transaction** (atomic success or rollback).
+Imports run in a **single transaction** (atomic success or rollback). On entry, the importer runs **`SET CONSTRAINTS ALL DEFERRED`**. Snapshot application tables have **deferrable foreign keys** (**`DEFERRABLE INITIALLY IMMEDIATE`** via migration `015_snapshot_import_constraints_deferrable`). PostgreSQL’s `ALTER CONSTRAINT … DEFERRABLE` applies only to **foreign keys** here; `PRIMARY KEY`, `UNIQUE`, and `CHECK` constraints stay enforced per statement (duplicate keys and check violations still fail immediately unless recreated as deferrable). Normal traffic validates FKs **at the end of each statement**; only inside this import transaction are FKs deferred until **COMMIT**.
 
 1. **Integrity:** manifest paths, SHA-256 hashes, and ZIP membership (see [Integrity](#integrity)).
 2. **Shape:** every required table file for the `export_type` is present; each file is a JSON array of objects; columns coerced per [Type mapping](#type-mapping-postgresql--json--import).
