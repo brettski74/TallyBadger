@@ -59,8 +59,9 @@ The **`debug` key is omitted entirely** when there are **no** records for that r
 |-----|----------|
 | **`POST /import-rules/cel/evaluate`** | Optional top-level **`debug`** on the evaluation result. |
 | **`POST /imports/csv/execute`** | Optional **`debug`** on **each** `entries[]` item for rows where at least one `debug()` ran. Entries for rows with no `debug()` calls omit the key. |
+| **`POST /imports/csv/execute`** (HTTP **422**) | Each **`detail.row_errors[]`** item may include the same optional **`debug`** array when CEL ran for that row before validation failed building the journal entry (**#57**). Omitted when empty or when CEL did not run (e.g. cell parse errors only). |
 
-**Note:** Rows that error or are dropped before a journal entry is built do not appear in `entries[]`; debug captured on paths that never produce an entry is **out of scope for v1** (see #59).
+**Note:** Rows that are **dropped** by CEL still do not appear in `entries[]`; **`debug` on 422 `row_errors`** covers rows that failed after CEL produced a bag (same records that would have been on a successful `entries[]` row for that line).
 
 ---
 
@@ -154,5 +155,6 @@ These functions read **current ledger state** (active parties, accounts) passed 
 | *#46 follow-up* | **`equity_account(str)`** added as an alias of **`revenue_account(str)`** (same field and return value). |
 | *#59 ship* | **`debug(x)`** — identity + ordered debug records; evaluate vs CSV `row_number` and JSON omission rules as above. |
 | *#57 ship* | **`unset()`** — zero-arg marker for **`set`** map key removal; **`null`** still assigns **`None`**; trace **`remove_attribute`**. |
+| *#57 follow-up* | CSV execute **422** **`row_errors[]`** may include **`debug`** (same shape as successful **`entries[]`**) when CEL ran before journal validation failed. |
 
 Update this table whenever functions are added or signatures/semantics change.
