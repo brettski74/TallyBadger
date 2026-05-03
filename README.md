@@ -16,6 +16,7 @@ Double-entry accounting for a **small set of rental properties**: journals, char
 | Config | `tallybadger.core.config.Settings` — `TALLYBADGER_DATABASE_URL` (see below) |
 | Database | PostgreSQL in Compose; `sql/*.sql` migrations (ledger, accruals, settlements, …) |
 | Import rules (#8) | In-process `evaluate()` + `POST /import-rules/evaluate` (stateless); **no** rules UI or DB persistence yet — **see [docs/import-rules-engine.md](docs/import-rules-engine.md)** |
+| Backup / restore ([#67](https://github.com/brettski74/TallyBadger/issues/67)) | `POST /backup/export` and `POST /backup/import` (complete JSON ZIP); format: **[docs/backup-snapshot-format.md](docs/backup-snapshot-format.md)**; Configuration tab in the UI |
 | Tests | `pytest` + `TestClient` (health, ledger, import rules, …); reports under `test-results/` |
 | Container | `Dockerfile` + `docker-compose.yml` (`api` + `db`) |
 | Front end | React + TypeScript + Vite: chart of accounts, journal entries, accrual plans, settlements |

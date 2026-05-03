@@ -1,6 +1,7 @@
 """Route modules."""
 
 from tallybadger.api.routes import (
+    backup,
     cel_rule_sets,
     health,
     import_csv,
@@ -11,6 +12,7 @@ from tallybadger.api.routes import (
 )
 
 __all__ = [
+    "backup",
     "cel_rule_sets",
     "health",
     "import_csv",

@@ -5,6 +5,7 @@ import react from "@vitejs/plugin-react";
 const API_DEV_TARGET = "http://127.0.0.1:8080";
 
 const apiProxyPrefixes = [
+  "backup",
   "accounts",
   "parties",
   "journal-entries",
