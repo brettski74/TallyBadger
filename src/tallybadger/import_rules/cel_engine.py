@@ -23,6 +23,24 @@ from tallybadger.import_rules.errors import ImportRulesCelError
 from tallybadger.ledger.models import PartyOut
 
 
+class _CelAttributeBagUnset:
+    """Singleton: `set` map value meaning remove key from the row attribute bag (#57)."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "<unset>"
+
+
+CEL_ATTRIBUTE_BAG_UNSET = _CelAttributeBagUnset()
+
+
+class CelUnsetValue(celtypes.StringType):
+    """CEL return type for `unset()` only; distinguished from ordinary strings in `_from_cel_value`."""
+
+    __slots__ = ()
+
+
 def _compile_regex_flags(names: list[str]) -> int:
     flags = 0
     for n in names:
@@ -76,6 +94,8 @@ def _to_cel_value(value: Any) -> Any:
 def _from_cel_value(value: Any) -> Any:
     if value is None:
         return None
+    if isinstance(value, CelUnsetValue):
+        return CEL_ATTRIBUTE_BAG_UNSET
     if isinstance(value, celtypes.BoolType):
         return bool(value)
     if isinstance(value, celtypes.IntType):
@@ -100,6 +120,8 @@ def _from_cel_value(value: Any) -> Any:
 
 def _jsonable_debug_snapshot(value: Any) -> Any:
     """Make a JSON-friendly snapshot for debug records; never raises."""
+    if value is CEL_ATTRIBUTE_BAG_UNSET:
+        return "<unset>"
     if value is None or isinstance(value, (bool, int, str)):
         return value
     if isinstance(value, float):
@@ -164,6 +186,15 @@ def _build_debug_cel_function(
     return debug_fn
 
 
+def _build_unset_cel_function() -> CELFunction:
+    """Zero-arg `unset()` — value marks removal of the enclosing `set` map key (#57)."""
+
+    def unset_fn() -> Result:
+        return CelUnsetValue("")
+
+    return unset_fn
+
+
 def _capture_entry(cap: CelRegexCapture, bag: dict[str, Any]) -> dict[str, Any]:
     raw = bag.get(cap.attribute)
     hay = "" if raw is None else str(raw)
@@ -204,7 +235,8 @@ def evaluate_cel(
     current_rule_label: list[str] = [""]
     party_functions = build_party_cel_functions(parties or [])
     debug_fn = _build_debug_cel_function(debug_records, current_rule_label, row_number)
-    cel_functions: dict[str, CELFunction] = {**party_functions, "debug": debug_fn}
+    unset_fn = _build_unset_cel_function()
+    cel_functions: dict[str, CELFunction] = {**party_functions, "debug": debug_fn, "unset": unset_fn}
     dropped = False
     drop_reason: str | None = None
     require_review = False
@@ -273,8 +305,13 @@ def evaluate_cel(
         if not isinstance(set_map, dict):
             raise ImportRulesCelError(f"CEL rule {label}: `set` must be a map/object")
         for k, v in set_map.items():
-            bag[str(k)] = v
-            trace.append(CelTraceEvent(event="set_attribute", detail={"rule": label, "name": str(k), "value": v}))
+            key = str(k)
+            if v is CEL_ATTRIBUTE_BAG_UNSET:
+                bag.pop(key, None)
+                trace.append(CelTraceEvent(event="remove_attribute", detail={"rule": label, "name": key}))
+            else:
+                bag[key] = v
+                trace.append(CelTraceEvent(event="set_attribute", detail={"rule": label, "name": key, "value": v}))
 
         stop = payload.get("stop")
         drop = payload.get("drop")

@@ -1,6 +1,6 @@
 # CEL function reference (import rules)
 
-This document is the **authoritative reference** for **custom functions** available in **CEL** expressions used by the import CEL rule path (`evaluate_cel`, CSV execute with a CEL rule set, `POST /import-rules/cel/evaluate`). It is maintained alongside GitHub issues **[#46](https://github.com/brettski74/TallyBadger/issues/46)** (party-aware functions + party data model), **[#50](https://github.com/brettski74/TallyBadger/issues/50)** (generic attribute helpers), and **[#59](https://github.com/brettski74/TallyBadger/issues/59)** (`debug()` for rule diagnostics).
+This document is the **authoritative reference** for **custom functions** available in **CEL** expressions used by the import CEL rule path (`evaluate_cel`, CSV execute with a CEL rule set, `POST /import-rules/cel/evaluate`). It is maintained alongside GitHub issues **[#46](https://github.com/brettski74/TallyBadger/issues/46)** (party-aware functions + party data model), **[#50](https://github.com/brettski74/TallyBadger/issues/50)** (generic attribute helpers), **[#57](https://github.com/brettski74/TallyBadger/issues/57)** (`unset()` for removing keys from the `set` map / attribute bag), and **[#59](https://github.com/brettski74/TallyBadger/issues/59)** (`debug()` for rule diagnostics).
 
 **Related:** [Import rules engine](import-rules-engine.md) ([#8](https://github.com/brettski74/TallyBadger/issues/8)) — CEL spike contract, `attributes` / `match` activation map, capture gating.
 
@@ -14,7 +14,23 @@ This document is the **authoritative reference** for **custom functions** availa
 |--------|---------|
 | **#46** | Shipped in [#46](https://github.com/brettski74/TallyBadger/issues/46); keep this doc in sync when behaviour changes. |
 | **#50** | Planned in [#50](https://github.com/brettski74/TallyBadger/issues/50); update this doc in the same PR as the implementation. |
+| **#57** | Shipped in [#57](https://github.com/brettski74/TallyBadger/issues/57); `unset()` and `set` map removal semantics. |
 | **#59** | Shipped in [#59](https://github.com/brettski74/TallyBadger/issues/59); `debug(x)` and API `debug` arrays. |
+
+---
+
+## `unset()` — remove a key from the attribute bag (**#57**)
+
+- **Signature:** **`unset()`** — **zero** arguments.
+- **Return value:** An **engine-only marker** (not a user-facing string). Use it **only** as a value inside the **`set`** map of a matched rule payload.
+- **Semantics:** For an entry **`"someKey": unset()`** in **`set`**, the engine **removes** **`someKey`** from the row attribute bag if present; if the key was absent, **no-op**. The trace records **`remove_attribute`** with **`rule`** and **`name`** (see [import rules engine](import-rules-engine.md) — trace events).
+- **`null` does not remove keys:** **`{"set": {"x": null}}`** still assigns Python **`None`** and leaves **`x`** in the bag. Only **`unset()`** removes the key.
+
+### Example
+
+```cel
+{"set": {"scratch": unset()}}
+```
 
 ---
 
@@ -137,5 +153,6 @@ These functions read **current ledger state** (active parties, accounts) passed 
 | *#46 ship* | `party()` returns **null** when no pattern matches; errors only on **multiple** matches. Party model, API, UI, and CEL wiring documented here. |
 | *#46 follow-up* | **`equity_account(str)`** added as an alias of **`revenue_account(str)`** (same field and return value). |
 | *#59 ship* | **`debug(x)`** — identity + ordered debug records; evaluate vs CSV `row_number` and JSON omission rules as above. |
+| *#57 ship* | **`unset()`** — zero-arg marker for **`set`** map key removal; **`null`** still assigns **`None`**; trace **`remove_attribute`**. |
 
 Update this table whenever functions are added or signatures/semantics change.

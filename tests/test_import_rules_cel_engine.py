@@ -25,6 +25,51 @@ def test_cel_rule_can_set_attributes_and_keep_types() -> None:
     assert out.attributes["amount"] == 1200
 
 
+def test_cel_unset_removes_key_from_attribute_bag() -> None:
+    rs = CelRuleSet(rules=[CelRule(expression='{"set":{"tag": unset()}}')])
+    out = evaluate_cel(rs, {"tag": "x", "keep": 1})
+    assert "tag" not in out.attributes
+    assert out.attributes["keep"] == 1
+    removed = [t for t in out.trace if t.event == "remove_attribute"]
+    assert len(removed) == 1
+    assert removed[0].detail == {"rule": "rule[0]", "name": "tag"}
+
+
+def test_cel_unset_on_missing_key_is_noop() -> None:
+    rs = CelRuleSet(rules=[CelRule(expression='{"set":{"only_in_rule": unset()}}')])
+    out = evaluate_cel(rs, {"keep": 2})
+    assert "only_in_rule" not in out.attributes
+    assert out.attributes["keep"] == 2
+
+
+def test_cel_later_rule_unset_after_earlier_set() -> None:
+    rs = CelRuleSet(
+        rules=[
+            CelRule(sort_order=1, expression='{"set":{"flag": true}}'),
+            CelRule(sort_order=2, expression='{"set":{"flag": unset()}}'),
+        ],
+    )
+    out = evaluate_cel(rs, {})
+    assert "flag" not in out.attributes
+
+
+def test_cel_set_null_still_leaves_key_with_none() -> None:
+    rs = CelRuleSet(rules=[CelRule(expression='{"set":{"x": null}}')])
+    out = evaluate_cel(rs, {})
+    assert "x" in out.attributes
+    assert out.attributes["x"] is None
+    set_ev = [t for t in out.trace if t.event == "set_attribute"]
+    assert any(t.detail.get("name") == "x" and t.detail.get("value") is None for t in set_ev)
+
+
+def test_cel_debug_serializes_unset_marker() -> None:
+    rs = CelRuleSet(rules=[CelRule(expression='{"set":{"z": debug(unset())}}')])
+    out = evaluate_cel(rs, {"k": 1})
+    assert out.debug is not None
+    assert out.debug[0].value == "<unset>"
+    assert "z" not in out.attributes
+
+
 def test_cel_rule_returns_null_for_no_match() -> None:
     rs = CelRuleSet(
         rules=[
