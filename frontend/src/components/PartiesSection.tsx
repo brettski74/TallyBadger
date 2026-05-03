@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
 import type { Account } from "../api/accounts";
@@ -14,6 +15,21 @@ const PARTY_ROLES: PartyRole[] = ["customer", "vendor", "both", "other"];
 
 const DOCS_CEL_HINT =
   "Regex patterns are used by import CEL rules (party() function). See docs/cel-function-reference.md in the repo.";
+
+const PATTERN_ROW_GRID: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "minmax(0, 1fr) auto",
+  gap: "0.5rem",
+  alignItems: "end",
+  width: "100%",
+};
+const PATTERN_REMOVE_BTN: CSSProperties = {
+  flexShrink: 0,
+  whiteSpace: "nowrap",
+  padding: "0.2rem 0.45rem",
+  fontSize: "0.8125rem",
+};
+const PATTERN_INPUT: CSSProperties = { width: "100%", boxSizing: "border-box" };
 
 interface PartiesSectionProps {
   parties: Party[];
@@ -48,7 +64,7 @@ export function PartiesSection({
   const [role, setRole] = useState<PartyRole>("both");
   const [isActive, setIsActive] = useState(true);
   const [subtype, setSubtype] = useState("");
-  const [createPatterns, setCreatePatterns] = useState<string[]>([""]);
+  const [createPatterns, setCreatePatterns] = useState<string[]>([]);
   const [createDefRev, setCreateDefRev] = useState("");
   const [createDefExp, setCreateDefExp] = useState("");
 
@@ -57,14 +73,17 @@ export function PartiesSection({
   const [editRole, setEditRole] = useState<PartyRole>("both");
   const [editActive, setEditActive] = useState(true);
   const [editSubtype, setEditSubtype] = useState("");
-  const [editPatterns, setEditPatterns] = useState<string[]>([""]);
+  const [editPatterns, setEditPatterns] = useState<string[]>([]);
   const [editDefRev, setEditDefRev] = useState("");
   const [editDefExp, setEditDefExp] = useState("");
   const [editError, setEditError] = useState<string | null>(null);
   const [editSubmitting, setEditSubmitting] = useState(false);
 
-  const revenueAccounts = useMemo(
-    () => accounts.filter((a) => a.type === "revenue" && a.is_active).sort((a, b) => a.name.localeCompare(b.name)),
+  const revenueEquityAccounts = useMemo(
+    () =>
+      accounts
+        .filter((a) => (a.type === "revenue" || a.type === "equity") && a.is_active)
+        .sort((a, b) => a.name.localeCompare(b.name)),
     [accounts],
   );
   const expenseAccounts = useMemo(
@@ -97,8 +116,7 @@ export function PartiesSection({
     setEditRole(party.role);
     setEditActive(party.is_active);
     setEditSubtype(party.subtype ?? "");
-    const pats = party.match_patterns?.length ? [...party.match_patterns] : [""];
-    setEditPatterns(pats);
+    setEditPatterns(party.match_patterns?.length ? [...party.match_patterns] : []);
     setEditDefRev(party.default_revenue_account_id != null ? String(party.default_revenue_account_id) : "");
     setEditDefExp(party.default_expense_account_id != null ? String(party.default_expense_account_id) : "");
     setEditError(null);
@@ -127,9 +145,9 @@ export function PartiesSection({
 
   function removePatternRow(which: "create" | "edit", index: number) {
     if (which === "create") {
-      setCreatePatterns((prev) => (prev.length <= 1 ? [""] : prev.filter((_, i) => i !== index)));
+      setCreatePatterns((prev) => prev.filter((_, i) => i !== index));
     } else {
-      setEditPatterns((prev) => (prev.length <= 1 ? [""] : prev.filter((_, i) => i !== index)));
+      setEditPatterns((prev) => prev.filter((_, i) => i !== index));
     }
   }
 
@@ -164,7 +182,7 @@ export function PartiesSection({
       setRole("both");
       setIsActive(true);
       setSubtype("");
-      setCreatePatterns([""]);
+      setCreatePatterns([]);
       setCreateDefRev("");
       setCreateDefExp("");
     } catch (err) {
@@ -261,23 +279,29 @@ export function PartiesSection({
             </datalist>
           </label>
 
-          <fieldset>
+          <fieldset style={{ width: "100%", minWidth: 0 }}>
             <legend>Match patterns (optional)</legend>
             <p className="muted" style={{ marginTop: 0 }}>
               {DOCS_CEL_HINT}
             </p>
             {createPatterns.map((pat, index) => (
-              <div key={`cp-${index}`} style={{ display: "flex", gap: "0.5rem", alignItems: "flex-end" }}>
-                <label style={{ flex: 1 }}>
+              <div key={`cp-${index}-${pat.slice(0, 20)}`} style={PATTERN_ROW_GRID}>
+                <label style={{ minWidth: 0, width: "100%" }}>
                   Pattern {index + 1}
                   <input
                     aria-label={`Create match pattern ${index + 1}`}
                     value={pat}
                     onChange={(e) => setPatternAt("create", index, e.target.value)}
                     placeholder="Python re.search regex"
+                    style={PATTERN_INPUT}
                   />
                 </label>
-                <button type="button" className="button-secondary" onClick={() => removePatternRow("create", index)}>
+                <button
+                  type="button"
+                  className="button-secondary"
+                  style={PATTERN_REMOVE_BTN}
+                  onClick={() => removePatternRow("create", index)}
+                >
                   Remove
                 </button>
               </div>
@@ -289,16 +313,16 @@ export function PartiesSection({
 
           {revenuePickable(role) && (
             <label>
-              Default revenue account (optional)
+              Default revenue / equity account (optional)
               <select
-                aria-label="Default revenue account"
+                aria-label="Default revenue or equity account"
                 value={createDefRev}
                 onChange={(e) => setCreateDefRev(e.target.value)}
               >
                 <option value="">— none —</option>
-                {revenueAccounts.map((a) => (
+                {revenueEquityAccounts.map((a) => (
                   <option key={a.id} value={a.id}>
-                    {a.name}
+                    {a.name} ({a.type})
                   </option>
                 ))}
               </select>
@@ -388,22 +412,28 @@ export function PartiesSection({
               </datalist>
             </label>
 
-            <fieldset>
+            <fieldset style={{ width: "100%", minWidth: 0 }}>
               <legend>Match patterns</legend>
               <p className="muted" style={{ marginTop: 0 }}>
                 {DOCS_CEL_HINT}
               </p>
               {editPatterns.map((pat, index) => (
-                <div key={`ep-${index}`} style={{ display: "flex", gap: "0.5rem", alignItems: "flex-end" }}>
-                  <label style={{ flex: 1 }}>
+                <div key={`ep-${index}-${pat.slice(0, 20)}`} style={PATTERN_ROW_GRID}>
+                  <label style={{ minWidth: 0, width: "100%" }}>
                     Pattern {index + 1}
                     <input
                       aria-label={`Edit match pattern ${index + 1}`}
                       value={pat}
                       onChange={(e) => setPatternAt("edit", index, e.target.value)}
+                      style={PATTERN_INPUT}
                     />
                   </label>
-                  <button type="button" className="button-secondary" onClick={() => removePatternRow("edit", index)}>
+                  <button
+                    type="button"
+                    className="button-secondary"
+                    style={PATTERN_REMOVE_BTN}
+                    onClick={() => removePatternRow("edit", index)}
+                  >
                     Remove
                   </button>
                 </div>
@@ -415,16 +445,16 @@ export function PartiesSection({
 
             {revenuePickable(editRole) && (
               <label>
-                Default revenue account
+                Default revenue / equity account
                 <select
-                  aria-label="Edit default revenue account"
+                  aria-label="Edit default revenue or equity account"
                   value={editDefRev}
                   onChange={(e) => setEditDefRev(e.target.value)}
                 >
                   <option value="">— none —</option>
-                  {revenueAccounts.map((a) => (
+                  {revenueEquityAccounts.map((a) => (
                     <option key={a.id} value={a.id}>
-                      {a.name}
+                      {a.name} ({a.type})
                     </option>
                   ))}
                 </select>

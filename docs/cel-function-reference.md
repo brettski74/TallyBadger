@@ -46,9 +46,9 @@ These functions read **current ledger state** (active parties, accounts) passed 
 ### `revenue_account(str) -> string`
 
 - **Argument `str`:** Canonical party **name**.
-- **Returns:** **`name`** of the party’s configured **default revenue account** (for posting into account-name fields).
-- **Eligibility:** Party **`role`** must be **`customer`** or **`both`**. The party must have **`default_revenue_account_id`** set to an **active** account whose type is suitable for revenue (implementation should validate at **party save** time: account `type == revenue`; CEL may defensively error if misconfigured).
-- **Errors:** Wrong role, missing default, inactive party, unknown name, inactive account → evaluation error with explicit reason.
+- **Returns:** **`name`** of the party’s configured **default revenue or equity account** (for posting into account-name fields)—same field as in the UI (“Default revenue / equity account”).
+- **Eligibility:** Party **`role`** must be **`customer`** or **`both`**. The party must have **`default_revenue_account_id`** set to an **active** account with **`type`** **`revenue`** or **`equity`** (validated at party save).
+- **Errors:** Wrong role, missing default, inactive party, unknown name, inactive account, or wrong account type → evaluation error with explicit reason.
 
 ### `expense_account(str) -> string`
 

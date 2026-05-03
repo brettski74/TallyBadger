@@ -81,11 +81,13 @@ def _validate_party_default_accounts(
         )
         row = cur.fetchone()
         if row is None:
-            raise LedgerValidationError("default revenue account not found")
+            raise LedgerValidationError("default revenue/equity account not found")
         if not row["is_active"]:
-            raise LedgerValidationError("default revenue account must be active")
-        if row["type"] != "revenue":
-            raise LedgerValidationError("default revenue account must have account type revenue")
+            raise LedgerValidationError("default revenue/equity account must be active")
+        if row["type"] not in ("revenue", "equity"):
+            raise LedgerValidationError(
+                "default revenue/equity account must have account type revenue or equity",
+            )
     if expense_id is not None:
         cur.execute(
             "SELECT name, type, is_active FROM accounts WHERE id = %s",

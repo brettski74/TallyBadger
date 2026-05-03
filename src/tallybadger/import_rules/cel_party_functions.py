@@ -117,11 +117,13 @@ def build_party_cel_functions(parties: list[PartyOut]) -> dict[str, CELFunction]
             raise ImportRulesCelError(f"unknown active party {key!r}")
         if snap.role not in ("customer", "both"):
             raise ImportRulesCelError(
-                f"party {key!r} has role {snap.role!r}; default revenue account applies only to customer or both",
+                f"party {key!r} has role {snap.role!r}; default revenue/equity account applies only to customer or both",
             )
         acc = snap.default_revenue_account_name
         if not acc:
-            raise ImportRulesCelError(f"party {key!r} has no default revenue account configured")
+            raise ImportRulesCelError(
+                f"party {key!r} has no default revenue or equity account configured",
+            )
         return celtypes.StringType(acc)
 
     def expense_account(name: Any) -> Result:

@@ -705,6 +705,31 @@ def test_cel_party_returns_null_when_no_pattern_match(ledger_service: LedgerServ
     assert out.attributes.get("p") is None
 
 
+def test_party_default_equity_allowed_for_revenue_slot_and_cel(
+    ledger_service: LedgerService,
+) -> None:
+    """Owner capital (equity) is allowed as the party's default for revenue_account() CEL."""
+    owner_eq = ledger_service.create_account(AccountCreate(name="Owner Capital – Building A", type="equity"))
+    ledger_service.create_party(
+        PartyCreate(
+            name="Building A LLC",
+            role="customer",
+            is_active=True,
+            match_patterns=[],
+            default_revenue_account_id=owner_eq.id,
+        ),
+    )
+    parties = ledger_service.list_parties()
+    p = next(x for x in parties if x.name == "Building A LLC")
+    assert p.default_revenue_account_name == "Owner Capital – Building A"
+
+    rs = CelRuleSet(
+        rules=[CelRule(expression='{"set":{"cap": revenue_account("Building A LLC")}}')],
+    )
+    out = evaluate_cel(rs, {}, parties=parties)
+    assert out.attributes["cap"] == "Owner Capital – Building A"
+
+
 def test_cel_party_ambiguous_match_raises(ledger_service: LedgerService) -> None:
     ledger_service.create_party(
         PartyCreate(name="Alpha", role="customer", is_active=True, match_patterns=[r"REF"]),
