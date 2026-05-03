@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from copy import copy
 from datetime import date, datetime
@@ -7,8 +8,10 @@ from decimal import Decimal
 from typing import Any
 
 from celpy import Environment, celtypes
+from celpy.evaluation import CELFunction, Result
 
 from tallybadger.import_rules.cel_models import (
+    CelDebugEvent,
     CelEvaluationResult,
     CelRegexCapture,
     CelRule,
@@ -95,6 +98,72 @@ def _from_cel_value(value: Any) -> Any:
     return value
 
 
+def _jsonable_debug_snapshot(value: Any) -> Any:
+    """Make a JSON-friendly snapshot for debug records; never raises."""
+    if value is None or isinstance(value, (bool, int, str)):
+        return value
+    if isinstance(value, float):
+        return value
+    if isinstance(value, Decimal):
+        return str(value)
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    if isinstance(value, dict):
+        out: dict[str, Any] = {}
+        for k, v in value.items():
+            try:
+                out[str(k)] = _jsonable_debug_snapshot(v)
+            except Exception:
+                out[str(k)] = repr(v)
+        return out
+    if isinstance(value, (list, tuple)):
+        return [_jsonable_debug_snapshot(v) for v in value]
+    try:
+        json.dumps(value)
+    except (TypeError, ValueError):
+        return repr(value)
+    return value
+
+
+def _debug_value_snapshot(cel_arg: Any) -> Any:
+    """Serialize a CEL value for `debug` records; failures fall back to repr (never raises)."""
+    try:
+        py = _from_cel_value(cel_arg)
+    except Exception:
+        try:
+            return repr(cel_arg)
+        except Exception:
+            return "<debug serialization failed>"
+    try:
+        return _jsonable_debug_snapshot(py)
+    except Exception:
+        try:
+            return repr(py)
+        except Exception:
+            return "<debug serialization failed>"
+
+
+def _build_debug_cel_function(
+    records: list[CelDebugEvent],
+    current_rule_label: list[str],
+    row_number: int | None,
+) -> CELFunction:
+    """Single-arg `debug(x)` — returns x unchanged and appends a CelDebugEvent."""
+
+    def debug_fn(arg: Any) -> Result:
+        snap = _debug_value_snapshot(arg)
+        label = current_rule_label[0] if current_rule_label else ""
+        try:
+            records.append(CelDebugEvent(rule=label, value=snap, row_number=row_number))
+        except Exception:
+            records.append(
+                CelDebugEvent(rule=label or "?", value="<debug record failed>", row_number=row_number),
+            )
+        return arg
+
+    return debug_fn
+
+
 def _capture_entry(cap: CelRegexCapture, bag: dict[str, Any]) -> dict[str, Any]:
     raw = bag.get(cap.attribute)
     hay = "" if raw is None else str(raw)
@@ -127,9 +196,15 @@ def evaluate_cel(
     attributes: dict[str, Any],
     *,
     parties: list[PartyOut] | None = None,
+    row_number: int | None = None,
 ) -> CelEvaluationResult:
     bag: dict[str, Any] = {k: copy(v) if isinstance(v, (list, dict)) else v for k, v in attributes.items()}
     trace: list[CelTraceEvent] = []
+    debug_records: list[CelDebugEvent] = []
+    current_rule_label: list[str] = [""]
+    party_functions = build_party_cel_functions(parties or [])
+    debug_fn = _build_debug_cel_function(debug_records, current_rule_label, row_number)
+    cel_functions: dict[str, CELFunction] = {**party_functions, "debug": debug_fn}
     dropped = False
     drop_reason: str | None = None
     require_review = False
@@ -137,7 +212,6 @@ def evaluate_cel(
     stopped_after_rule: str | None = None
 
     env = Environment()
-    party_functions = build_party_cel_functions(parties or [])
     ordered = sorted(enumerate(rule_set.rules), key=lambda x: (x[1].sort_order, x[0]))
     for idx, rule in ordered:
         if dropped:
@@ -179,8 +253,9 @@ def evaluate_cel(
             "matches": _to_cel_value(match_ctx),
         }
         try:
+            current_rule_label[0] = label
             ast = env.compile(rule.expression)
-            program = env.program(ast, functions=party_functions)
+            program = env.program(ast, functions=cel_functions)
             out = program.evaluate(activation)
         except Exception as exc:  # celpy raises parser/runtime specific errors
             raise ImportRulesCelError(f"CEL rule {label} failed: {exc}") from exc
@@ -228,6 +303,7 @@ def evaluate_cel(
             trace.append(CelTraceEvent(event="stop", detail={"rule": label, "reason": stop}))
             break
 
+    debug_out: list[CelDebugEvent] | None = debug_records if debug_records else None
     return CelEvaluationResult(
         attributes=bag,
         dropped=dropped,
@@ -236,4 +312,5 @@ def evaluate_cel(
         review_reason=review_reason,
         stopped_after_rule=stopped_after_rule,
         trace=trace,
+        debug=debug_out,
     )

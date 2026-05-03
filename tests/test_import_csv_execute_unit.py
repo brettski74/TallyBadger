@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from decimal import Decimal
 from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
 
 from tallybadger.api.routes.import_csv import _convert_cell
-from tallybadger.ledger.models import LedgerSettingsOut
+from tallybadger.ledger.models import AccountOut, JournalEntryOut, JournalLineOut, LedgerSettingsOut
 from tallybadger.import_rules.cel_models import CelRule, CelRuleSet
 from tallybadger.import_templates.models import ImportTemplateColumn
 from tallybadger.main import app
@@ -195,6 +196,116 @@ def test_convert_cell_iso_accepts_single_digit_month_day_with_yyyy_mm_dd() -> No
 def test_convert_cell_lenient_yyyy_m_d() -> None:
     col = ImportTemplateColumn(attribute_name="date", data_type="date", date_format="YYYY-M-D")
     assert _convert_cell("2026-4-7", col).isoformat() == "2026-04-07"
+
+
+def test_execute_csv_debug_only_on_entries_that_used_debug() -> None:
+    """CEL #59: per-entry ``debug`` on CSV execute; omit key when that row had no ``debug()`` call."""
+    now = datetime.now(tz=timezone.utc)
+    cash = AccountOut(id=1, name="Cash", type="asset", is_active=True, created_at=now, updated_at=now)
+    rent = AccountOut(id=2, name="Rent Income", type="revenue", is_active=True, created_at=now, updated_at=now)
+    ledger = MagicMock()
+    ledger.list_accounts.return_value = [cash, rent]
+    ledger.list_parties.return_value = []
+    ledger.get_ledger_settings.return_value = LedgerSettingsOut(
+        accounts_receivable_account_id=None,
+        accounts_payable_account_id=None,
+        unearned_revenue_account_id=None,
+        unallocated_debits_account_id=None,
+        unallocated_credits_account_id=None,
+        updated_at=now,
+    )
+    expr = (
+        '(attributes["summary"] == "A") ? '
+        '{"set":{"dr-account":"Cash", "cr-account":"Rent Income", "amount": debug(100)}} : '
+        '{"set":{"dr-account":"Cash", "cr-account":"Rent Income", "amount": 100}}'
+    )
+    cel_svc = MagicMock()
+    cel_svc.get_rule_set.return_value = MagicMock(
+        rule_set=CelRuleSet(rules=[CelRule(sort_order=10, expression=expr)]),
+    )
+    e1 = JournalEntryOut(
+        id=101,
+        entry_date=date(2026, 1, 1),
+        summary="A",
+        description=None,
+        requires_review=False,
+        created_at=now,
+        updated_at=now,
+        lines=[
+            JournalLineOut(
+                id=1,
+                account_id=1,
+                account_name="Cash",
+                party_id=None,
+                party_name=None,
+                amount=Decimal("100"),
+            ),
+            JournalLineOut(
+                id=2,
+                account_id=2,
+                account_name="Rent Income",
+                party_id=None,
+                party_name=None,
+                amount=Decimal("-100"),
+            ),
+        ],
+    )
+    e2 = JournalEntryOut(
+        id=102,
+        entry_date=date(2026, 1, 2),
+        summary="B",
+        description=None,
+        requires_review=False,
+        created_at=now,
+        updated_at=now,
+        lines=[
+            JournalLineOut(
+                id=3,
+                account_id=1,
+                account_name="Cash",
+                party_id=None,
+                party_name=None,
+                amount=Decimal("100"),
+            ),
+            JournalLineOut(
+                id=4,
+                account_id=2,
+                account_name="Rent Income",
+                party_id=None,
+                party_name=None,
+                amount=Decimal("-100"),
+            ),
+        ],
+    )
+    ledger.create_entries_batch.return_value = [e1, e2]
+    from tallybadger.api.routes.import_csv import get_cel_rule_set_service, get_ledger_service
+    from tallybadger.main import app
+
+    app.dependency_overrides[get_ledger_service] = lambda: ledger
+    app.dependency_overrides[get_cel_rule_set_service] = lambda: cel_svc
+    try:
+        client = TestClient(app)
+        payload = {
+            "csv_text": "date,summary\n2026-01-01,A\n2026-01-02,B\n",
+            "has_header_row": True,
+            "columns": [
+                {"attribute_name": "date", "data_type": "date", "date_format": "YYYY-MM-DD"},
+                {"attribute_name": "summary", "data_type": "string", "date_format": None},
+            ],
+            "cel_rule_set_id": 1,
+        }
+        r = client.post("/imports/csv/execute", json=payload)
+        assert r.status_code == 200, r.text
+        data = r.json()
+        assert data["posted_entries"] == 2
+        ent0, ent1 = data["entries"]
+        assert "debug" in ent0
+        assert ent0["debug"][0]["value"] == 100
+        assert ent0["debug"][0]["row_number"] == 2
+        assert "debug" not in ent1
+    finally:
+        app.dependency_overrides.pop(get_ledger_service, None)
+        app.dependency_overrides.pop(get_cel_rule_set_service, None)
 
 
 def test_execute_csv_cel_error_returns_422_not_500(import_execute_client_cel_invalid: TestClient) -> None:

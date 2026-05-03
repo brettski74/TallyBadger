@@ -315,3 +315,90 @@ def test_cel_party_type_subtype_and_accounts_blank_arg_returns_null() -> None:
     assert out.attributes["rv"] is None
     assert out.attributes["eq"] is None
     assert out.attributes["ex"] is None
+
+
+def test_debug_identity_does_not_change_rule_outcome() -> None:
+    baseline = evaluate_cel(
+        CelRuleSet(rules=[CelRule(expression='{"set":{"x": 1 + 2}}')]),
+        {},
+    )
+    with_debug = evaluate_cel(
+        CelRuleSet(rules=[CelRule(expression='{"set":{"x": debug(1 + 2)}}')]),
+        {},
+    )
+    assert baseline.attributes == with_debug.attributes
+    assert with_debug.debug is not None
+    assert len(with_debug.debug) == 1
+    assert with_debug.debug[0].value == 3
+
+
+def test_debug_order_and_multiplicity() -> None:
+    rs = CelRuleSet(
+        rules=[
+            CelRule(
+                expression='{"set":{"seq": [debug(1), debug(2)]}}',
+            ),
+        ],
+    )
+    out = evaluate_cel(rs, {})
+    assert out.attributes["seq"] == [1, 2]
+    assert out.debug is not None
+    assert [e.value for e in out.debug] == [1, 2]
+
+
+def test_debug_rule_label_named_vs_unnamed() -> None:
+    rs = CelRuleSet(
+        rules=[
+            CelRule(name="named", expression='{"set":{"a": debug("x")}}'),
+            CelRule(expression='{"set":{"b": debug("y")}}'),
+        ],
+    )
+    out = evaluate_cel(rs, {})
+    assert out.debug is not None
+    assert len(out.debug) == 2
+    assert out.debug[0].rule == "named"
+    assert out.debug[0].value == "x"
+    assert out.debug[0].row_number is None
+    assert out.debug[1].rule == "rule[1]"
+    assert out.debug[1].value == "y"
+
+
+def test_debug_row_number_evaluate_param() -> None:
+    rs = CelRuleSet(rules=[CelRule(expression='{"set":{"z": debug(attributes["k"])}}')])
+    out = evaluate_cel(rs, {"k": 42}, row_number=7)
+    assert out.debug is not None
+    assert len(out.debug) == 1
+    assert out.debug[0].row_number == 7
+    assert out.debug[0].value == 42
+
+
+def test_debug_row_number_omitted_when_not_passed() -> None:
+    rs = CelRuleSet(rules=[CelRule(expression='{"set":{"z": debug(1)}}')])
+    out = evaluate_cel(rs, {})
+    assert out.debug is not None
+    assert out.debug[0].row_number is None
+
+
+def test_debug_not_run_when_capture_fails() -> None:
+    rs = CelRuleSet(
+        rules=[
+            CelRule(
+                captures=[CelRegexCapture(attribute="d", pattern=r"^NO$")],
+                expression='{"set":{"ran": debug(true)}}',
+            ),
+        ],
+    )
+    out = evaluate_cel(rs, {"d": "yes"})
+    assert out.debug is None
+
+
+def test_debug_two_rules_same_row_distinct_rule_field() -> None:
+    rs = CelRuleSet(
+        rules=[
+            CelRule(name="first", sort_order=1, expression='{"set":{"x": debug(1)}}'),
+            CelRule(name="second", sort_order=2, expression='{"set":{"y": debug(2)}}'),
+        ],
+    )
+    out = evaluate_cel(rs, {})
+    assert out.debug is not None
+    assert [(e.rule, e.value) for e in out.debug] == [("first", 1), ("second", 2)]
