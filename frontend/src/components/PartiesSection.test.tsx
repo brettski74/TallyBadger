@@ -127,4 +127,46 @@ describe("PartiesSection", () => {
       );
     });
   });
+
+  it("subtype combobox loads suggestions and accepts one on Enter", async () => {
+    vi.spyOn(global, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes("subtype-suggestions")) {
+        return new Response(JSON.stringify(["Tenant", "Utilities"]), { status: 200 });
+      }
+      return new Response(
+        JSON.stringify({
+          id: 2,
+          name: "X",
+          role: "other",
+          is_active: true,
+          match_patterns: [],
+          created_at: "2026-04-01T00:00:00Z",
+          updated_at: "2026-04-01T00:00:00Z",
+        }),
+        { status: 201 },
+      );
+    });
+
+    render(
+      <PartiesSection
+        accounts={emptyAccounts}
+        parties={[]}
+        loading={false}
+        error={null}
+        onPartyCreated={vi.fn()}
+        onPartyUpdated={vi.fn()}
+      />,
+    );
+
+    const user = userEvent.setup();
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalled();
+    });
+    const subtype = screen.getByRole("combobox", { name: "Party subtype" });
+    await user.type(subtype, "Ten");
+    expect(await screen.findByRole("option", { name: "Tenant" })).toBeInTheDocument();
+    await user.keyboard("{Enter}");
+    expect(subtype).toHaveValue("Tenant");
+  });
 });

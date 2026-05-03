@@ -10,6 +10,7 @@ import {
   type PartyCreateInput,
   type PartyRole,
 } from "../api/parties";
+import { SubtypeCombobox } from "./SubtypeCombobox";
 
 const PARTY_ROLES: PartyRole[] = ["customer", "vendor", "both", "other"];
 
@@ -265,18 +266,13 @@ export function PartiesSection({
 
           <label>
             Subtype (optional)
-            <input
+            <SubtypeCombobox
               aria-label="Party subtype"
               value={subtype}
-              onChange={(e) => setSubtype(e.target.value)}
+              onChange={setSubtype}
+              suggestions={subtypeSuggestions}
               placeholder="e.g. Tenant, Utilities"
-              list="party-subtype-suggestions"
             />
-            <datalist id="party-subtype-suggestions">
-              {subtypeSuggestions.map((s) => (
-                <option key={s} value={s} />
-              ))}
-            </datalist>
           </label>
 
           <fieldset style={{ width: "100%", minWidth: 0 }}>
@@ -399,17 +395,12 @@ export function PartiesSection({
 
             <label>
               Subtype (optional)
-              <input
+              <SubtypeCombobox
                 aria-label="Edit party subtype"
                 value={editSubtype}
-                onChange={(e) => setEditSubtype(e.target.value)}
-                list="party-subtype-suggestions-edit"
+                onChange={setEditSubtype}
+                suggestions={subtypeSuggestions}
               />
-              <datalist id="party-subtype-suggestions-edit">
-                {subtypeSuggestions.map((s) => (
-                  <option key={`e-${s}`} value={s} />
-                ))}
-              </datalist>
             </label>
 
             <fieldset style={{ width: "100%", minWidth: 0 }}>
