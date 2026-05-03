@@ -1,4 +1,5 @@
-"""Dev-only Postgres seed: export/import accounts, parties (and match patterns), CEL rule sets, import templates.
+"""Dev-only Postgres seed: export/import accounts, parties (and match patterns), CEL rule sets,
+import templates (including default import account and normal balance).
 
 This file is **not** run by ``tallybadger.db_migrations``. Production deploys should only
 apply numbered ``sql/NNN_*.sql`` migrations; local manual testing uses ``sql/dev_seed.sql``.
@@ -51,6 +52,16 @@ def _subtype_sql_expr(subtype: object) -> str:
     if not s:
         return "NULL::text"
     return _sql_text_literal(s)
+
+
+def _import_normal_balance_sql_expr(value: object) -> str:
+    """SQL expression for import_templates.default_import_normal_balance (debit/credit or NULL)."""
+    if value is None:
+        return "NULL::text"
+    s = str(value).strip().lower()
+    if s in ("debit", "credit"):
+        return _sql_text_literal(s)
+    return "NULL::text"
 
 
 def export_dev_seed_sql(*, database_url: str | None = None, destination: Path | None = None) -> Path:
@@ -108,9 +119,12 @@ def export_dev_seed_sql(*, database_url: str | None = None, destination: Path | 
             rule_sets = list(cur.fetchall())
             cur.execute(
                 """
-                SELECT it.name, it.has_header_row, it.columns_definition, crs.name AS rule_set_name
+                SELECT it.name, it.has_header_row, it.columns_definition, crs.name AS rule_set_name,
+                       da.name AS default_import_account_name,
+                       it.default_import_normal_balance
                 FROM import_templates it
                 LEFT JOIN cel_rule_sets crs ON crs.id = it.cel_rule_set_id
+                LEFT JOIN accounts da ON da.id = it.default_import_account_id
                 ORDER BY it.id
                 """,
             )
@@ -185,10 +199,13 @@ def export_dev_seed_sql(*, database_url: str | None = None, destination: Path | 
             if rs_name
             else "NULL::bigint"
         )
+        def_acct_sql = _account_id_subselect_by_name(row.get("default_import_account_name"))
+        def_norm_sql = _import_normal_balance_sql_expr(row.get("default_import_normal_balance"))
         lines.append(
-            "INSERT INTO import_templates (name, has_header_row, columns_definition, cel_rule_set_id)\n"
+            "INSERT INTO import_templates (name, has_header_row, columns_definition, cel_rule_set_id, "
+            "default_import_account_id, default_import_normal_balance)\n"
             f"SELECT {_sql_text_literal(name)}, {str(has_header).upper()}, "
-            f"{_sql_json_literal(cols)}, {fk_sql}\n"
+            f"{_sql_json_literal(cols)}, {fk_sql}, {def_acct_sql}, {def_norm_sql}\n"
             "WHERE NOT EXISTS (SELECT 1 FROM import_templates t WHERE LOWER(t.name) = LOWER("
             f"{_sql_text_literal(name)}));\n",
         )
