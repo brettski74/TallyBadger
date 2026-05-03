@@ -24,6 +24,8 @@ JSON object with at least:
 | `currency_assumption` | string | Documents single-currency numeric model; current value: `single_currency_numeric_18_2`. |
 | `member_manifest` | array | Objects `{ "path": "<file>.json", "sha256": "<hex>" }` for **every table JSON file** in the archive (not including `metadata.json`). |
 
+Snapshot metadata does **not** include restore behaviour (no duplicate-resolution or policy flags). Export only records **what** was dumped; **how** to apply it on import is chosen per restore request in the API/UI.
+
 ### Version rules
 
 - **Unsupported `format_version`:** import fails with a clear error.
@@ -86,11 +88,12 @@ Imports run in a **single transaction** (atomic success or rollback).
 2. **Shape:** every required table file for the `export_type` is present; each file is a JSON array of objects; columns coerced per [Type mapping](#type-mapping-postgresql--json--import).
 3. **In-archive FKs:** for `complete` snapshots, foreign keys must resolve within the ZIP. For `configuration`, only configuration-table FKs are checked (all targets are in the same archive). For `financial`, FKs must resolve to rows **in the financial JSON** (e.g. `entry_id` on lines) or to **existing rows in the target database** for configuration entities (`account_id`, `party_id`, `accrual_plan_id`, etc.). If a referenced `account_id` is neither in the archive nor in the database, import aborts with an explicit error (no multi-archive orchestration in the product).
 4. **Journal:** if `journal_lines.json` is present, per-`entry_id` amounts must sum to **zero**.
-5. **Duplicate policy** (API `duplicate_policy` form field):
-   - **`abort` (default):** every table in the snapshot’s **scope** must be **empty** before insert. Otherwise import fails with **409** and a message naming the blocking table.
-   - **`overwrite`:** tables in scope are cleared first, then rows are inserted. **Financial** scope uses `TRUNCATE … RESTART IDENTITY CASCADE` on the five financial tables. **Complete** scope truncates all snapshot tables (same family as a dev “full wipe”). **Configuration** scope deletes configuration rows in FK-safe order; if **financial** rows still reference configuration (e.g. `journal_lines.account_id`), deletion fails with a clear error—operators must clear or overwrite financial data first, or use an empty database.
+5. **Restore mode** (API/UI **per import only** — not read from the ZIP):
+   - **`abort` (default):** load in one transaction. The first failure from PostgreSQL (e.g. primary-key or unique violation, foreign-key violation) or from importer business rules (e.g. unbalanced journal) rolls back the whole import.
+   - **`overwrite`:** before inserting, delete any **existing** rows whose primary key appears in the snapshot, in foreign-key **reverse** order within the snapshot’s table set. Then insert snapshot rows. If a delete fails because other rows still reference the target (e.g. configuration IDs still referenced by journals not in the snapshot), the import fails with an actionable error—use `erase_reload` with a **complete** snapshot, adjust data, or clear blocking rows first. Rows in the database that are **not** present in the snapshot are left unchanged (this is not a full mirror of the source unless the snapshot contained every row).
+   - **`erase_reload`:** `TRUNCATE` all snapshot data tables (full application data wipe in FK-safe fashion), then load the archive. The database is empty of those rows before inserts; remaining FK or check failures imply a **bad or incomplete archive** for that path. **Not allowed** for `export_type: financial` (after a wipe there are no accounts/parties/plans for GL lines to reference). Use a **complete** or **configuration** snapshot, or import configuration then financial with another mode.
 
-The application does **not** prescribe operator workflows for pairing archives; each request is one atomic import.
+The application does **not** coordinate multi-step restores across requests; each import is one atomic transaction.
 
 ## Type mapping (PostgreSQL → JSON → import)
 
@@ -156,7 +159,7 @@ Integer and bigint columns export as JSON numbers; `NUMERIC` amounts export as J
 ## API
 
 - `POST /backup/export?export_type=complete|configuration|financial` — response body: `application/zip`. Default `export_type` is `complete`.
-- `POST /backup/import` — `multipart/form-data`: field **`snapshot`** (ZIP file); field **`duplicate_policy`**: `abort` (default) or `overwrite`.
+- `POST /backup/import` — `multipart/form-data`: field **`snapshot`** (ZIP file); field **`restore_mode`**: `abort` (default), `overwrite`, or `erase_reload`.
 
 ## Future
 

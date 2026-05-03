@@ -21,10 +21,6 @@ class SnapshotValidationError(SnapshotError):
     """Snapshot data failed business rules (e.g. unbalanced journal)."""
 
 
-class TargetNotEmptyError(SnapshotError):
-    """Import refused because the database still contains rows."""
-
-
 class IncompleteSnapshotError(SnapshotError):
     """Required ZIP members or metadata fields are missing."""
 

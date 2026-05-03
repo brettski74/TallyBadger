@@ -10,7 +10,6 @@ from tallybadger.backup.errors import (
     SchemaVersionMismatchError,
     SnapshotIntegrityError,
     SnapshotValidationError,
-    TargetNotEmptyError,
     UnsupportedFormatVersionError,
 )
 from tallybadger.backup.snapshot import export_snapshot, import_snapshot
@@ -38,15 +37,15 @@ def backup_export(
 @router.post("/import", status_code=status.HTTP_200_OK)
 async def backup_import(
     snapshot: UploadFile = File(...),
-    duplicate_policy: Literal["abort", "overwrite"] = Form(
+    restore_mode: Literal["abort", "overwrite", "erase_reload"] = Form(
         "abort",
-        description="abort: target tables in snapshot scope must be empty; overwrite: replace scope first.",
+        description="Per-request only: abort, overwrite, or erase_reload. Not stored in the backup file.",
     ),
 ) -> dict[str, str]:
     raw = await snapshot.read()
     try:
         with get_connection() as conn:
-            import_snapshot(conn, raw, duplicate_policy=duplicate_policy)
+            import_snapshot(conn, raw, restore_mode=restore_mode)
     except UnsupportedFormatVersionError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except IncompleteSnapshotError as exc:
@@ -57,8 +56,11 @@ async def backup_import(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except SchemaVersionMismatchError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
-    except TargetNotEmptyError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except pg_errors.UniqueViolation as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"import aborted: duplicate key or unique constraint ({exc.diag.message_detail or exc})",
+        ) from exc
     except pg_errors.ForeignKeyViolation as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

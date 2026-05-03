@@ -3,7 +3,7 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import type { Account } from "../api/accounts";
 import {
   type BackupExportType,
-  type DuplicateImportPolicy,
+  type RestoreMode,
   exportBackup,
   importBackup,
 } from "../api/backup";
@@ -25,7 +25,7 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
   const [backupMessage, setBackupMessage] = useState<string | null>(null);
   const [backupBusy, setBackupBusy] = useState(false);
   const [backupExportType, setBackupExportType] = useState<BackupExportType>("complete");
-  const [importDuplicatePolicy, setImportDuplicatePolicy] = useState<DuplicateImportPolicy>("abort");
+  const [restoreMode, setRestoreMode] = useState<RestoreMode>("abort");
   const restoreInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -161,15 +161,13 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
         )}
       </form>
 
-      <h3 className="config-subheading">Backup &amp; restore</h3>
+      <h3 className="config-subheading">Backup (export)</h3>
       <p className="muted">
-        Versioned ZIP (JSON tables) per{" "}
+        Writes a versioned ZIP of JSON table dumps per{" "}
         <a href="https://github.com/brettski74/TallyBadger/blob/main/docs/backup-snapshot-format.md">
           docs/backup-snapshot-format.md
         </a>
-        . <strong>Financial</strong> exports need matching configuration already in the database when you
-        import. Default import policy (<strong>abort</strong>) requires empty tables in that snapshot&apos;s
-        scope.
+        . The file records <strong>what</strong> was exported, not how a future restore should behave.
       </p>
       <label className="backup-export-scope">
         Export scope
@@ -183,15 +181,23 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
           <option value="financial">Financial only (ledger + settlements)</option>
         </select>
       </label>
+
+      <h3 className="config-subheading">Restore (import)</h3>
+      <p className="muted">
+        Choose how to apply the <strong>same</strong> ZIP if the database already has overlapping rows.{" "}
+        <strong>Financial-only</strong> archives need configuration already present (unless you use
+        erase+reload with a <strong>complete</strong> or <strong>configuration</strong> snapshot first).
+      </p>
       <label className="backup-import-policy">
-        On restore, if target tables already have rows in this scope
+        Restore mode (this import only)
         <select
-          value={importDuplicatePolicy}
-          onChange={(e) => setImportDuplicatePolicy(e.target.value as DuplicateImportPolicy)}
+          value={restoreMode}
+          onChange={(e) => setRestoreMode(e.target.value as RestoreMode)}
           disabled={backupBusy}
         >
-          <option value="abort">Abort (fail; default)</option>
-          <option value="overwrite">Overwrite (replace scope — see docs)</option>
+          <option value="abort">Abort on conflict (default)</option>
+          <option value="overwrite">Overwrite — delete conflicting rows by ID, then load</option>
+          <option value="erase_reload">Erase + reload — empty all data tables, then load</option>
         </select>
       </label>
       <div className="backup-actions">
@@ -236,7 +242,7 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
               setBackupMessage(null);
               setBackupBusy(true);
               try {
-                await importBackup(file, importDuplicatePolicy);
+                await importBackup(file, restoreMode);
                 setBackupMessage("Restore completed. Reload the app to see imported data.");
               } catch (err) {
                 setBackupError(err instanceof Error ? err.message : "Restore failed");

@@ -32,7 +32,7 @@ describe("backup API", () => {
     expect(call[0]).toContain("export_type=complete");
   });
 
-  it("importBackup POSTs multipart with duplicate_policy", async () => {
+  it("importBackup POSTs multipart with restore_mode", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ status: "imported" }), { status: 200 }));
     const file = new File(["x"], "snap.zip", { type: "application/zip" });
     await importBackup(file, "overwrite");
@@ -44,16 +44,16 @@ describe("backup API", () => {
     expect([...(init.body as FormData).entries()]).toEqual(
       expect.arrayContaining([
         ["snapshot", file],
-        ["duplicate_policy", "overwrite"],
+        ["restore_mode", "overwrite"],
       ]),
     );
   });
 
-  it("importCompleteBackup defaults duplicate_policy to abort", async () => {
+  it("importCompleteBackup defaults restore_mode to abort", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ status: "imported" }), { status: 200 }));
     const file = new File(["x"], "snap.zip", { type: "application/zip" });
     await importCompleteBackup(file);
     const init = (globalThis.fetch as ReturnType<typeof vi.spyOn>).mock.calls[0][1] as RequestInit;
-    expect((init.body as FormData).get("duplicate_policy")).toBe("abort");
+    expect((init.body as FormData).get("restore_mode")).toBe("abort");
   });
 });

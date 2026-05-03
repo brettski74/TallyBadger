@@ -20,12 +20,13 @@ from psycopg.rows import dict_row
 import tallybadger.core.config as core_config
 from tallybadger.main import app
 
+from psycopg import errors as pg_errors
+
 from tallybadger.backup.errors import (
     IncompleteSnapshotError,
     SchemaVersionMismatchError,
     SnapshotIntegrityError,
     SnapshotValidationError,
-    TargetNotEmptyError,
     UnsupportedFormatVersionError,
 )
 from tallybadger.backup.snapshot import (
@@ -253,7 +254,7 @@ def test_import_rejects_nonempty_database(
         zip_bytes = export_complete_snapshot(conn)
 
     with connect(integration_db_url, row_factory=dict_row) as conn, pytest.raises(
-        TargetNotEmptyError,
+        pg_errors.UniqueViolation,
     ):
         import_complete_snapshot(conn, zip_bytes)
 
@@ -322,7 +323,7 @@ def test_backup_export_and_import_api_round_trip(
         core_config.get_settings.cache_clear()
 
 
-def test_backup_export_query_and_import_duplicate_policy_form(
+def test_backup_export_query_and_import_restore_mode_form(
     integration_db_url: str,
     ledger_service: LedgerService,
     monkeypatch: pytest.MonkeyPatch,
@@ -342,14 +343,14 @@ def test_backup_export_query_and_import_duplicate_policy_form(
         imp_cfg = client.post(
             "/backup/import",
             files={"snapshot": ("c.zip", cfg, "application/zip")},
-            data={"duplicate_policy": "abort"},
+            data={"restore_mode": "abort"},
         )
         assert imp_cfg.status_code == 200
 
         imp_fin = client.post(
             "/backup/import",
             files={"snapshot": ("f.zip", fin_zip, "application/zip")},
-            data={"duplicate_policy": "abort"},
+            data={"restore_mode": "abort"},
         )
         assert imp_fin.status_code == 200
         with connect(integration_db_url, row_factory=dict_row) as conn:
@@ -402,8 +403,8 @@ def test_configuration_then_financial_two_step_import(
     _truncate_all_data(integration_db_url)
 
     with connect(integration_db_url, row_factory=dict_row) as conn:
-        import_snapshot(conn, config_zip, duplicate_policy="abort")
-        import_snapshot(conn, fin_zip, duplicate_policy="abort")
+        import_snapshot(conn, config_zip, restore_mode="abort")
+        import_snapshot(conn, fin_zip, restore_mode="abort")
         assert snapshot_table_counts(conn) == full_counts
 
 
@@ -418,7 +419,7 @@ def test_financial_import_rejects_missing_account_reference(
 
     _truncate_all_data(integration_db_url)
     with connect(integration_db_url, row_factory=dict_row) as conn:
-        import_snapshot(conn, config_zip, duplicate_policy="abort")
+        import_snapshot(conn, config_zip, restore_mode="abort")
 
     zin = zipfile.ZipFile(io.BytesIO(fin_zip))
     try:
@@ -445,10 +446,10 @@ def test_financial_import_rejects_missing_account_reference(
         SnapshotValidationError,
         match="not found in target database",
     ):
-        import_snapshot(conn, bad_fin, duplicate_policy="abort")
+        import_snapshot(conn, bad_fin, restore_mode="abort")
 
 
-def test_import_abort_rejects_nonempty_scope(
+def test_import_abort_rejects_conflicting_financial_rows(
     integration_db_url: str,
     ledger_service: LedgerService,
 ) -> None:
@@ -457,10 +458,42 @@ def test_import_abort_rejects_nonempty_scope(
         fin_zip = export_snapshot(conn, "financial")
 
     with connect(integration_db_url, row_factory=dict_row) as conn, pytest.raises(
-        TargetNotEmptyError,
-        match="duplicate_policy=abort",
+        pg_errors.UniqueViolation,
     ):
-        import_snapshot(conn, fin_zip, duplicate_policy="abort")
+        import_snapshot(conn, fin_zip, restore_mode="abort")
+
+
+def test_erase_reload_rejects_financial_only_snapshot(
+    integration_db_url: str,
+    ledger_service: LedgerService,
+) -> None:
+    _seed_minimal_ledger(ledger_service)
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        fin_zip = export_snapshot(conn, "financial")
+
+    with connect(integration_db_url, row_factory=dict_row) as conn, pytest.raises(
+        SnapshotValidationError,
+        match="erase_reload cannot import a financial-only",
+    ):
+        import_snapshot(conn, fin_zip, restore_mode="erase_reload")
+
+
+def test_erase_reload_truncates_all_then_loads_complete_snapshot(
+    integration_db_url: str,
+    ledger_service: LedgerService,
+) -> None:
+    _seed_minimal_ledger(ledger_service)
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        zip_bytes = export_complete_snapshot(conn)
+        before = snapshot_table_counts(conn)
+
+    extra = ledger_service.create_account(AccountCreate(name="Noise CoA", type="asset"))
+    assert extra.id is not None
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        import_snapshot(conn, zip_bytes, restore_mode="erase_reload")
+        after = snapshot_table_counts(conn)
+
+    assert after == before
 
 
 def test_import_overwrite_replaces_financial_scope(
@@ -473,7 +506,7 @@ def test_import_overwrite_replaces_financial_scope(
         before = snapshot_table_counts(conn)
 
     with connect(integration_db_url, row_factory=dict_row) as conn:
-        import_snapshot(conn, fin_zip, duplicate_policy="overwrite")
+        import_snapshot(conn, fin_zip, restore_mode="overwrite")
         assert snapshot_table_counts(conn) == before
 
 
@@ -493,7 +526,7 @@ def test_import_rejects_member_set_mismatch_for_export_type(
         IncompleteSnapshotError,
         match="does not match export_type",
     ):
-        import_snapshot(conn, bad, duplicate_policy="abort")
+        import_snapshot(conn, bad, restore_mode="abort")
 
 
 def test_import_rejects_zip_with_extra_member(integration_db_url: str) -> None:

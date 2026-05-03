@@ -20,7 +20,6 @@ from tallybadger.backup.errors import (
     SchemaVersionMismatchError,
     SnapshotIntegrityError,
     SnapshotValidationError,
-    TargetNotEmptyError,
     UnsupportedFormatVersionError,
 )
 
@@ -53,6 +52,10 @@ FINANCIAL_TABLES: tuple[str, ...] = (
 COMPLETE_TABLES: tuple[str, ...] = CONFIGURATION_TABLES + FINANCIAL_TABLES
 
 SUPPORTED_EXPORT_TYPES: frozenset[str] = frozenset({"complete", "configuration", "financial"})
+
+# Import-time only (never stored in snapshot metadata).
+RestoreMode = Literal["abort", "overwrite", "erase_reload"]
+SUPPORTED_RESTORE_MODES: frozenset[str] = frozenset({"abort", "overwrite", "erase_reload"})
 
 DATE_COLUMNS = frozenset({"entry_date", "event_date", "start_date", "end_date"})
 DECIMAL_COLUMNS = frozenset(
@@ -130,14 +133,43 @@ def _existing_ids(conn: Connection, table: str) -> set[int]:
         return {int(r["id"]) for r in cur.fetchall()}
 
 
-def _assert_scope_empty_for_abort(conn: Connection, tables: tuple[str, ...]) -> None:
-    with conn.cursor() as cur:
-        for table in tables:
-            cur.execute(sql.SQL("SELECT COUNT(*) AS c FROM {}").format(sql.Identifier(table)))
-            if int(cur.fetchone()["c"]) > 0:
-                raise TargetNotEmptyError(
-                    f"cannot import snapshot with duplicate_policy=abort: table {table!r} is not empty"
-                )
+def _normalize_restore_mode(restore_mode: str) -> str:
+    pol = restore_mode.strip().lower().replace("+", "_").replace("-", "_")
+    if pol not in SUPPORTED_RESTORE_MODES:
+        raise IncompleteSnapshotError(
+            f"restore_mode must be one of {sorted(SUPPORTED_RESTORE_MODES)} "
+            f"(e.g. erase+reload or erase_reload), not {restore_mode!r}"
+        )
+    return pol
+
+
+def _reverse_tables_for_scope(tables: tuple[str, ...]) -> tuple[str, ...]:
+    scope = set(tables)
+    return tuple(t for t in reversed(COMPLETE_TABLES) if t in scope)
+
+
+def _delete_incoming_ids_for_overwrite(
+    conn: Connection,
+    tables: tuple[str, ...],
+    payloads: dict[str, list[dict[str, Any]]],
+) -> None:
+    """Remove existing rows whose primary key appears in the snapshot so INSERT can proceed."""
+    for table in _reverse_tables_for_scope(tables):
+        rows = payloads.get(table, [])
+        if not rows:
+            continue
+        ids = sorted({int(r["id"]) for r in rows})
+        try:
+            del_stmt = sql.SQL("DELETE FROM {} WHERE id = ANY(%s)").format(sql.Identifier(table))
+            with conn.cursor() as cur:
+                cur.execute(del_stmt, (ids,))
+        except pg_errors.ForeignKeyViolation as exc:
+            raise SnapshotValidationError(
+                f"overwrite could not delete existing row(s) in {table!r} "
+                "(another table still references them). "
+                "Try restore_mode erase_reload with a complete snapshot, or remove blocking rows. "
+                f"Detail: {exc.diag.message_detail or exc}"
+            ) from exc
 
 
 def _truncate_complete_scope(conn: Connection) -> None:
@@ -160,52 +192,6 @@ def _truncate_complete_scope(conn: Connection) -> None:
             RESTART IDENTITY CASCADE
             """
         )
-
-
-def _truncate_financial_scope(conn: Connection) -> None:
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            TRUNCATE TABLE
-              settlement_allocations,
-              settlement_events,
-              accrual_obligations,
-              journal_lines,
-              journal_entries
-            RESTART IDENTITY CASCADE
-            """
-        )
-
-
-def _delete_configuration_scope(conn: Connection) -> None:
-    """Remove configuration rows without CASCADE (fails if financial FKs still reference them)."""
-    try:
-        with conn.cursor() as cur:
-            cur.execute("DELETE FROM import_templates")
-            cur.execute("DELETE FROM cel_rule_sets")
-            cur.execute("DELETE FROM ledger_settings")
-            cur.execute("DELETE FROM accrual_plans")
-            cur.execute("DELETE FROM party_match_patterns")
-            cur.execute("DELETE FROM parties")
-            cur.execute("DELETE FROM accounts")
-    except pg_errors.ForeignKeyViolation as exc:
-        raise SnapshotValidationError(
-            "cannot replace configuration while financial rows still reference it "
-            "(import financial snapshot with overwrite to clear activity first, "
-            "or restore into a database without blocking journal/settlement rows). "
-            f"Detail: {exc.diag.message_detail or exc}"
-        ) from exc
-
-
-def _clear_scope_for_overwrite(conn: Connection, export_type: str) -> None:
-    if export_type == "complete":
-        _truncate_complete_scope(conn)
-    elif export_type == "financial":
-        _truncate_financial_scope(conn)
-    elif export_type == "configuration":
-        _delete_configuration_scope(conn)
-    else:
-        raise IncompleteSnapshotError(f"unknown export_type {export_type!r}")
 
 
 def _fetch_table_rows(conn: Connection, table: str) -> list[dict[str, Any]]:
@@ -651,14 +637,18 @@ def import_snapshot(
     conn: Connection,
     zip_bytes: bytes,
     *,
-    duplicate_policy: str = "abort",
+    restore_mode: str = "abort",
 ) -> None:
-    """Import a snapshot; tables loaded are exactly those declared by ``export_type`` in metadata."""
-    pol = duplicate_policy.strip().lower()
-    if pol not in ("abort", "overwrite"):
-        raise IncompleteSnapshotError(
-            f"duplicate_policy must be 'abort' or 'overwrite', not {duplicate_policy!r}"
-        )
+    """Import a snapshot; tables loaded match ``export_type`` in metadata.
+
+    ``restore_mode`` applies only to this import and is never read from the ZIP:
+    ``abort`` — insert in one transaction; first PK/unique/FK/business-rule failure rolls back.
+    ``overwrite`` — before insert, delete existing rows with the same primary keys as the
+    snapshot (in FK-safe reverse order within the snapshot's table set).
+    ``erase_reload`` — truncate all snapshot data tables, then load (requires a
+    self-contained archive: not ``financial``-only).
+    """
+    mode = _normalize_restore_mode(restore_mode)
 
     metadata, files = _load_zip_members(zip_bytes)
 
@@ -673,6 +663,14 @@ def import_snapshot(
 
     _assert_manifest_matches_export_type(metadata, export_type)
     tables = tables_for_export_type(export_type)
+
+    if mode == "erase_reload" and export_type == "financial":
+        raise SnapshotValidationError(
+            "restore_mode erase_reload cannot import a financial-only snapshot: "
+            "the database is cleared first, so accounts/parties/plans would be missing. "
+            "Use a complete or configuration snapshot for erase_reload, "
+            "or import configuration then financial with abort/overwrite."
+        )
 
     fmt: Any = metadata.get("format_version")
     if fmt not in SUPPORTED_FORMAT_VERSIONS:
@@ -709,10 +707,10 @@ def import_snapshot(
         _validate_financial_fks(conn, payloads)
 
     with conn.transaction():
-        if pol == "abort":
-            _assert_scope_empty_for_abort(conn, tables)
-        else:
-            _clear_scope_for_overwrite(conn, export_type)
+        if mode == "erase_reload":
+            _truncate_complete_scope(conn)
+        elif mode == "overwrite":
+            _delete_incoming_ids_for_overwrite(conn, tables, payloads)
 
         for table in tables:
             rows = [_prepare_row(table, r) for r in payloads[table]]
@@ -745,10 +743,10 @@ def import_complete_snapshot(
     conn: Connection,
     zip_bytes: bytes,
     *,
-    duplicate_policy: str = "abort",
+    restore_mode: str = "abort",
 ) -> None:
-    """Import a ``complete`` snapshot (backward-compatible entry point)."""
-    import_snapshot(conn, zip_bytes, duplicate_policy=duplicate_policy)
+    """Import a snapshot (backward-compatible name; any ``export_type`` in the ZIP)."""
+    import_snapshot(conn, zip_bytes, restore_mode=restore_mode)
 
 
 def _resync_serials(conn: Connection) -> None:
