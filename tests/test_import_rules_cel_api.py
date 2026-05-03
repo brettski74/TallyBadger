@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
 import pytest
@@ -5,12 +6,14 @@ from fastapi.testclient import TestClient
 
 from tallybadger.api.routes.ledger import get_ledger_service
 from tallybadger.main import app
+from tallybadger.ledger.models import AccountOut
 
 
 @pytest.fixture
 def cel_evaluate_client() -> TestClient:
     ledger = MagicMock()
     ledger.list_parties.return_value = []
+    ledger.list_accounts.return_value = []
     app.dependency_overrides[get_ledger_service] = lambda: ledger
     yield TestClient(app)
     app.dependency_overrides.pop(get_ledger_service, None)
@@ -70,6 +73,33 @@ def test_cel_evaluate_endpoint_includes_debug_without_row_number(cel_evaluate_cl
     assert data["debug"][0]["rule"] == "rule[0]"
     assert data["debug"][0]["value"] == 9
     assert "row_number" not in data["debug"][0]
+
+
+def test_cel_evaluate_endpoint_account_type_reads_list_accounts() -> None:
+    ledger = MagicMock()
+    ledger.list_parties.return_value = []
+    ledger.list_accounts.return_value = [
+        AccountOut(
+            id=1,
+            name="Checking",
+            type="asset",
+            is_active=True,
+            created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            updated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        ),
+    ]
+    app.dependency_overrides[get_ledger_service] = lambda: ledger
+    try:
+        client = TestClient(app)
+        body = {
+            "attributes": {},
+            "rule_set": {"rules": [{"expression": '{"set":{"t": account_type("Checking")}}'}]},
+        }
+        r = client.post("/import-rules/cel/evaluate", json=body)
+        assert r.status_code == 200
+        assert r.json()["attributes"]["t"] == "asset"
+    finally:
+        app.dependency_overrides.pop(get_ledger_service, None)
 
 
 def test_cel_evaluate_endpoint_bad_control_type_422(cel_evaluate_client: TestClient) -> None:

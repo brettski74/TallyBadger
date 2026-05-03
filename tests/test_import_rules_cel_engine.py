@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
+from decimal import Decimal
 
 import pytest
 
 from tallybadger.import_rules.cel_engine import evaluate_cel
 from tallybadger.import_rules.cel_models import CelRegexCapture, CelRule, CelRuleSet
 from tallybadger.import_rules.errors import ImportRulesCelError
-from tallybadger.ledger.models import PartyOut
+from tallybadger.ledger.models import AccountOut, PartyOut
 
 
 def test_cel_rule_can_set_attributes_and_keep_types() -> None:
@@ -241,6 +242,19 @@ def test_invalid_stop_type_raises() -> None:
     rs = CelRuleSet(rules=[CelRule(expression='{"stop":true}')])
     with pytest.raises(ImportRulesCelError, match="stop"):
         evaluate_cel(rs, {})
+
+
+def _account_row(**kwargs: object) -> AccountOut:
+    base: dict[str, object] = {
+        "id": 1,
+        "name": "Operating",
+        "type": "asset",
+        "is_active": True,
+        "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+        "updated_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+    }
+    base.update(kwargs)
+    return AccountOut.model_validate(base)
 
 
 def _party_row(**kwargs: object) -> PartyOut:
@@ -509,3 +523,154 @@ def test_debug_two_rules_same_row_distinct_rule_field() -> None:
     out = evaluate_cel(rs, {})
     assert out.debug is not None
     assert [(e.rule, e.value) for e in out.debug] == [("first", 1), ("second", 2)]
+
+
+def test_cel_abs_int_double_and_numeric_string() -> None:
+    rs = CelRuleSet(
+        rules=[
+            CelRule(
+                expression=(
+                    '{"set":{"a": abs(-3), "b": abs(-2.5), "c": abs(attributes["s"]), '
+                    '"d": abs(attributes["dec"])}}'
+                ),
+            ),
+        ],
+    )
+    out = evaluate_cel(rs, {"s": "-4", "dec": Decimal("-1.25")})
+    assert out.attributes["a"] == 3
+    assert out.attributes["b"] == 2.5
+    assert out.attributes["c"] == 4
+    assert out.attributes["d"] == 1.25
+
+
+def test_cel_abs_non_numeric_errors() -> None:
+    rs = CelRuleSet(rules=[CelRule(expression='{"set":{"x": abs(attributes["s"])}}')])
+    with pytest.raises(ImportRulesCelError, match="abs"):
+        evaluate_cel(rs, {"s": "nope"})
+
+
+def test_cel_day_and_month_from_iso_strings() -> None:
+    rs = CelRuleSet(
+        rules=[
+            CelRule(
+                expression=(
+                    '{"set":{"dom": day(attributes["d"]), "mon": month(attributes["d"]), '
+                    '"dt": day(attributes["ts"]), "tm": month(attributes["ts"])}}'
+                ),
+            ),
+        ],
+    )
+    out = evaluate_cel(rs, {"d": "2026-04-10", "ts": "2026-04-10T15:00:00Z"})
+    assert out.attributes["dom"] == 10
+    assert out.attributes["mon"] == 4
+    assert out.attributes["dt"] == 10
+    assert out.attributes["tm"] == 4
+
+
+def test_cel_decode_map_lookup() -> None:
+    rs = CelRuleSet(
+        rules=[
+            CelRule(
+                expression=(
+                    '{"set":{"a": decode(attributes["k"], {"rent": "R", "fee": "F"}, "Z"), '
+                    '"b": decode("nosuchkey", {"x": 1}, "none")}}'
+                ),
+            ),
+        ],
+    )
+    out = evaluate_cel(rs, {"k": "rent"})
+    assert out.attributes["a"] == "R"
+    assert out.attributes["b"] == "none"
+
+
+def test_cel_decode_null_lookup_returns_default() -> None:
+    rs = CelRuleSet(
+        rules=[CelRule(expression='{"set":{"x": decode(null, {"a": 1}, "fallback")}}')],
+    )
+    out = evaluate_cel(rs, {})
+    assert out.attributes["x"] == "fallback"
+
+
+def test_cel_defined_respects_bag_updates_across_rules() -> None:
+    rs = CelRuleSet(
+        rules=[
+            CelRule(sort_order=1, expression='{"set":{"mid": "v"}}'),
+            CelRule(
+                sort_order=2,
+                expression='defined("mid") && !defined("absent") ? {"set":{"ok": true}} : null',
+            ),
+        ],
+    )
+    out = evaluate_cel(rs, {})
+    assert out.attributes["ok"] is True
+
+
+def test_cel_defined_false_for_empty_null_missing() -> None:
+    rs = CelRuleSet(
+        rules=[
+            CelRule(
+                expression=(
+                    '{"set":{"m": defined("missing"), "e": defined("empty"), '
+                    '"n": defined("nullv"), "b": defined("blank_key")}}'
+                ),
+            ),
+        ],
+    )
+    out = evaluate_cel(rs, {"empty": "", "nullv": None, "blank_key": "  \t"})
+    assert out.attributes["m"] is False
+    assert out.attributes["e"] is False
+    assert out.attributes["n"] is False
+    assert out.attributes["b"] is True
+
+
+def test_cel_account_type_active() -> None:
+    cash = _account_row(id=1, name="  Petty  ", type="asset")
+    rs = CelRuleSet(
+        rules=[CelRule(expression='{"set":{"t": account_type("Petty")}}')],
+    )
+    out = evaluate_cel(rs, {}, accounts=[cash])
+    assert out.attributes["t"] == "asset"
+
+
+def test_cel_account_type_unknown_errors() -> None:
+    cash = _account_row(id=2, name="Old", type="expense", is_active=True)
+    rs = CelRuleSet(rules=[CelRule(expression='{"set":{"x": account_type("Nope")}}')])
+    with pytest.raises(ImportRulesCelError, match="unknown"):
+        evaluate_cel(rs, {}, accounts=[cash])
+
+
+def test_cel_account_type_inactive_errors() -> None:
+    cash = _account_row(id=2, name="Old", type="expense", is_active=False)
+    rs = CelRuleSet(rules=[CelRule(expression='{"set":{"x": account_type("Old")}}')])
+    with pytest.raises(ImportRulesCelError, match="inactive"):
+        evaluate_cel(rs, {}, accounts=[cash])
+
+
+def test_cel_account_type_blank_errors() -> None:
+    rs = CelRuleSet(rules=[CelRule(expression='{"set":{"x": account_type("  ")}}')])
+    with pytest.raises(ImportRulesCelError, match="blank"):
+        evaluate_cel(rs, {}, accounts=[])
+
+
+def test_cel_match_date_issue_examples() -> None:
+    rs = CelRuleSet(
+        rules=[
+            CelRule(
+                expression=(
+                    '{"set":{"a": match_date(attributes["d"], 8, 2), "b": match_date(attributes["d"], 8, 1)}}'
+                ),
+            ),
+        ],
+    )
+    out = evaluate_cel(rs, {"d": "2026-04-10"})
+    assert out.attributes["a"] is True
+    assert out.attributes["b"] is False
+
+
+def test_cel_match_date_invalid_params() -> None:
+    rs = CelRuleSet(rules=[CelRule(expression='{"set":{"x": match_date(attributes["d"], 0, 1)}}')])
+    with pytest.raises(ImportRulesCelError, match="match_date day"):
+        evaluate_cel(rs, {"d": "2026-04-10"})
+    rs2 = CelRuleSet(rules=[CelRule(expression='{"set":{"x": match_date(attributes["d"], 5, -1)}}')])
+    with pytest.raises(ImportRulesCelError, match="tolerance"):
+        evaluate_cel(rs2, {"d": "2026-04-10"})

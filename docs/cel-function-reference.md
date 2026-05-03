@@ -13,7 +13,7 @@ This document is the **authoritative reference** for **custom functions** availa
 | Status | Meaning |
 |--------|---------|
 | **#46** | Shipped in [#46](https://github.com/brettski74/TallyBadger/issues/46); keep this doc in sync when behaviour changes. |
-| **#50** | Planned in [#50](https://github.com/brettski74/TallyBadger/issues/50); update this doc in the same PR as the implementation. |
+| **#50** | Shipped in [#50](https://github.com/brettski74/TallyBadger/issues/50); generic helpers below—keep this doc in sync when behaviour changes. |
 | **#57** | Shipped in [#57](https://github.com/brettski74/TallyBadger/issues/57); `unset()` and `set` map removal semantics. |
 | **#59** | Shipped in [#59](https://github.com/brettski74/TallyBadger/issues/59); `debug(x)` and API `debug` arrays. |
 
@@ -117,32 +117,45 @@ These functions read **current ledger state** (active parties, accounts) passed 
 
 ## Generic helpers (**#50**)
 
+These functions are registered on the same CEL **`Environment`** as **`party`** / **`debug`** / **`unset`**. They read the **current row attribute bag** where noted (`defined`), and **`account_type`** reads the **account snapshot** passed into `evaluate_cel` (from `list_accounts()` on **`POST /import-rules/cel/evaluate`** and CSV execute—**no per-cell DB calls** inside CEL).
+
 ### `abs(v) -> number`
 
-- **Argument `v`:** Numeric value (`int` / `double` in CEL terms).
-- **Returns:** Absolute value in the same numeric kind as far as CEL/cel-python allows; document any coercion from Decimal in the attribute bag.
+- **Argument `v`:** A CEL **`int`**, **`uint`**, or **`double`**, or a **trimmed numeric string** (optional leading `-`; integers match `-?\\d+`, otherwise parsed as **`float`**).
+- **Returns:** Absolute value. **`int` / `uint`** → **`int`**; **`double`** and numeric strings that are not integers → **`double`**. Attribute **`Decimal`** values are converted to **`double`** in the activation map before CEL sees them, so **`abs`** follows **double** semantics for those.
+- **Errors:** Non-numeric types, blank numeric strings, or non-numeric strings → **`ImportRulesCelError`** (surfaced as CSV **`row_errors`** or evaluate **422** text).
 
-### `day(d) -> int`
+### `day(d) -> int` / `month(d) -> int`
 
-- **Argument `d`:** Date or date-time (CEL string ISO date/datetime from attributes, or a type the runtime maps).
-- **Returns:** Day of month **1–31** in the interpreted calendar date.
+- **Argument `d`:** **`cel-python` `TimestampType`** (subclass of **`datetime`**), a Python **`date`** / **`datetime`** if it appears in the runtime, or a **non-blank** ISO **date** (`YYYY-MM-DD`) or **date-time** string (RFC3339-style; **`Z`** normalized for parsing). This matches how **`date`** / **`datetime`** attributes are usually exposed in CEL: as **ISO strings**.
+- **Returns:** **`day`:** calendar **day-of-month 1–31**. **`month`:** **1–12**.
+- **Calendar date:** For date-times, the **calendar date** is taken in the **parsed** instant’s offset (e.g. **`2026-04-09T22:00:00-05:00`** → **2026-04-09**). Naive strings use **`datetime.fromisoformat`** as documented for Python.
+- **Errors:** **`null`**, blank string, or unsupported types → evaluation error.
 
-### `month(d) -> int`
+### `decode(val, map, default) -> value`
 
-- **Argument `d`:** Date or date-time.
-- **Returns:** Month **1–12**.
+- **Arguments:** **`val`** — lookup key; **`map`** — CEL **`map`** / object; **`default`** — value returned when there is no match.
+- **Returns:** The **map entry value** for a string key equal to **`val`’s** usual string form (booleans → **`"true"`** / **`"false"`**; numbers → decimal string; doubles use integer string when whole). If the key is missing, returns **`default`**. If **`val`** is **`null`**, returns **`default`**. If **`map`** is not a map/object, returns **`default`** (no error).
+- **Whitespace:** If the key is missing, a **second attempt** uses **`strip()`** on the string form of **`val`** only when that form differs from the non-stripped form.
+
+### `defined(key) -> bool`
+
+- **Argument `key`:** String **attribute name** (trimmed); blank key → **`false`**.
+- **Returns:** **`true`** iff the attribute bag contains **`key`** and the value is **not** **`null`**, **not** Python **`None`** in the bag, and **not** the **empty string** (`""`). **Whitespace-only strings are not treated as empty** (they count as defined).
+- **Semantics:** Reads the **mutable** bag for the row (so a **later** rule sees keys set by an **earlier** rule in the same evaluation).
 
 ### `account_type(str) -> string`
 
-- **Argument `str`:** Canonical **account `name`**.
-- **Returns:** Account type string: `asset`, `liability`, `equity`, `revenue`, `expense`, or `suspense` (aligned with ledger models).
-- **Errors:** Unknown or inactive account → evaluation error.
+- **Argument `str`:** Canonical **account `name`** (trimmed; must match the stored name’s trim).
+- **Returns:** One of **`asset`**, **`liability`**, **`equity`**, **`revenue`**, **`expense`**, **`suspense`** (same strings as **`AccountType`** / API).
+- **Errors:** Blank name → evaluation error. **Unknown** name (not in the snapshot) or **inactive** account → evaluation error with an explicit message.
 
 ### `match_date(d, n, t) -> bool`
 
-- **Arguments:** `d` — date (or date-time; use the **calendar date** in the evaluation timezone documented for #50); `n` — target day-of-month (**1–31**); `t` — non-negative integer **tolerance** (days).
-- **Returns:** Let `dom` be the day-of-month of `d`, and `dim` the number of days in that month. Let `low = max(1, n - t)` and `high = min(dim, n + t)`. Returns **`true`** iff **`low <= dom <= high`** (inclusive). This matches calendar-month-local “near day *n*” without wrapping to adjacent months.
-- **Examples:** For **2026-04-10**, `match_date(d, 8, 2)` → **true** (`dom` 10 ∈ [6, 10]); `match_date(d, 8, 1)` → **false** (10 ∉ [7, 9]).
+- **Arguments:** **`d`** — same accepted forms as **`day`** / **`month`** (calendar date only). **`n`** — target day-of-month, integer **1–31**. **`t`** — non-negative integer **tolerance** (days); **`double`** values must be **whole** numbers.
+- **Returns:** Let **`dom`** be **`d`’s** day-of-month, **`dim`** = days in that month. **`low = max(1, n - t)`**, **`high = min(dim, n + t)`**. **`true`** iff **`low <= dom <= high`** (inclusive). **No** wrap into adjacent months.
+- **Examples:** **2026-04-10:** `match_date(d, 8, 2)` → **`true`**; `match_date(d, 8, 1)` → **`false`**.
+- **Errors:** Invalid **`n`** / **`t`**, or unparseable **`d`** → evaluation error.
 
 ---
 
@@ -156,5 +169,6 @@ These functions read **current ledger state** (active parties, accounts) passed 
 | *#59 ship* | **`debug(x)`** — identity + ordered debug records; evaluate vs CSV `row_number` and JSON omission rules as above. |
 | *#57 ship* | **`unset()`** — zero-arg marker for **`set`** map key removal; **`null`** still assigns **`None`**; trace **`remove_attribute`**. |
 | *#57 follow-up* | CSV execute **422** **`row_errors[]`** may include **`debug`** (same shape as successful **`entries[]`**) when CEL ran before journal validation failed. |
+| *#50 ship* | **`abs`**, **`day`**, **`month`**, **`decode`**, **`defined`**, **`account_type`**, **`match_date`** — stdlib-style helpers; **`evaluate_cel(..., accounts=)`** wires **`list_accounts()`** for evaluate + CSV. Engine walks CEL results for embedded **`CELEvalError`** values so **`ImportRulesCelError`** from custom functions (including **`party_*`**) surfaces as **`ImportRulesCelError`** / HTTP **422** instead of being left inside the **`set`** map. |
 
 Update this table whenever functions are added or signatures/semantics change.

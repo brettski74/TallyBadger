@@ -462,6 +462,7 @@ def execute_csv_import(
                     rule_set,
                     bag,
                     parties=ledger_service.list_parties(),
+                    accounts=accounts,
                     row_number=idx,
                 )
             except ImportRulesCelError as exc:

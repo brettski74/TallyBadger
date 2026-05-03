@@ -8,7 +8,7 @@ from decimal import Decimal
 from typing import Any
 
 from celpy import Environment, celtypes
-from celpy.evaluation import CELFunction, Result
+from celpy.evaluation import CELEvalError, CELFunction, Result
 
 from tallybadger.import_rules.cel_models import (
     CelDebugEvent,
@@ -19,8 +19,9 @@ from tallybadger.import_rules.cel_models import (
     CelTraceEvent,
 )
 from tallybadger.import_rules.cel_party_functions import build_party_cel_functions
+from tallybadger.import_rules.cel_stdlib_functions import build_stdlib_cel_functions
 from tallybadger.import_rules.errors import ImportRulesCelError
-from tallybadger.ledger.models import PartyOut
+from tallybadger.ledger.models import AccountOut, PartyOut
 
 
 class _CelAttributeBagUnset:
@@ -211,6 +212,39 @@ def _capture_entry(cap: CelRegexCapture, bag: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, "whole": m.group(0), "list": lst, "groups": groups}
 
 
+def _reraise_celeval_as_import_rules(err: CELEvalError) -> None:
+    """cel-python records some failures as CELEvalError values embedded in map results."""
+    if len(err.args) >= 2 and err.args[1] is ImportRulesCelError:
+        inner = err.args[2]
+        text = inner[0] if isinstance(inner, tuple) and inner else str(inner)
+        raise ImportRulesCelError(str(text)) from err
+    if err.args and err.args[0] == "no such key" and len(err.args) >= 3:
+        key = err.args[2]
+        raise ImportRulesCelError(f"CEL reference error: no such key {key!r}") from err
+    raise ImportRulesCelError(f"CEL evaluation failed: {err.args[0] if err.args else err!r}") from err
+
+
+def _walk_cel_result_for_wrapped_domain_errors(value: Any) -> None:
+    if isinstance(value, CELEvalError):
+        _reraise_celeval_as_import_rules(value)
+        return
+    if isinstance(value, celtypes.MapType):
+        for v in dict(value).values():
+            _walk_cel_result_for_wrapped_domain_errors(v)
+        return
+    if isinstance(value, dict):
+        for v in value.values():
+            _walk_cel_result_for_wrapped_domain_errors(v)
+        return
+    if isinstance(value, celtypes.ListType):
+        for v in list(value):
+            _walk_cel_result_for_wrapped_domain_errors(v)
+        return
+    if isinstance(value, (list, tuple)):
+        for v in value:
+            _walk_cel_result_for_wrapped_domain_errors(v)
+
+
 def _normalize_rule_output(result: Any, rule_label: str) -> dict[str, Any] | None:
     py = _from_cel_value(result)
     if py is None:
@@ -227,6 +261,7 @@ def evaluate_cel(
     attributes: dict[str, Any],
     *,
     parties: list[PartyOut] | None = None,
+    accounts: list[AccountOut] | None = None,
     row_number: int | None = None,
 ) -> CelEvaluationResult:
     bag: dict[str, Any] = {k: copy(v) if isinstance(v, (list, dict)) else v for k, v in attributes.items()}
@@ -234,9 +269,15 @@ def evaluate_cel(
     debug_records: list[CelDebugEvent] = []
     current_rule_label: list[str] = [""]
     party_functions = build_party_cel_functions(parties or [])
+    stdlib_functions = build_stdlib_cel_functions(bag, accounts)
     debug_fn = _build_debug_cel_function(debug_records, current_rule_label, row_number)
     unset_fn = _build_unset_cel_function()
-    cel_functions: dict[str, CELFunction] = {**party_functions, "debug": debug_fn, "unset": unset_fn}
+    cel_functions: dict[str, CELFunction] = {
+        **party_functions,
+        **stdlib_functions,
+        "debug": debug_fn,
+        "unset": unset_fn,
+    }
     dropped = False
     drop_reason: str | None = None
     require_review = False
@@ -290,6 +331,11 @@ def evaluate_cel(
             program = env.program(ast, functions=cel_functions)
             out = program.evaluate(activation)
         except Exception as exc:  # celpy raises parser/runtime specific errors
+            raise ImportRulesCelError(f"CEL rule {label} failed: {exc}") from exc
+
+        try:
+            _walk_cel_result_for_wrapped_domain_errors(out)
+        except ImportRulesCelError as exc:
             raise ImportRulesCelError(f"CEL rule {label} failed: {exc}") from exc
 
         payload = _normalize_rule_output(out, label)

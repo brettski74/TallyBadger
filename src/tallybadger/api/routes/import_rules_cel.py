@@ -26,7 +26,13 @@ def evaluate_import_rules_cel(
 ) -> CelEvaluationResult:
     try:
         parties = ledger_service.list_parties()
-        return evaluate_cel(payload.rule_set, payload.attributes, parties=parties)
+        accounts = ledger_service.list_accounts()
+        return evaluate_cel(
+            payload.rule_set,
+            payload.attributes,
+            parties=parties,
+            accounts=accounts,
+        )
     except ImportRulesCelError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
