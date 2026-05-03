@@ -282,6 +282,68 @@ def test_equity_account_alias_matches_revenue_account() -> None:
     assert out.attributes["q"] == "Owner Capital"
 
 
+def test_cel_account_helpers_null_without_role_or_default_issue_61() -> None:
+    """expense_account / revenue_account / equity_account do not error on 'wrong' role; null if unset."""
+    customer = _party_row(
+        id=10,
+        name="RetailCo",
+        role="customer",
+        match_patterns=[],
+        default_revenue_account_name="Sales",
+        default_expense_account_name=None,
+    )
+    vendor = _party_row(
+        id=11,
+        name="SupplyCo",
+        role="vendor",
+        match_patterns=[],
+        default_revenue_account_name=None,
+        default_expense_account_name="Job Supplies",
+    )
+    bare_customer = _party_row(
+        id=12,
+        name="WalkIn",
+        role="customer",
+        match_patterns=[],
+        default_revenue_account_name=None,
+    )
+    both_party = _party_row(
+        id=13,
+        name="BothCo",
+        role="both",
+        match_patterns=[],
+        default_revenue_account_name="Mixed Rev",
+        default_expense_account_name="Mixed Exp",
+    )
+    rs = CelRuleSet(
+        rules=[
+            CelRule(
+                expression=(
+                    '{"set":{'
+                    '"c_exp": expense_account("RetailCo"), '
+                    '"c_rev": revenue_account("RetailCo"), '
+                    '"v_rev": revenue_account("SupplyCo"), '
+                    '"v_eq": equity_account("SupplyCo"), '
+                    '"v_exp": expense_account("SupplyCo"), '
+                    '"bare_rev": revenue_account("WalkIn"), '
+                    '"b_rev": revenue_account("BothCo"), '
+                    '"b_exp": expense_account("BothCo") '
+                    "}}"
+                ),
+            ),
+        ],
+    )
+    out = evaluate_cel(rs, {}, parties=[customer, vendor, bare_customer, both_party])
+    assert out.attributes["c_exp"] is None
+    assert out.attributes["c_rev"] == "Sales"
+    assert out.attributes["v_rev"] is None
+    assert out.attributes["v_eq"] is None
+    assert out.attributes["v_exp"] == "Job Supplies"
+    assert out.attributes["bare_rev"] is None
+    assert out.attributes["b_rev"] == "Mixed Rev"
+    assert out.attributes["b_exp"] == "Mixed Exp"
+
+
 def test_cel_party_type_subtype_and_accounts_blank_arg_returns_null() -> None:
     """Blank / whitespace-only party name args behave like a non-match (null), not an error."""
     p = _party_row(
