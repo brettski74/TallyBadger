@@ -4,6 +4,7 @@ from tallybadger.import_rules.engine import evaluate
 from tallybadger.import_rules.errors import ImportRulesCelError, ImportRulesError
 from tallybadger.import_rules.cel_engine import evaluate_cel
 from tallybadger.import_rules.cel_models import (
+    CelDebugEvent,
     CelEvaluationResult,
     CelRegexCapture,
     CelRule,
@@ -38,6 +39,7 @@ __all__ = [
     "DayOfMonthMatcher",
     "DayOfWeekMatcher",
     "DropRowAction",
+    "CelDebugEvent",
     "CelEvaluationResult",
     "CelRegexCapture",
     "CelRule",

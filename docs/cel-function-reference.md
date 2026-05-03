@@ -1,6 +1,6 @@
 # CEL function reference (import rules)
 
-This document is the **authoritative reference** for **custom functions** available in **CEL** expressions used by the import CEL rule path (`evaluate_cel`, CSV execute with a CEL rule set, `POST /import-rules/cel/evaluate`). It is maintained alongside GitHub issues **[#46](https://github.com/brettski74/TallyBadger/issues/46)** (party-aware functions + party data model) and **[#50](https://github.com/brettski74/TallyBadger/issues/50)** (generic attribute helpers).
+This document is the **authoritative reference** for **custom functions** available in **CEL** expressions used by the import CEL rule path (`evaluate_cel`, CSV execute with a CEL rule set, `POST /import-rules/cel/evaluate`). It is maintained alongside GitHub issues **[#46](https://github.com/brettski74/TallyBadger/issues/46)** (party-aware functions + party data model), **[#50](https://github.com/brettski74/TallyBadger/issues/50)** (generic attribute helpers), and **[#59](https://github.com/brettski74/TallyBadger/issues/59)** (`debug()` for rule diagnostics).
 
 **Related:** [Import rules engine](import-rules-engine.md) ([#8](https://github.com/brettski74/TallyBadger/issues/8)) — CEL spike contract, `attributes` / `match` activation map, capture gating.
 
@@ -14,6 +14,37 @@ This document is the **authoritative reference** for **custom functions** availa
 |--------|---------|
 | **#46** | Shipped in [#46](https://github.com/brettski74/TallyBadger/issues/46); keep this doc in sync when behaviour changes. |
 | **#50** | Planned in [#50](https://github.com/brettski74/TallyBadger/issues/50); update this doc in the same PR as the implementation. |
+| **#59** | Shipped in [#59](https://github.com/brettski74/TallyBadger/issues/59); `debug(x)` and API `debug` arrays. |
+
+---
+
+## `debug(x)` — inspection helper (**#59**)
+
+- **Signature:** `debug(x)` — exactly **one** argument (any CEL value the expression can pass).
+- **Return value:** **`x`** unchanged (transparent / identity). The rule outcome must be the same as if `debug` were not present, aside from the side effect below.
+- **Side effect:** each call **appends one debug record** while that rule’s CEL program runs (after all regex captures for that rule have succeeded — the same point as `program.evaluate` today). No records are produced when the expression never runs (e.g. capture failure, disabled rule, or evaluation stopped on an earlier rule).
+- **Serialization:** Values are converted to **JSON-friendly** snapshots using the same path as attribute round-tripping where possible (`_from_cel_value` in the engine). If a value cannot be represented safely, the engine **falls back** (e.g. string / `repr`). **`debug` must never cause** an import or evaluate request to fail because serialization failed.
+
+### Debug record shape (JSON)
+
+Each record is an object with:
+
+| Field | When present | Meaning |
+|-------|----------------|--------|
+| **`rule`** | always | Rule label: `rule.name` if set, otherwise `rule[{index}]` (same as trace `_rule_label`). |
+| **`value`** | always | JSON-friendly snapshot of the argument after serialization. |
+| **`row_number`** | CSV execute only | **1-based** index of the **data** row (same numbering as CSV row validation errors). Omitted on **`POST /import-rules/cel/evaluate`** (no import row). |
+
+### Where `debug` appears in API JSON
+
+The **`debug` key is omitted entirely** when there are **no** records for that response object. When present, **`debug`** is a **JSON array** of records in **call order** within that evaluation.
+
+| API | Location |
+|-----|----------|
+| **`POST /import-rules/cel/evaluate`** | Optional top-level **`debug`** on the evaluation result. |
+| **`POST /imports/csv/execute`** | Optional **`debug`** on **each** `entries[]` item for rows where at least one `debug()` ran. Entries for rows with no `debug()` calls omit the key. |
+
+**Note:** Rows that error or are dropped before a journal entry is built do not appear in `entries[]`; debug captured on paths that never produce an entry is **out of scope for v1** (see #59).
 
 ---
 
@@ -105,5 +136,6 @@ These functions read **current ledger state** (active parties, accounts) passed 
 | *(initial)* | Stub reference: #46 party helpers + #50 generic helpers split from monolithic #50 description. |
 | *#46 ship* | `party()` returns **null** when no pattern matches; errors only on **multiple** matches. Party model, API, UI, and CEL wiring documented here. |
 | *#46 follow-up* | **`equity_account(str)`** added as an alias of **`revenue_account(str)`** (same field and return value). |
+| *#59 ship* | **`debug(x)`** — identity + ordered debug records; evaluate vs CSV `row_number` and JSON omission rules as above. |
 
 Update this table whenever functions are added or signatures/semantics change.

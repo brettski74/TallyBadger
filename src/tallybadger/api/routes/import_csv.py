@@ -10,10 +10,11 @@ from decimal import Decimal, InvalidOperation
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
 from tallybadger.import_dates import parse_import_date_string, parse_import_datetime_string
 from tallybadger.import_rules.cel_engine import evaluate_cel
+from tallybadger.import_rules.cel_models import CelDebugEvent
 from tallybadger.import_rules.cel_rule_set_service import (
     CelRuleSetNotFoundError,
     CelRuleSetService,
@@ -65,11 +66,27 @@ class CsvImportRowError(BaseModel):
     errors: list[str]
 
 
+class CsvJournalEntryOut(JournalEntryOut):
+    """CSV execute response row: same as ``JournalEntryOut`` plus optional CEL ``debug`` (#59)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    debug: list[CelDebugEvent] | None = None
+
+    @model_serializer(mode="wrap")
+    def _serialize(self, handler: Any) -> dict[str, Any]:
+        data: dict[str, Any] = handler(self)
+        dbg = data.get("debug")
+        if dbg is None or (isinstance(dbg, list) and len(dbg) == 0):
+            data.pop("debug", None)
+        return data
+
+
 class CsvImportExecuteResult(BaseModel):
     posted_entries: int
     dropped_rows: int = 0
     row_errors: list[CsvImportRowError] = Field(default_factory=list)
-    entries: list[JournalEntryOut] = Field(default_factory=list)
+    entries: list[CsvJournalEntryOut] = Field(default_factory=list)
 
 
 def _parse_decimal_from_csv(raw: str) -> Decimal:
@@ -406,6 +423,7 @@ def execute_csv_import(
     data_rows = rows[1:] if payload.has_header_row else rows
 
     pending_entries: list[JournalEntryWrite] = []
+    pending_row_debug: list[list[CelDebugEvent] | None] = []
     row_errors: list[CsvImportRowError] = []
     dropped_rows = 0
     start_row_number = 2 if payload.has_header_row else 1
@@ -426,9 +444,15 @@ def execute_csv_import(
             row_errors.append(CsvImportRowError(row_number=idx, errors=errors))
             continue
 
+        row_debug: list[CelDebugEvent] | None = None
         if rule_set is not None:
             try:
-                result = evaluate_cel(rule_set, bag, parties=ledger_service.list_parties())
+                result = evaluate_cel(
+                    rule_set,
+                    bag,
+                    parties=ledger_service.list_parties(),
+                    row_number=idx,
+                )
             except ImportRulesCelError as exc:
                 row_errors.append(CsvImportRowError(row_number=idx, errors=[str(exc)]))
                 continue
@@ -436,6 +460,7 @@ def execute_csv_import(
                 dropped_rows += 1
                 continue
             bag = result.attributes
+            row_debug = list(result.debug) if result.debug else None
 
         try:
             pending_entries.append(
@@ -449,6 +474,7 @@ def execute_csv_import(
                     default_import_normal_balance=payload.default_import_normal_balance,
                 ),
             )
+            pending_row_debug.append(row_debug)
         except (ValueError, LedgerValidationError) as exc:
             row_errors.append(CsvImportRowError(row_number=idx, errors=[str(exc)]))
 
@@ -466,9 +492,16 @@ def execute_csv_import(
     except LedgerValidationError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
 
+    entries_out: list[CsvJournalEntryOut] = []
+    for entry, dbg in zip(created, pending_row_debug, strict=True):
+        if dbg:
+            entries_out.append(CsvJournalEntryOut.model_validate({**entry.model_dump(), "debug": dbg}))
+        else:
+            entries_out.append(CsvJournalEntryOut.model_validate(entry.model_dump()))
+
     return CsvImportExecuteResult(
         posted_entries=len(created),
         dropped_rows=dropped_rows,
-        entries=created,
+        entries=entries_out,
     )
 

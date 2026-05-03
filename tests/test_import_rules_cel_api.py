@@ -47,6 +47,31 @@ def test_cel_evaluate_endpoint_happy_path(cel_evaluate_client: TestClient) -> No
     assert data["review_reason"] == "confirm party"
 
 
+def test_cel_evaluate_endpoint_omits_debug_when_unused(cel_evaluate_client: TestClient) -> None:
+    body = {
+        "attributes": {},
+        "rule_set": {"rules": [{"expression": '{"set":{"x": 1}}'}]},
+    }
+    r = cel_evaluate_client.post("/import-rules/cel/evaluate", json=body)
+    assert r.status_code == 200
+    assert "debug" not in r.json()
+
+
+def test_cel_evaluate_endpoint_includes_debug_without_row_number(cel_evaluate_client: TestClient) -> None:
+    body = {
+        "attributes": {},
+        "rule_set": {"rules": [{"expression": '{"set":{"x": debug(9)}}'}]},
+    }
+    r = cel_evaluate_client.post("/import-rules/cel/evaluate", json=body)
+    assert r.status_code == 200
+    data = r.json()
+    assert "debug" in data
+    assert len(data["debug"]) == 1
+    assert data["debug"][0]["rule"] == "rule[0]"
+    assert data["debug"][0]["value"] == 9
+    assert "row_number" not in data["debug"][0]
+
+
 def test_cel_evaluate_endpoint_bad_control_type_422(cel_evaluate_client: TestClient) -> None:
     body = {
         "attributes": {},

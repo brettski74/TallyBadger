@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer
 
 
 class CelRegexCapture(BaseModel):
@@ -45,6 +45,23 @@ class CelTraceEvent(BaseModel):
     detail: dict[str, Any] = Field(default_factory=dict)
 
 
+class CelDebugEvent(BaseModel):
+    """One `debug(x)` side-effect for import CEL (#59)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    rule: str
+    value: Any
+    row_number: int | None = None
+
+    @model_serializer(mode="wrap")
+    def _serialize(self, handler: Any) -> dict[str, Any]:
+        data: dict[str, Any] = handler(self)
+        if data.get("row_number") is None:
+            data.pop("row_number", None)
+        return data
+
+
 class CelEvaluationResult(BaseModel):
     attributes: dict[str, Any]
     dropped: bool = False
@@ -53,3 +70,12 @@ class CelEvaluationResult(BaseModel):
     review_reason: str | None = None
     stopped_after_rule: str | None = None
     trace: list[CelTraceEvent] = Field(default_factory=list)
+    debug: list[CelDebugEvent] | None = None
+
+    @model_serializer(mode="wrap")
+    def _serialize(self, handler: Any) -> dict[str, Any]:
+        data: dict[str, Any] = handler(self)
+        dbg = data.get("debug")
+        if dbg is None or (isinstance(dbg, list) and len(dbg) == 0):
+            data.pop("debug", None)
+        return data
