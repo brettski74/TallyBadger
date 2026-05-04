@@ -23,6 +23,6 @@ Numbered `NNN_*.sql` files are **schema migrations** and run in all environments
 
 Workflow:
 
-1. After `make dbclean`, migrations run, then **`make dev-seed`** loads `dev_seed.sql` (dbclean does both).
+1. **`make dbempty`** recreates the Compose DB volume and applies numbered migrations only (no `dev_seed.sql`). **`make dbclean`** runs **`dbempty`** then **`make dev-seed`**.
 2. **`make test`** / **`make db-migrate-local`** apply **only** numbered migrations — tests do not load `dev_seed.sql`.
 3. To snapshot your manual-testing DB into the repo: set `TALLYBADGER_DATABASE_URL`, then **`make export-dev-seed`** (alias: `make export-bootstrap`). Commit `sql/dev_seed.sql` if you want to share that fixture.

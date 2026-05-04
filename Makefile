@@ -3,7 +3,7 @@ PIP := .venv/bin/pip
 PYTEST := .venv/bin/pytest
 UVICORN := .venv/bin/uvicorn
 
-.PHONY: help venv install test test-unit test-integration run up down restart status logs frontend-install frontend-dev frontend-test db-up db-down db-wait db-migrate db-migrate-local dbclean dev-seed export-dev-seed export-bootstrap
+.PHONY: help venv install test test-unit test-integration run up down restart status logs frontend-install frontend-dev frontend-test db-up db-down db-wait db-migrate db-migrate-local dbempty dbclean dev-seed export-dev-seed export-bootstrap
 
 help:
 	@echo "Available targets:"
@@ -25,7 +25,8 @@ help:
 	@echo "  make db-down   Stop Docker Compose services"
 	@echo "  make db-wait   Wait for Postgres readiness"
 	@echo "  make db-migrate Apply SQL migrations to configured DB"
-	@echo "  make dbclean   Recreate local DB volume, apply schema migrations, then load sql/dev_seed.sql (dev only)"
+	@echo "  make dbempty   Recreate local DB volume and apply schema migrations only (no dev_seed; dev only)"
+	@echo "  make dbclean   Same as dbempty, then load sql/dev_seed.sql (dev only)"
 	@echo "  make dev-seed  Apply sql/dev_seed.sql (accounts, parties, CEL rule sets, templates — dev only)"
 	@echo "  make export-dev-seed  Rewrite sql/dev_seed.sql from the current DB (commit for your team)"
 	@echo "  make export-bootstrap  Alias for export-dev-seed"
@@ -96,11 +97,13 @@ db-migrate-local: db-up db-wait
 db-migrate:
 	PYTHONPATH=src $(PYTHON) -m tallybadger.db_migrations
 
-dbclean:
+dbempty:
 	docker compose down -v
 	docker compose up -d db
 	$(MAKE) db-wait
 	PYTHONPATH=src $(PYTHON) -m tallybadger.db_migrations
+
+dbclean: dbempty
 	$(MAKE) dev-seed
 
 dev-seed:
