@@ -1,34 +1,13 @@
 ---
-description: TallyBadger — branches, PRs, testing, and engineering defaults
+description: Read repo architecture and engineering standards before implementing
 alwaysApply: true
 ---
 
-# TallyBadger development rules
+# TallyBadger — where the rules live
 
-## Git and delivery
+Before planning or implementing substantive work, read:
 
-- Build **features and bug fixes on a branch**; do not land substantive work by committing straight to the default branch (`main`/`master`).
-- If currently on the default branch (`main` or `master`), create and switch to a feature/bugfix branch **before making any code changes or commits**.
-- Merge to the default branch (`main`/`master`) only through a **pull request** (self-review is OK; the PR is the audit trail and review surface).
-- Use **squash merge** (or equivalent) when merging PRs so the default branch (`main`/`master`) stays a linear, readable history unless the team explicitly chooses otherwise.
-- **Link work to GitHub issues:** in the PR description, reference issues with keywords GitHub understands, e.g. `Fixes #42`, `Closes #42`, or `Refs #42` (see [GitHub linking](https://docs.github.com/en/issues/tracking-your-work-with-issues/linking-a-pull-request-to-an-issue)). Put the primary link in the **PR body** so it survives squash; repeat in commit messages if you like, but the PR body is the reliable place.
-- Updates to data model need to be reflected in the export-dev-seed make target.
+- **[ARCH.md](../../ARCH.md)** — system shape, trust boundaries, main data flows, when to update architecture.
+- **[STYLE.md](../../STYLE.md)** — coding standards, testing and delivery expectations, database/seed/snapshot/API contract rules, PR hygiene.
 
-## Testing (ship tests with the change)
-
-- Every **feature** or **bug fix** includes **at least one new automated test**; add more whenever needed to cover behavior and prevent regressions.
-- **Backend** (`src/tallybadger/`, `tests/`): extend **pytest** for API and domain logic (e.g. FastAPI `TestClient`, unit tests). Add **integration tests** when behavior depends on PostgreSQL or migrations.
-- **Frontend** (`frontend/`): once the UI stack is chosen, **every frontend change** must include **automated tests** (e.g. component tests plus e2e or smoke UI tests—match the stack). Until non-trivial UI exists, focus tests on the API; as soon as UI code ships, UI tests are **mandatory** for those paths.
-- **Design for testability:** keep domain and ledger rules **testable without HTTP** where practical; inject config/DB/session dependencies; avoid hidden globals and side effects that block assertions.
-
-## Engineering defaults
-
-- **Money:** use `Decimal` or integer **minor units**—never `float` for currency in new code.
-- **API contract:** treat published routes and stable JSON shapes as contracts; update tests and docs when they change.
-- **Secrets:** never commit credentials; use env (e.g. `TALLYBADGER_*`) or secret stores.
-- **Database:** ship SQL migrations in `sql/` (or the chosen migration tool) with the same PR as code that depends on them; prefer reversible or additive steps when data is live.
-
-## PR hygiene
-
-- PR description states **what changed**, **why**, how to **verify** (commands run, screenshots for UI when relevant), and **which issue(s)** it addresses (`Fixes #…` / `Refs #…`).
-- **Tracking:** features and bugs live in **GitHub Issues**; implementation PRs should reference those issues so history stays traceable.
+Do not duplicate long policy text in chat or in other rule files; keep changes to those two files when policy evolves. The **consistency checklist** for PRs lives in **STYLE.md** and in **[`.github/pull_request_template.md`](../../.github/pull_request_template.md)**.

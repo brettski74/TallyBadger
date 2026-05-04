@@ -1,0 +1,12 @@
+---
+description: Use GitHub MCP for API operations; do not use gh CLI
+alwaysApply: true
+---
+
+# GitHub: MCP only
+
+- **`gh` (GitHub CLI) is not available** in this environment. Do not suggest or run `gh` commands.
+- For issues, PRs, comments, and repo operations, use the **`user-github` MCP** tools (for example `issue_read`, `issue_write`, `add_issue_comment`, `pull_request_read`, `create_pull_request`, etc.).
+- Before calling an MCP tool, read its schema under `mcps/user-github/tools/` when unsure of parameters.
+
+This file is **only** GitHub tool wiring; it does not replace **[ARCH.md](../../ARCH.md)** or **[STYLE.md](../../STYLE.md)**.
