@@ -4,7 +4,9 @@ Double-entry accounting for a **small set of rental properties**: journals, char
 
 **Stack today:** Python 3.11+, [FastAPI](https://fastapi.tiangolo.com/), PostgreSQL, Docker Compose, and a React + TypeScript + Vite frontend under `frontend/`.
 
-**Not built yet (honest inventory):** auth, bank CSV ingestion end-to-end, MCP tools, and simplified non-accountant flows. Settlements / accrual obligations ([#7](https://github.com/brettski74/TallyBadger/issues/7)) and a **first pass** of the **import rules engine** ([#8](https://github.com/brettski74/TallyBadger/issues/8)) are in the codebase—see **`docs/import-rules-engine.md`** for #8 scope, API, and gaps.
+**Where to read next:** **[ARCH.md](ARCH.md)** is the maintained map of subsystems, trust boundaries, and main data flows (including containers). **[STYLE.md](STYLE.md)** is how we code, test, and ship. This README stays **product- and operator-focused** (quick start, Docker, layout); it should not drift into duplicating ARCH/STYLE.
+
+**Not built yet (honest inventory):** end-user **auth**, **MCP** helpers, and **simplified non-accountant** flows. **Bank CSV import** is **implemented and usable** today (upload → column mapping / templates → CEL rule sets where configured → journal posting via the API); rough edges and future work include **duplicate handling**, **cheque reconciliation**, and **tighter settlement / accrual integration** with that pipeline—not “CSV missing.” Settlements / accrual obligations ([#7](https://github.com/brettski74/TallyBadger/issues/7)) and a **first pass** of the **import rules engine** ([#8](https://github.com/brettski74/TallyBadger/issues/8)) are in the codebase—see **`docs/import-rules-engine.md`** for #8 scope, API, and gaps.
 
 ---
 
@@ -15,6 +17,7 @@ Double-entry accounting for a **small set of rental properties**: journals, char
 | API shell | FastAPI app with `/`, `/health`, OpenAPI at `/docs` when running |
 | Config | `tallybadger.core.config.Settings` — `TALLYBADGER_DATABASE_URL` (see below) |
 | Database | PostgreSQL in Compose; `sql/*.sql` migrations (ledger, accruals, settlements, …) |
+| Bank CSV import (#40 / #9) | Upload and execute path in API (`import_csv` routes); templates + CEL rule sets; posts journals — usable; gaps: duplicates, cheque reconciliation, settlement wiring |
 | Import rules (#8) | In-process `evaluate()` + `POST /import-rules/evaluate` (stateless); **no** rules UI or DB persistence yet — **see [docs/import-rules-engine.md](docs/import-rules-engine.md)** |
 | Backup / restore ([#67](https://github.com/brettski74/TallyBadger/issues/67)) | `POST /backup/export` and `POST /backup/import` (complete JSON ZIP); format: **[docs/backup-snapshot-format.md](docs/backup-snapshot-format.md)**; Configuration tab in the UI |
 | Tests | `pytest` + `TestClient` (health, ledger, import rules, …); reports under `test-results/` |
