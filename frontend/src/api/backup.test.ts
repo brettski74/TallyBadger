@@ -13,9 +13,11 @@ afterEach(() => {
 });
 
 describe("backup API", () => {
-  it("backupDownloadFilename uses local time tally-badger-backup-yyyymmdd-hhmmss.zip", () => {
-    const name = backupDownloadFilename(new Date(2026, 4, 3, 14, 9, 7));
-    expect(name).toBe("tally-badger-backup-20260503-140907.zip");
+  it("backupDownloadFilename uses local time and export kind", () => {
+    const at = new Date(2026, 4, 3, 14, 9, 7);
+    expect(backupDownloadFilename("complete", at)).toBe("tallybadger-complete-20260503-140907.zip");
+    expect(backupDownloadFilename("configuration", at)).toBe("tallybadger-config-20260503-140907.zip");
+    expect(backupDownloadFilename("financial", at)).toBe("tallybadger-financial-20260503-140907.zip");
   });
 
   it("exportBackup POSTs /backup/export with export_type and returns blob", async () => {

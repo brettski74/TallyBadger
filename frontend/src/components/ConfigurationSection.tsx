@@ -215,7 +215,7 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement("a");
                 a.href = url;
-                a.download = backupDownloadFilename();
+                a.download = backupDownloadFilename(backupExportType);
                 a.click();
                 URL.revokeObjectURL(url);
                 setBackupMessage("Download started.");

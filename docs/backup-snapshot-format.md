@@ -158,7 +158,7 @@ Integer and bigint columns export as JSON numbers; `NUMERIC` amounts export as J
 
 ## API
 
-- `POST /backup/export?export_type=complete|configuration|financial` — response body: `application/zip`. Default `export_type` is `complete`.
+- `POST /backup/export?export_type=complete|configuration|financial` — response body: `application/zip`. Default `export_type` is `complete`. Suggested download names: `tallybadger-complete-yyyymmdd-hhmmss.zip`, `tallybadger-config-…`, `tallybadger-financial-…` (local server time in `Content-Disposition`).
 - `POST /backup/import` — `multipart/form-data`: field **`snapshot`** (ZIP file); field **`restore_mode`**: `abort` (default), `overwrite`, or `erase_reload`.
 
 ## Future

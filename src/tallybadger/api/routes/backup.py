@@ -28,8 +28,13 @@ def backup_export(
 ) -> Response:
     with get_connection() as conn:
         data = export_snapshot(conn, export_type)
+    stem = {
+        "complete": "tallybadger-complete",
+        "configuration": "tallybadger-config",
+        "financial": "tallybadger-financial",
+    }[export_type]
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    filename = f"tally-badger-backup-{stamp}.zip"
+    filename = f"{stem}-{stamp}.zip"
     return Response(
         content=data,
         media_type="application/zip",

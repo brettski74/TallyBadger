@@ -6,11 +6,17 @@ export type BackupExportType = "complete" | "configuration" | "financial";
 /** How to handle conflicts for this restore only (sent on import; never part of the ZIP). */
 export type RestoreMode = "abort" | "overwrite" | "erase_reload";
 
-/** Local-time default download name: `tally-badger-backup-yyyymmdd-hhmmss.zip`. */
-export function backupDownloadFilename(at: Date = new Date()): string {
+const BACKUP_FILENAME_STEM: Record<BackupExportType, string> = {
+  complete: "tallybadger-complete",
+  configuration: "tallybadger-config",
+  financial: "tallybadger-financial",
+};
+
+/** Local-time download name, e.g. `tallybadger-complete-yyyymmdd-hhmmss.zip`. */
+export function backupDownloadFilename(exportType: BackupExportType, at: Date = new Date()): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   const stamp = `${at.getFullYear()}${pad(at.getMonth() + 1)}${pad(at.getDate())}-${pad(at.getHours())}${pad(at.getMinutes())}${pad(at.getSeconds())}`;
-  return `tally-badger-backup-${stamp}.zip`;
+  return `${BACKUP_FILENAME_STEM[exportType]}-${stamp}.zip`;
 }
 
 /** Download a backup ZIP for the given export scope. */
