@@ -16,6 +16,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
                 "Trust boundaries",
                 "format_version",
                 "docs/backup-snapshot-format.md",
+                "docker-compose.yml",
+                "Bank CSV import",
             ],
         ),
         (

@@ -4,13 +4,14 @@ This document is the **high-level map** of the system: subsystems, trust boundar
 
 ## Product shape
 
-TallyBadger is a **double-entry accounting** backend for small rental portfolios, exposed as a **FastAPI** HTTP API, with a **React + TypeScript + Vite** UI under `frontend/`. PostgreSQL holds authoritative ledger and configuration data. See **[README.md](README.md)** for product scope and honest inventory of what is not built yet.
+TallyBadger is a **double-entry accounting** backend for small rental portfolios, exposed as a **FastAPI** HTTP API, with a **React + TypeScript + Vite** UI under `frontend/`. PostgreSQL holds authoritative ledger and configuration data. **[README.md](README.md)** is the **onboarding and operator** view (quick start, Compose, repo layout); this file is the **architecture** view—by design they overlap a little at the edges but should not copy long policy text from **[STYLE.md](STYLE.md)**.
 
 ## Subsystems
 
 | Subsystem | Role | Primary locations |
 |-----------|------|-------------------|
 | **HTTP API** | REST-ish routes, request validation, orchestration | [`src/tallybadger/main.py`](src/tallybadger/main.py), [`src/tallybadger/api/routes/`](src/tallybadger/api/routes/) |
+| **CSV / bank import** | Uploaded CSV → templates + optional CEL → journal lines | [`src/tallybadger/api/routes/import_csv.py`](src/tallybadger/api/routes/import_csv.py), [`src/tallybadger/import_templates/`](src/tallybadger/import_templates/) |
 | **Domain / ledger** | Journal rules, posting, invariants | [`src/tallybadger/ledger/`](src/tallybadger/ledger/) |
 | **Import rules** | Rule evaluation (including CEL), templates | [`src/tallybadger/import_rules/`](src/tallybadger/import_rules/), [`src/tallybadger/import_templates/`](src/tallybadger/import_templates/) |
 | **Persistence** | Database access, connection settings | [`src/tallybadger/db.py`](src/tallybadger/db.py), [`src/tallybadger/core/config.py`](src/tallybadger/core/config.py) |
@@ -18,6 +19,12 @@ TallyBadger is a **double-entry accounting** backend for small rental portfolios
 | **Backup / snapshot** | Portable ZIP of table JSON, export and import | [`src/tallybadger/backup/`](src/tallybadger/backup/), [`src/tallybadger/api/routes/backup.py`](src/tallybadger/api/routes/backup.py) |
 | **Frontend** | SPA calling the API | [`frontend/`](frontend/) |
 | **Local operations** | Compose-backed DB, API, frontend lifecycle | [`src/tallybadger/tbad.py`](src/tallybadger/tbad.py), [`docker-compose.yml`](docker-compose.yml), [`Makefile`](Makefile) |
+
+## Deployment and containers
+
+The **default local and small-host story** is **containerized**: [`Dockerfile`](Dockerfile) builds the API image; [`docker-compose.yml`](docker-compose.yml) runs **`api` + `db`** (Postgres) together. Migrations run against the DB the same way in Compose as in bare-metal dev (see README “Docker” / `make` targets). **Kubernetes** and other orchestration are “same image + managed Postgres + secrets”—no in-repo manifests yet; see README for notes.
+
+Treat the **API container** like any other network-facing process: configure `TALLYBADGER_DATABASE_URL`, CORS, and backups for the data volume or managed instance.
 
 ## Trust boundaries
 
@@ -48,9 +55,10 @@ flowchart LR
 ```
 
 1. **Ledger operations** — UI or API client sends journal-related requests → route handlers → ledger (and related) services → PostgreSQL under a transaction where invariants require it.
-2. **Import rules and CEL** — Evaluation and rule-set APIs run in-process against submitted or stored definitions; details and API surface are documented under `docs/` (see links below).
-3. **Backup / restore** — Export reads the database and writes a versioned ZIP per **[docs/backup-snapshot-format.md](docs/backup-snapshot-format.md)**. Import reads the ZIP, validates metadata and members, and applies rows according to export mode and API-chosen restore behaviour. When schema or included tables change, update **snapshot code, integration tests, format documentation, and `format_version`** when the on-wire layout or semantics require it (see [STYLE.md](STYLE.md)).
-4. **Migrations and dev seed** — `sql/*.sql` advances schema; `sql/dev_seed.sql` is the checked-in bootstrap dataset for local development. Regenerating the seed after model changes is part of the portable-data story (see [STYLE.md](STYLE.md)).
+2. **Bank CSV import** — Client uploads CSV → import route validates rows, applies **templates** and optional **CEL rule sets**, then posts **journal entries** through ledger services → PostgreSQL. Same trust rules as other HTTP input; ambiguous business cases should stay visible to the operator (README product notes).
+3. **Import rules and CEL** — Evaluation and rule-set APIs run in-process against submitted or stored definitions; details and API surface are documented under `docs/` (see links below).
+4. **Backup / restore** — Export reads the database and writes a versioned ZIP per **[docs/backup-snapshot-format.md](docs/backup-snapshot-format.md)**. Import reads the ZIP, validates metadata and members, and applies rows according to export mode and API-chosen restore behaviour. When schema or included tables change, update **snapshot code, integration tests, format documentation, and `format_version`** when the on-wire layout or semantics require it (see [STYLE.md](STYLE.md)).
+5. **Migrations and dev seed** — `sql/*.sql` advances schema; `sql/dev_seed.sql` is the checked-in bootstrap dataset for local development. Regenerating the seed after model changes is part of the portable-data story (see [STYLE.md](STYLE.md)).
 
 ## Deeper reference (do not duplicate here)
 
@@ -68,4 +76,4 @@ Update **ARCH.md** when work **moves or introduces a subsystem boundary**, chang
 
 ## Reconciliation notes (issue #75)
 
-Representative modules were checked against this narrative: `src/tallybadger/` (API, ledger, import, backup, config, migrations), `frontend/`, and `sql/`. **Intentional deferrals** called out in the README still apply: for example **end-user auth**, **full bank CSV ingestion**, and some product flows are future work—not contradictions in this file.
+Representative modules were checked against this narrative: `src/tallybadger/` (API, ledger, CSV import, backup, config, migrations), `frontend/`, and `sql/`. **Known gaps** (not “missing CSV”): **end-user auth**, richer **duplicate detection**, **cheque reconciliation**, and **deeper settlement / accrual integration** with bank import—see README inventory for product framing.
