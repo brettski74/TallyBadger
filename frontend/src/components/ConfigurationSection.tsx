@@ -4,6 +4,7 @@ import type { Account } from "../api/accounts";
 import {
   type BackupExportType,
   type RestoreMode,
+  backupDownloadFilename,
   exportBackup,
   importBackup,
 } from "../api/backup";
@@ -214,7 +215,7 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement("a");
                 a.href = url;
-                a.download = "tallybadger-backup.zip";
+                a.download = backupDownloadFilename();
                 a.click();
                 URL.revokeObjectURL(url);
                 setBackupMessage("Download started.");
