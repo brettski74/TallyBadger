@@ -1,7 +1,13 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 
 import type { Account } from "../api/accounts";
-import { exportCompleteBackup, importCompleteBackup } from "../api/backup";
+import {
+  type BackupExportType,
+  type RestoreMode,
+  backupDownloadFilename,
+  exportBackup,
+  importBackup,
+} from "../api/backup";
 import { getLedgerSettings, updateLedgerSettings } from "../api/settlements";
 
 interface ConfigurationSectionProps {
@@ -19,6 +25,8 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
   const [backupError, setBackupError] = useState<string | null>(null);
   const [backupMessage, setBackupMessage] = useState<string | null>(null);
   const [backupBusy, setBackupBusy] = useState(false);
+  const [backupExportType, setBackupExportType] = useState<BackupExportType>("complete");
+  const [restoreMode, setRestoreMode] = useState<RestoreMode>("abort");
   const restoreInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -154,15 +162,45 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
         )}
       </form>
 
-      <h3 className="config-subheading">Backup &amp; restore</h3>
+      <h3 className="config-subheading">Backup (export)</h3>
       <p className="muted">
-        Complete snapshot (ZIP of JSON) for bare-metal restore. Import only works when ledger data tables are
-        empty—use a fresh database or truncate in dev. See{" "}
+        Writes a versioned ZIP of JSON table dumps per{" "}
         <a href="https://github.com/brettski74/TallyBadger/blob/main/docs/backup-snapshot-format.md">
           docs/backup-snapshot-format.md
         </a>
-        .
+        . The file records <strong>what</strong> was exported, not how a future restore should behave.
       </p>
+      <label className="backup-export-scope">
+        Export scope
+        <select
+          value={backupExportType}
+          onChange={(e) => setBackupExportType(e.target.value as BackupExportType)}
+          disabled={backupBusy}
+        >
+          <option value="complete">Complete (configuration + financial)</option>
+          <option value="configuration">Configuration only</option>
+          <option value="financial">Financial only (ledger + settlements)</option>
+        </select>
+      </label>
+
+      <h3 className="config-subheading">Restore (import)</h3>
+      <p className="muted">
+        Choose how to apply the <strong>same</strong> ZIP if the database already has overlapping rows.{" "}
+        <strong>Financial-only</strong> archives need configuration already present (unless you use
+        erase+reload with a <strong>complete</strong> or <strong>configuration</strong> snapshot first).
+      </p>
+      <label className="backup-import-policy">
+        Restore mode (this import only)
+        <select
+          value={restoreMode}
+          onChange={(e) => setRestoreMode(e.target.value as RestoreMode)}
+          disabled={backupBusy}
+        >
+          <option value="abort">Abort on conflict (default)</option>
+          <option value="overwrite">Overwrite — delete conflicting rows by ID, then load</option>
+          <option value="erase_reload">Erase + reload — empty all data tables, then load</option>
+        </select>
+      </label>
       <div className="backup-actions">
         <button
           type="button"
@@ -173,11 +211,11 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
               setBackupMessage(null);
               setBackupBusy(true);
               try {
-                const blob = await exportCompleteBackup();
+                const blob = await exportBackup(backupExportType);
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement("a");
                 a.href = url;
-                a.download = "tallybadger-backup.zip";
+                a.download = backupDownloadFilename(backupExportType);
                 a.click();
                 URL.revokeObjectURL(url);
                 setBackupMessage("Download started.");
@@ -189,7 +227,7 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
             })();
           }}
         >
-          Download complete backup
+          Download backup
         </button>
         <input
           ref={restoreInputRef}
@@ -205,7 +243,7 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
               setBackupMessage(null);
               setBackupBusy(true);
               try {
-                await importCompleteBackup(file);
+                await importBackup(file, restoreMode);
                 setBackupMessage("Restore completed. Reload the app to see imported data.");
               } catch (err) {
                 setBackupError(err instanceof Error ? err.message : "Restore failed");
