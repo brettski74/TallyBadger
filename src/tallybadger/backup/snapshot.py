@@ -23,8 +23,21 @@ from tallybadger.backup.errors import (
     UnsupportedFormatVersionError,
 )
 
-FORMAT_VERSION = "1.0.0"
-SUPPORTED_FORMAT_VERSIONS = frozenset({FORMAT_VERSION})
+# Semver-ordered, oldest first. When the on-wire layout changes, append a new version
+# (see docs/backup-snapshot-format.md). Import accepts the last four entries (STYLE.md).
+FORMAT_VERSION_HISTORY: tuple[str, ...] = (
+    "1.0.0",
+)
+
+
+def export_format_version() -> str:
+    """``format_version`` written to new snapshot exports."""
+    return FORMAT_VERSION_HISTORY[-1]
+
+
+def supported_import_format_versions() -> frozenset[str]:
+    """``format_version`` values accepted on import (current plus up to three prior)."""
+    return frozenset(FORMAT_VERSION_HISTORY[-4:])
 
 CURRENCY_ASSUMPTION = "single_currency_numeric_18_2"
 
@@ -219,7 +232,7 @@ def export_snapshot(conn: Connection, export_type: ExportType) -> bytes:
 
     metadata_obj: dict[str, Any] = {
         "export_type": export_type,
-        "format_version": FORMAT_VERSION,
+        "format_version": export_format_version(),
         "schema_version": schema_ver,
         "app_version": app_version,
         "exported_at": exported_at,
@@ -680,9 +693,11 @@ def import_snapshot(
         )
 
     fmt: Any = metadata.get("format_version")
-    if fmt not in SUPPORTED_FORMAT_VERSIONS:
+    if fmt not in supported_import_format_versions():
         raise UnsupportedFormatVersionError(
-            f"archive has {fmt!r}; this release supports {sorted(SUPPORTED_FORMAT_VERSIONS)}"
+            "archive has "
+            f"{fmt!r}; this release imports {sorted(supported_import_format_versions())} "
+            f"(current and up to three prior format versions; see STYLE.md)"
         )
 
     snap_schema: Any = metadata.get("schema_version")

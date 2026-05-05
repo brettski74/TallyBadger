@@ -58,6 +58,8 @@ def _truncate_all_data(integration_db_url: str) -> None:
                       settlement_events,
                       accrual_obligations,
                       journal_lines,
+                      journal_entry_attachments,
+                      attachments,
                       journal_entries,
                       accrual_plans,
                       party_match_patterns,
@@ -272,6 +274,30 @@ def test_import_rejects_unsupported_format_version(integration_db_url: str) -> N
         UnsupportedFormatVersionError,
     ):
         import_complete_snapshot(conn, bad)
+
+
+def test_import_accepts_prior_format_version_in_history(
+    monkeypatch: pytest.MonkeyPatch,
+    integration_db_url: str,
+) -> None:
+    """Import accepts format_version strings in the last four FORMAT_VERSION_HISTORY entries."""
+    import tallybadger.backup.snapshot as snap
+
+    monkeypatch.setattr(snap, "FORMAT_VERSION_HISTORY", ("0.9.0", "1.0.0"))
+
+    _truncate_all_data(integration_db_url)
+    _ensure_ledger_settings(integration_db_url)
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        zip_bytes = export_complete_snapshot(conn)
+    meta = json.loads(zipfile.ZipFile(io.BytesIO(zip_bytes)).read("metadata.json"))
+    assert meta["format_version"] == "1.0.0"
+
+    older = _replace_metadata_only(zip_bytes, format_version="0.9.0")
+
+    _truncate_all_data(integration_db_url)
+
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        import_complete_snapshot(conn, older)
 
 
 def test_import_rejects_schema_version_mismatch(integration_db_url: str) -> None:

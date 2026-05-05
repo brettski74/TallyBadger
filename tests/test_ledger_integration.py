@@ -5,10 +5,13 @@ from decimal import Decimal
 import os
 
 import pytest
+from fastapi.testclient import TestClient
 from psycopg import connect
 from psycopg.rows import dict_row
 
+from tallybadger.api.routes.ledger import get_ledger_service
 from tallybadger.db_migrations import apply_sql_migrations
+from tallybadger.main import app
 from tallybadger.import_rules.cel_engine import evaluate_cel
 from tallybadger.import_rules.cel_models import CelRule, CelRuleSet
 from tallybadger.import_rules.errors import ImportRulesCelError
@@ -26,11 +29,14 @@ from tallybadger.ledger.models import (
 )
 from tallybadger.ledger.service import (
     JOURNAL_LIST_SPLIT_LABEL,
+    LedgerNotFoundError,
     LedgerService,
     LedgerValidationError,
 )
 
 pytestmark = pytest.mark.integration
+
+_MINIMAL_PDF = b"%PDF-1.1\n1 0 obj<<>>endobj trailer<<>>\n%%EOF"
 
 
 def _ensure_ledger_settings_row(integration_db_url: str) -> None:
@@ -63,10 +69,14 @@ def clean_database(integration_db_url: str) -> Iterator[None]:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    TRUNCATE TABLE import_templates, journal_lines, journal_entries,
+                    TRUNCATE TABLE import_templates, journal_lines, journal_entry_attachments,
+                      attachments, journal_entries,
                       accrual_plans, party_match_patterns, parties, accounts, cel_rule_sets
                     RESTART IDENTITY CASCADE
                     """
+                )
+                cur.execute(
+                    "INSERT INTO ledger_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING",
                 )
     yield
 
@@ -740,3 +750,185 @@ def test_cel_party_ambiguous_match_raises(ledger_service: LedgerService) -> None
     rs = CelRuleSet(rules=[CelRule(expression='{"set": {"p": party(attributes["desc"])}}')])
     with pytest.raises(ImportRulesCelError, match="multiple parties"):
         evaluate_cel(rs, {"desc": "REF 123"}, parties=ledger_service.list_parties())
+
+
+def test_journal_entry_attachment_round_trip(
+    ledger_service: LedgerService,
+    integration_db_url: str,
+) -> None:
+    cash = ledger_service.create_account(AccountCreate(name="Cash", type="asset"))
+    entry = ledger_service.create_entry(
+        JournalEntryWrite(
+            entry_date=date(2026, 5, 5),
+            summary="with attachment",
+            description=None,
+            lines=[
+                JournalLineIn(account_id=cash.id, amount=Decimal("1")),
+                JournalLineIn(account_id=cash.id, amount=Decimal("-1")),
+            ],
+        ),
+    )
+    att = ledger_service.add_journal_entry_attachment(
+        entry.id,
+        file_bytes=_MINIMAL_PDF,
+        upload_filename="invoices/March.pdf",
+        summary="March bill",
+        external_reference="INV-9",
+    )
+    assert att.mime_type == "application/pdf"
+    assert att.original_filename == "March.pdf"
+    assert att.summary == "March bill"
+    listed = ledger_service.list_journal_entry_attachments(entry.id)
+    assert len(listed) == 1
+    blob, mime, name = ledger_service.get_journal_entry_attachment_download(entry.id, att.id)
+    assert blob == _MINIMAL_PDF
+    assert mime == "application/pdf"
+    assert name == "March.pdf"
+    ledger_service.unlink_journal_entry_attachment(entry.id, att.id)
+    assert ledger_service.list_journal_entry_attachments(entry.id) == []
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute("SELECT COUNT(*) AS c FROM attachments")
+            assert int(cur.fetchone()["c"]) == 0
+
+
+def test_attachment_oversize_rejected(ledger_service: LedgerService) -> None:
+    try:
+        ledger_service.update_ledger_settings(LedgerSettingsUpdate(max_attachment_upload_bytes=10))
+        cash = ledger_service.create_account(AccountCreate(name="Cash", type="asset"))
+        entry = ledger_service.create_entry(
+            JournalEntryWrite(
+                entry_date=date(2026, 5, 5),
+                summary="entry",
+                description=None,
+                lines=[
+                    JournalLineIn(account_id=cash.id, amount=Decimal("1")),
+                    JournalLineIn(account_id=cash.id, amount=Decimal("-1")),
+                ],
+            ),
+        )
+        with pytest.raises(LedgerValidationError, match="exceeds maximum"):
+            ledger_service.add_journal_entry_attachment(
+                entry.id,
+                file_bytes=b"x" * 20,
+                upload_filename="big.bin",
+                summary="too big",
+                external_reference=None,
+            )
+    finally:
+        ledger_service.update_ledger_settings(
+            LedgerSettingsUpdate(max_attachment_upload_bytes=5242880),
+        )
+
+
+def test_attachment_shared_by_two_entries_then_orphan_purge(
+    ledger_service: LedgerService,
+    integration_db_url: str,
+) -> None:
+    cash = ledger_service.create_account(AccountCreate(name="Cash", type="asset"))
+    e1 = ledger_service.create_entry(
+        JournalEntryWrite(
+            entry_date=date(2026, 5, 5),
+            summary="a",
+            description=None,
+            lines=[
+                JournalLineIn(account_id=cash.id, amount=Decimal("1")),
+                JournalLineIn(account_id=cash.id, amount=Decimal("-1")),
+            ],
+        ),
+    )
+    e2 = ledger_service.create_entry(
+        JournalEntryWrite(
+            entry_date=date(2026, 5, 6),
+            summary="b",
+            description=None,
+            lines=[
+                JournalLineIn(account_id=cash.id, amount=Decimal("1")),
+                JournalLineIn(account_id=cash.id, amount=Decimal("-1")),
+            ],
+        ),
+    )
+    att = ledger_service.add_journal_entry_attachment(
+        e1.id,
+        file_bytes=_MINIMAL_PDF,
+        upload_filename="shared.pdf",
+        summary="shared doc",
+        external_reference=None,
+    )
+    with connect(integration_db_url) as conn:
+        with conn.transaction():
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO journal_entry_attachments (journal_entry_id, attachment_id)
+                    VALUES (%s, %s)
+                    """,
+                    (e2.id, att.id),
+                )
+    ledger_service.unlink_journal_entry_attachment(e1.id, att.id)
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute("SELECT COUNT(*) AS c FROM attachments WHERE id = %s", (att.id,))
+            assert int(cur.fetchone()["c"]) == 1
+    ledger_service.unlink_journal_entry_attachment(e2.id, att.id)
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute("SELECT COUNT(*) AS c FROM attachments")
+            assert int(cur.fetchone()["c"]) == 0
+
+
+def test_ledger_settings_max_attachment_byte_size_string(ledger_service: LedgerService) -> None:
+    prev = ledger_service.get_ledger_settings().max_attachment_upload_bytes
+    try:
+        out = ledger_service.update_ledger_settings(
+            LedgerSettingsUpdate(max_attachment_upload_bytes="1024k"),
+        )
+        assert out.max_attachment_upload_bytes == 1024 * 1024
+    finally:
+        ledger_service.update_ledger_settings(
+            LedgerSettingsUpdate(max_attachment_upload_bytes=prev),
+        )
+
+
+def test_list_attachments_unknown_entry(ledger_service: LedgerService) -> None:
+    with pytest.raises(LedgerNotFoundError, match="journal entry 999"):
+        ledger_service.list_journal_entry_attachments(999)
+
+
+def test_api_attachment_download_content_disposition(integration_db_url: str) -> None:
+    @contextmanager
+    def connection_factory():
+        with connect(integration_db_url, row_factory=dict_row) as conn:
+            yield conn
+
+    svc = LedgerService(connection_factory=connection_factory)
+    cash = svc.create_account(AccountCreate(name="Cash", type="asset"))
+    entry = svc.create_entry(
+        JournalEntryWrite(
+            entry_date=date(2026, 5, 5),
+            summary="api att",
+            description=None,
+            lines=[
+                JournalLineIn(account_id=cash.id, amount=Decimal("1")),
+                JournalLineIn(account_id=cash.id, amount=Decimal("-1")),
+            ],
+        ),
+    )
+    app.dependency_overrides[get_ledger_service] = lambda: LedgerService(
+        connection_factory=connection_factory,
+    )
+    client = TestClient(app)
+    try:
+        r = client.post(
+            f"/journal-entries/{entry.id}/attachments",
+            files={"file": ("My File.pdf", _MINIMAL_PDF, "application/pdf")},
+            data={"summary": "bill", "external_reference": "1"},
+        )
+        assert r.status_code == 201
+        aid = r.json()["id"]
+        dl = client.get(f"/journal-entries/{entry.id}/attachments/{aid}")
+        assert dl.status_code == 200
+        cd = dl.headers["content-disposition"].lower()
+        assert "my file.pdf" in cd or "my%20file.pdf" in cd
+    finally:
+        app.dependency_overrides.pop(get_ledger_service, None)

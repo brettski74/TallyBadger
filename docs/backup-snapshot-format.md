@@ -28,7 +28,7 @@ Snapshot metadata does **not** include restore behaviour (no duplicate-resolutio
 
 ### Version rules
 
-- **Unsupported `format_version`:** import fails with a clear error.
+- **`format_version`:** the implementation keeps an ordered **`FORMAT_VERSION_HISTORY`** (oldest → newest). **Import** accepts the **current** value (last entry) **and up to three prior** entries—four versions total when history is that long. Older archives outside that window fail with a clear error (see **[STYLE.md](../STYLE.md)**). **Export** always writes the newest history entry.
 - **`schema_version` mismatch:** import fails if the snapshot’s `schema_version` is not **exactly** equal to the target database’s `MAX(schema_migrations.version)`. Operators must run the same migrations on the target as on the source (or use a matching app release).
 
 ### `export_type` vs ZIP members

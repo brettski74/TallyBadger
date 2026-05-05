@@ -1,8 +1,10 @@
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, model_validator
+
+from tallybadger.core.byte_size import parse_byte_size
 
 AccountType = Literal["asset", "liability", "equity", "revenue", "expense", "suspense"]
 PartyRole = Literal["customer", "vendor", "both", "other"]
@@ -11,6 +13,12 @@ AccrualFrequency = Literal["weekly", "monthly_day", "yearly"]
 ObligationType = Literal["receivable", "payable", "unearned"]
 ObligationStatus = Literal["open", "partially_settled", "settled", "reconciled"]
 SettlementType = Literal["receipt", "payment"]
+
+
+def _optional_byte_size(value: Any) -> int | None:
+    if value is None:
+        return None
+    return parse_byte_size(value)
 
 
 class AccountCreate(BaseModel):
@@ -223,6 +231,10 @@ class LedgerSettingsUpdate(BaseModel):
     unearned_revenue_account_id: int | None = Field(default=None, gt=0)
     unallocated_debits_account_id: int | None = Field(default=None, gt=0)
     unallocated_credits_account_id: int | None = Field(default=None, gt=0)
+    max_attachment_upload_bytes: Annotated[int | None, BeforeValidator(_optional_byte_size)] = Field(
+        default=None,
+        gt=0,
+    )
 
 
 class LedgerSettingsOut(BaseModel):
@@ -233,6 +245,19 @@ class LedgerSettingsOut(BaseModel):
     unearned_revenue_account_id: int | None
     unallocated_debits_account_id: int | None
     unallocated_credits_account_id: int | None
+    max_attachment_upload_bytes: int
+    updated_at: datetime
+
+
+class JournalEntryAttachmentOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    summary: str
+    external_reference: str | None
+    mime_type: str
+    original_filename: str | None
+    created_at: datetime
     updated_at: datetime
 
 

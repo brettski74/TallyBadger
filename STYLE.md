@@ -40,6 +40,7 @@ This pairs with schema work so portable paths (clone → migrate → seed) stay 
   - **integration tests** covering export/import;
   - the **format doc** when operators or integrators need new facts.
 - Bump **`format_version`** when a change **requires** new consumer logic or breaks prior archives (per the format doc’s version rules).
+- Restore should support the current format_version and also the prior 3 format_versions to allow recovery from older backups if necessary. Breaking data model changes (eg. non-nullable fields added to existing tables) will need clear migration rules specified so that this requirement can be fulfilled.
 
 ## Testing
 

@@ -7,6 +7,8 @@ export interface LedgerSettings {
   unearned_revenue_account_id: number | null;
   unallocated_debits_account_id: number | null;
   unallocated_credits_account_id: number | null;
+  /** Maximum journal attachment upload size in bytes (default 5 MiB). PATCH may use a string with `k` or `M` suffix. */
+  max_attachment_upload_bytes: number;
   updated_at: string;
 }
 
