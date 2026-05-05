@@ -285,7 +285,10 @@ def _load_zip_members(zip_bytes: bytes) -> tuple[dict[str, Any], dict[str, bytes
                 raise IncompleteSnapshotError(f"ZIP is missing member {path!r} listed in manifest")
             body = zf.read(path)
             if _sha256_hex(body) != digest.lower():
-                raise SnapshotIntegrityError(f"SHA-256 mismatch for {path!r}")
+                raise SnapshotIntegrityError(
+                    f"SHA-256 checksum mismatch for ZIP member {path!r} "
+                    "(file may be corrupted or tampered with)"
+                )
 
         expected = manifest_paths | {"metadata.json"}
         if names != expected:
@@ -296,7 +299,10 @@ def _load_zip_members(zip_bytes: bytes) -> tuple[dict[str, Any], dict[str, bytes
                 msg_parts.append(f"unexpected ZIP members: {sorted(extra)}")
             if missing:
                 msg_parts.append(f"missing ZIP members: {sorted(missing)}")
-            raise SnapshotIntegrityError("; ".join(msg_parts))
+            raise SnapshotIntegrityError(
+                "; ".join(msg_parts)
+                + " — ZIP entries must match metadata.json member_manifest exactly (extra files are rejected)"
+            )
 
         files = {n: zf.read(n) for n in names if n != "metadata.json"}
     return metadata, files
@@ -358,7 +364,8 @@ def _validate_journal(lines: list[dict[str, Any]]) -> None:
     bad = {eid: total for eid, total in by_entry.items() if total != 0}
     if bad:
         raise SnapshotValidationError(
-            "journal lines are not balanced per entry for entry_id(s): "
+            "journal lines do not balance (per entry_id, line amounts must sum to zero); "
+            "offending entry_id(s): "
             + ", ".join(str(k) for k in sorted(bad.keys()))
         )
 
@@ -675,7 +682,7 @@ def import_snapshot(
     fmt: Any = metadata.get("format_version")
     if fmt not in SUPPORTED_FORMAT_VERSIONS:
         raise UnsupportedFormatVersionError(
-            f"unsupported format_version {fmt!r}; this release supports {sorted(SUPPORTED_FORMAT_VERSIONS)}"
+            f"archive has {fmt!r}; this release supports {sorted(SUPPORTED_FORMAT_VERSIONS)}"
         )
 
     snap_schema: Any = metadata.get("schema_version")
@@ -685,9 +692,7 @@ def import_snapshot(
     db_schema = current_schema_version(conn)
     if snap_schema != db_schema:
         raise SchemaVersionMismatchError(
-            f"snapshot schema_version {snap_schema!r} does not match database "
-            f"schema_migrations ({db_schema!r}); apply the same migrations as the "
-            "source system or use a matching app release"
+            f"snapshot has {snap_schema!r}, this database has {db_schema!r}"
         )
 
     payloads: dict[str, list[dict[str, Any]]] = {}

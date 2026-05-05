@@ -240,7 +240,7 @@ def test_import_rejects_unbalanced_journal(
 
     with connect(integration_db_url, row_factory=dict_row) as conn, pytest.raises(
         SnapshotValidationError,
-        match="not balanced",
+        match="do not balance",
     ):
         import_complete_snapshot(conn, corrupted)
 
@@ -319,6 +319,35 @@ def test_backup_export_and_import_api_round_trip(
         assert counts["accounts"] >= 2
         assert counts["journal_entries"] == 1
         assert counts["journal_lines"] == 2
+    finally:
+        core_config.get_settings.cache_clear()
+
+
+def test_backup_import_api_reports_duplicate_key_in_detail(
+    integration_db_url: str,
+    ledger_service: LedgerService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """HTTP layer should classify unique violations for operators (#69)."""
+    monkeypatch.setenv("TALLYBADGER_DATABASE_URL", integration_db_url)
+    core_config.get_settings.cache_clear()
+    try:
+        _seed_minimal_ledger(ledger_service)
+        client = TestClient(app)
+        with connect(integration_db_url, row_factory=dict_row) as conn:
+            zip_bytes = export_complete_snapshot(conn)
+        imp = client.post(
+            "/backup/import",
+            files={"snapshot": ("snap.zip", zip_bytes, "application/zip")},
+            data={"restore_mode": "abort"},
+        )
+        assert imp.status_code == 409
+        body = imp.json()
+        assert "detail" in body
+        detail = body["detail"]
+        assert isinstance(detail, str)
+        assert "duplicate key" in detail.lower()
+        assert "snapshot import" in detail.lower()
     finally:
         core_config.get_settings.cache_clear()
 

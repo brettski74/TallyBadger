@@ -112,7 +112,13 @@ The application does **not** coordinate multi-step restores across requests; eac
 ## Integrity
 
 - For each entry in `member_manifest`, the importer recomputes **SHA-256** over the **raw UTF-8 bytes** of that ZIP member and compares to `sha256`.
-- The set of non-directory ZIP entries must be **exactly** `{ metadata.json } ∪ { path for each manifest entry }`. Extra or missing members cause a failed import.
+- The set of non-directory ZIP entries must be **exactly** `{ metadata.json } ∪ { path for each manifest entry }`. Extra or missing members cause a failed import. **Unknown or extra files are not ignored** — the archive must match the manifest and `export_type` exactly.
+
+## Operator notes (edge cases)
+
+- **Large archives:** export/import build the full ZIP in memory on the server. Very large databases mean longer requests and bigger downloads; reverse proxies or browsers may time out — raise timeouts if needed or use a stable network.
+- **Optional table files:** for a given `export_type`, **every** table in that mode must appear in the ZIP (arrays may be empty). There are no “optional” data members in `format_version` 1.0.0.
+- **Schema and format:** imports fail fast if `format_version` is unsupported or `schema_version` does not match the target DB’s migrations (see [Version rules](#version-rules)).
 
 ## Journal validation
 

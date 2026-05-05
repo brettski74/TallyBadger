@@ -162,13 +162,18 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
         )}
       </form>
 
-      <h3 className="config-subheading">Backup (export)</h3>
+      <h3 className="config-subheading">Backup &amp; restore</h3>
       <p className="muted">
-        Writes a versioned ZIP of JSON table dumps per{" "}
+        Exports a versioned ZIP of JSON table dumps. Format:{" "}
         <a href="https://github.com/brettski74/TallyBadger/blob/main/docs/backup-snapshot-format.md">
           docs/backup-snapshot-format.md
         </a>
-        . The file records <strong>what</strong> was exported, not how a future restore should behave.
+        . The archive records <strong>what</strong> was exported; restore behaviour is chosen below on each
+        import.
+      </p>
+      <p className="muted">
+        Large databases can produce a big ZIP—the request may take a while with no progress bar; wait until the
+        download finishes or the server returns an error.
       </p>
       <label className="backup-export-scope">
         Export scope
@@ -177,28 +182,30 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
           onChange={(e) => setBackupExportType(e.target.value as BackupExportType)}
           disabled={backupBusy}
         >
-          <option value="complete">Complete (configuration + financial)</option>
-          <option value="configuration">Configuration only</option>
-          <option value="financial">Financial only (ledger + settlements)</option>
+          <option value="complete">Complete — configuration + financial data</option>
+          <option value="configuration">Configuration — chart, parties, templates, settings (no ledger)</option>
+          <option value="financial">Financial — ledger, accrual obligations, settlements</option>
         </select>
       </label>
 
-      <h3 className="config-subheading">Restore (import)</h3>
+      <h3 className="config-subheading">Restore from ZIP</h3>
       <p className="muted">
-        Choose how to apply the <strong>same</strong> ZIP if the database already has overlapping rows.{" "}
-        <strong>Financial-only</strong> archives need configuration already present (unless you use
-        erase+reload with a <strong>complete</strong> or <strong>configuration</strong> snapshot first).
+        <strong>Duplicate / conflict policy</strong> (this request only): how to merge when the database
+        already has rows that collide with the snapshot (same primary keys or unique keys).{" "}
+        <strong>Financial-only</strong> ZIPs need matching configuration already in the database, unless you
+        use erase+reload after importing a <strong>complete</strong> or <strong>configuration</strong>{" "}
+        snapshot first.
       </p>
       <label className="backup-import-policy">
-        Restore mode (this import only)
+        On duplicate keys (restore mode)
         <select
           value={restoreMode}
           onChange={(e) => setRestoreMode(e.target.value as RestoreMode)}
           disabled={backupBusy}
         >
-          <option value="abort">Abort on conflict (default)</option>
-          <option value="overwrite">Overwrite — delete conflicting rows by ID, then load</option>
-          <option value="erase_reload">Erase + reload — empty all data tables, then load</option>
+          <option value="abort">Abort — stop on first conflict (default)</option>
+          <option value="overwrite">Overwrite — delete snapshot IDs in the DB, then insert</option>
+          <option value="erase_reload">Erase + reload — truncate all app data tables, then load</option>
         </select>
       </label>
       <div className="backup-actions">
@@ -218,7 +225,7 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
                 a.download = backupDownloadFilename(backupExportType);
                 a.click();
                 URL.revokeObjectURL(url);
-                setBackupMessage("Download started.");
+                setBackupMessage("Backup file ready — your browser should save the download.");
               } catch (err) {
                 setBackupError(err instanceof Error ? err.message : "Export failed");
               } finally {
@@ -244,7 +251,7 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
               setBackupBusy(true);
               try {
                 await importBackup(file, restoreMode);
-                setBackupMessage("Restore completed. Reload the app to see imported data.");
+                setBackupMessage("Restore finished successfully. Reload the app to see imported data.");
               } catch (err) {
                 setBackupError(err instanceof Error ? err.message : "Restore failed");
               } finally {
