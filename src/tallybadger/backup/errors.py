@@ -17,12 +17,12 @@ class UnsupportedFormatVersionError(SnapshotError):
 
 
 class SchemaVersionMismatchError(SnapshotError):
-    """Snapshot schema_version does not match the target database migrations."""
+    """Snapshot ``schema_version`` is not compatible with the target database migrations."""
 
     def __init__(self, message: str):
         super().__init__(
-            "Snapshot schema_version does not match this database "
-            "(apply the same migrations as the source, or use a matching app release): "
+            "Snapshot schema_version is not compatible with this database "
+            "(see docs/backup-snapshot-format.md): "
             f"{message}"
         )
 

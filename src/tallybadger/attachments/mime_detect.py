@@ -26,6 +26,18 @@ def _sniff_mime(data: bytes) -> str | None:
     return None
 
 
+def mime_type_to_snapshot_extension(mime_type: str) -> str:
+    """Stable filename extension for backup ZIP members under ``attachments/``."""
+    base = mime_type.split(";", 1)[0].strip().lower()
+    if base == "image/jpeg":
+        return "jpg"
+    if base == "image/png":
+        return "png"
+    if base == "application/pdf":
+        return "pdf"
+    return "bin"
+
+
 def _extension_mime(original_filename: str | None) -> str | None:
     if not original_filename:
         return None

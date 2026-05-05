@@ -3,8 +3,8 @@
 import tallybadger.backup.snapshot as snapshot
 
 
-def test_supported_import_single_version_history() -> None:
-    assert snapshot.supported_import_format_versions() == frozenset({"1.0.0"})
+def test_supported_import_default_history() -> None:
+    assert snapshot.supported_import_format_versions() == frozenset({"1.0.0", "1.1.0"})
 
 
 def test_supported_import_last_four_window() -> None:

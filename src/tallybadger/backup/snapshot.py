@@ -15,6 +15,7 @@ from psycopg import errors as pg_errors
 from psycopg.types.json import Json
 
 from tallybadger import __version__ as app_version
+from tallybadger.attachments.mime_detect import mime_type_to_snapshot_extension
 from tallybadger.backup.errors import (
     IncompleteSnapshotError,
     SchemaVersionMismatchError,
@@ -27,6 +28,7 @@ from tallybadger.backup.errors import (
 # (see docs/backup-snapshot-format.md). Import accepts the last four entries (STYLE.md).
 FORMAT_VERSION_HISTORY: tuple[str, ...] = (
     "1.0.0",
+    "1.1.0",
 )
 
 
@@ -54,13 +56,18 @@ CONFIGURATION_TABLES: tuple[str, ...] = (
     "import_templates",
 )
 
-FINANCIAL_TABLES: tuple[str, ...] = (
+FINANCIAL_TABLES_CORE: tuple[str, ...] = (
     "journal_entries",
     "journal_lines",
     "accrual_obligations",
     "settlement_events",
     "settlement_allocations",
 )
+
+# Journal entry attachment metadata + links (``format_version`` ≥ 1.1.0, complete/financial only).
+ATTACHMENT_SNAPSHOT_TABLES: tuple[str, ...] = ("attachments", "journal_entry_attachments")
+
+FINANCIAL_TABLES: tuple[str, ...] = FINANCIAL_TABLES_CORE + ATTACHMENT_SNAPSHOT_TABLES
 
 COMPLETE_TABLES: tuple[str, ...] = CONFIGURATION_TABLES + FINANCIAL_TABLES
 
@@ -77,16 +84,41 @@ DECIMAL_COLUMNS = frozenset(
 JSON_COLUMNS = frozenset({"definition", "columns_definition"})
 
 
-def tables_for_export_type(export_type: str) -> tuple[str, ...]:
-    if export_type == "complete":
-        return COMPLETE_TABLES
+def _format_version_tuple(version: str) -> tuple[int, ...]:
+    parts = version.split(".")
+    try:
+        return tuple(int(p) for p in parts)
+    except ValueError as exc:
+        raise IncompleteSnapshotError(f"invalid format_version semver: {version!r}") from exc
+
+
+def snapshot_includes_attachment_tables(format_version: str) -> bool:
+    """Attachment JSON + ``attachments/*`` blobs apply for ``format_version`` ≥ 1.1.0."""
+    return _format_version_tuple(format_version) >= (1, 1, 0)
+
+
+def tables_for_import(export_type: str, format_version: str) -> tuple[str, ...]:
+    """Table JSON members expected for this ``export_type`` and archive ``format_version``."""
     if export_type == "configuration":
         return CONFIGURATION_TABLES
+    fin = FINANCIAL_TABLES if snapshot_includes_attachment_tables(format_version) else FINANCIAL_TABLES_CORE
     if export_type == "financial":
-        return FINANCIAL_TABLES
+        return fin
+    if export_type == "complete":
+        return CONFIGURATION_TABLES + fin
     raise IncompleteSnapshotError(
         f"export_type must be one of {sorted(SUPPORTED_EXPORT_TYPES)}, not {export_type!r}"
     )
+
+
+def tables_for_export_type(export_type: str) -> tuple[str, ...]:
+    """Tables included in a **new** export (always the newest ``format_version``)."""
+    return tables_for_import(export_type, export_format_version())
+
+
+def attachment_blob_member_path(attachment_id: int, mime_type: str) -> str:
+    ext = mime_type_to_snapshot_extension(mime_type)
+    return f"attachments/{attachment_id}.{ext}"
 
 
 def _sha256_hex(data: bytes) -> str:
@@ -130,13 +162,43 @@ def _rows_jsonable(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
-def current_schema_version(conn: Connection) -> str:
+def _schema_versions_applied(conn: Connection) -> frozenset[str]:
     with conn.cursor() as cur:
         cur.execute("SELECT version FROM schema_migrations")
-        versions = [str(r["version"]) for r in cur.fetchall()]
+        versions = frozenset(str(r["version"]) for r in cur.fetchall())
     if not versions:
         raise RuntimeError("schema_migrations is empty")
-    return max(versions)
+    return versions
+
+
+def current_schema_version(conn: Connection) -> str:
+    return max(_schema_versions_applied(conn))
+
+
+def _assert_snapshot_schema_compatible(conn: Connection, snap_schema: str) -> None:
+    """Allow restore when the snapshot was taken at or before this DB revision.
+
+    The snapshot records ``schema_version`` = ``MAX(schema_migrations.version)`` on the **source**.
+    Import is allowed if that version is **recorded** on the target (a migration that was applied
+    there) and the target is **not older** than the snapshot (target ``MAX`` ≥ snapshot value in
+    lexicographic order, matching :func:`current_schema_version`).
+    """
+    applied = _schema_versions_applied(conn)
+    db_max = max(applied)
+
+    if snap_schema == db_max:
+        return
+    if snap_schema in applied and snap_schema < db_max:
+        return
+    if snap_schema > db_max:
+        raise SchemaVersionMismatchError(
+            f"snapshot has {snap_schema!r}, this database has {db_max!r} "
+            "(snapshot is newer than this database; apply migrations or use an older release)"
+        )
+    raise SchemaVersionMismatchError(
+        f"snapshot has {snap_schema!r}, this database has {db_max!r} "
+        "(snapshot schema_version is not in this database's schema_migrations)"
+    )
 
 
 def _existing_ids(conn: Connection, table: str) -> set[int]:
@@ -195,6 +257,8 @@ def _truncate_complete_scope(conn: Connection) -> None:
               settlement_events,
               accrual_obligations,
               journal_lines,
+              journal_entry_attachments,
+              attachments,
               journal_entries,
               accrual_plans,
               party_match_patterns,
@@ -214,8 +278,16 @@ def _fetch_table_rows(conn: Connection, table: str) -> list[dict[str, Any]]:
         return [dict(r) for r in cur.fetchall()]
 
 
+def _bytea_to_bytes(value: Any) -> bytes:
+    if isinstance(value, memoryview):
+        return value.tobytes()
+    if isinstance(value, bytes):
+        return value
+    raise TypeError(f"expected BYTEA as bytes or memoryview, got {type(value).__name__}")
+
+
 def export_snapshot(conn: Connection, export_type: ExportType) -> bytes:
-    """Build a ZIP archive (UTF-8 JSON members) for the given ``export_type``."""
+    """Build a ZIP archive (UTF-8 JSON table dumps; attachment blobs under ``attachments/`` when applicable)."""
     tables = tables_for_export_type(export_type)
     schema_ver = current_schema_version(conn)
     exported_at = datetime.now(timezone.utc).isoformat()
@@ -223,8 +295,21 @@ def export_snapshot(conn: Connection, export_type: ExportType) -> bytes:
     payloads: dict[str, bytes] = {}
     for table in tables:
         rows = _fetch_table_rows(conn, table)
-        raw = _rows_jsonable(rows)
-        payloads[f"{table}.json"] = _canonical_json_bytes(raw)
+        if table == "attachments":
+            raw_out: list[dict[str, Any]] = []
+            for row in rows:
+                rid = int(row["id"])
+                blob = _bytea_to_bytes(row["blob"])
+                mime = str(row["mime_type"])
+                member_path = attachment_blob_member_path(rid, mime)
+                payloads[member_path] = blob
+                raw_out.append(
+                    {k: _cell_to_jsonable(v) for k, v in row.items() if k != "blob"},
+                )
+            payloads["attachments.json"] = _canonical_json_bytes(raw_out)
+        else:
+            raw = _rows_jsonable(rows)
+            payloads[f"{table}.json"] = _canonical_json_bytes(raw)
 
     manifest: list[dict[str, str]] = []
     for path in sorted(payloads.keys()):
@@ -547,6 +632,22 @@ def _validate_complete_fk_graph(payloads: dict[str, list[dict[str, Any]]]) -> No
                 "has no matching row in accrual_obligations.json"
             )
 
+    if "journal_entry_attachments" in payloads:
+        att_ids = {int(r["id"]) for r in payloads["attachments"]}
+        for i, row in enumerate(payloads["journal_entry_attachments"]):
+            eid = int(row["journal_entry_id"])
+            if eid not in je:
+                raise SnapshotValidationError(
+                    f"journal_entry_attachments[{i}] journal_entry_id={eid} "
+                    "has no matching row in journal_entries.json"
+                )
+            aid = int(row["attachment_id"])
+            if aid not in att_ids:
+                raise SnapshotValidationError(
+                    f"journal_entry_attachments[{i}] attachment_id={aid} "
+                    "has no matching row in attachments.json"
+                )
+
 
 def _validate_financial_fks(
     conn: Connection,
@@ -638,18 +739,59 @@ def _validate_financial_fks(
                 "has no matching row in accrual_obligations.json"
             )
 
+    if "journal_entry_attachments" in payloads:
+        att_ids = {int(r["id"]) for r in payloads["attachments"]}
+        for i, row in enumerate(payloads["journal_entry_attachments"]):
+            eid = int(row["journal_entry_id"])
+            if eid not in je:
+                raise SnapshotValidationError(
+                    f"journal_entry_attachments[{i}] journal_entry_id={eid} "
+                    "has no matching row in journal_entries.json"
+                )
+            aid = int(row["attachment_id"])
+            if aid not in att_ids:
+                raise SnapshotValidationError(
+                    f"journal_entry_attachments[{i}] attachment_id={aid} "
+                    "has no matching row in attachments.json"
+                )
 
-def _assert_manifest_matches_export_type(metadata: dict[str, Any], export_type: str) -> None:
-    tables = tables_for_export_type(export_type)
-    expected = {f"{t}.json" for t in tables}
+
+def _expected_manifest_paths(
+    export_type: str,
+    format_version: str,
+    files: dict[str, bytes],
+) -> set[str]:
+    tables = tables_for_import(export_type, format_version)
+    expected: set[str] = {f"{t}.json" for t in tables}
+    if snapshot_includes_attachment_tables(format_version) and export_type in (
+        "complete",
+        "financial",
+    ):
+        path = "attachments.json"
+        if path not in files:
+            raise IncompleteSnapshotError(f"missing {path}")
+        for row in _parse_table_file(path, files[path]):
+            expected.add(
+                attachment_blob_member_path(int(row["id"]), str(row["mime_type"])),
+            )
+    return expected
+
+
+def _assert_manifest_matches_export_type(
+    metadata: dict[str, Any],
+    files: dict[str, bytes],
+    export_type: str,
+    format_version: str,
+) -> None:
     manifest = metadata.get("member_manifest")
     if not isinstance(manifest, list):
         return
     paths = {item["path"] for item in manifest if isinstance(item, dict) and "path" in item}
+    expected = _expected_manifest_paths(export_type, format_version, files)
     if paths != expected:
         raise IncompleteSnapshotError(
             f"archive member set {sorted(paths)!r} does not match export_type {export_type!r} "
-            f"(expected {sorted(expected)!r})"
+            f"and format_version {format_version!r} (expected {sorted(expected)!r})"
         )
 
 
@@ -681,8 +823,18 @@ def import_snapshot(
             f"unsupported export_type {export_type!r}; expected one of {sorted(SUPPORTED_EXPORT_TYPES)}"
         )
 
-    _assert_manifest_matches_export_type(metadata, export_type)
-    tables = tables_for_export_type(export_type)
+    fmt: Any = metadata.get("format_version")
+    if not isinstance(fmt, str):
+        raise IncompleteSnapshotError("metadata.format_version must be a string")
+    if fmt not in supported_import_format_versions():
+        raise UnsupportedFormatVersionError(
+            "archive has "
+            f"{fmt!r}; this release imports {sorted(supported_import_format_versions())} "
+            f"(current and up to three prior format versions; see STYLE.md)"
+        )
+
+    _assert_manifest_matches_export_type(metadata, files, export_type, fmt)
+    tables = tables_for_import(export_type, fmt)
 
     if mode == "erase_reload" and export_type == "financial":
         raise SnapshotValidationError(
@@ -692,23 +844,11 @@ def import_snapshot(
             "or import configuration then financial with abort/overwrite."
         )
 
-    fmt: Any = metadata.get("format_version")
-    if fmt not in supported_import_format_versions():
-        raise UnsupportedFormatVersionError(
-            "archive has "
-            f"{fmt!r}; this release imports {sorted(supported_import_format_versions())} "
-            f"(current and up to three prior format versions; see STYLE.md)"
-        )
-
     snap_schema: Any = metadata.get("schema_version")
     if not isinstance(snap_schema, str):
         raise IncompleteSnapshotError("metadata.schema_version must be a string")
 
-    db_schema = current_schema_version(conn)
-    if snap_schema != db_schema:
-        raise SchemaVersionMismatchError(
-            f"snapshot has {snap_schema!r}, this database has {db_schema!r}"
-        )
+    _assert_snapshot_schema_compatible(conn, snap_schema)
 
     payloads: dict[str, list[dict[str, Any]]] = {}
     for table in tables:
@@ -740,6 +880,11 @@ def import_snapshot(
 
         for table in tables:
             rows = [_prepare_row(table, r) for r in payloads[table]]
+            if table == "attachments":
+                for row in rows:
+                    aid = int(row["id"])
+                    blob_path = attachment_blob_member_path(aid, str(row["mime_type"]))
+                    row["blob"] = files.get(blob_path, b"")
             if not rows:
                 continue
             cols = list(rows[0].keys())
@@ -787,6 +932,8 @@ def _resync_serials(conn: Connection) -> None:
         "accrual_obligations",
         "settlement_events",
         "settlement_allocations",
+        "attachments",
+        "journal_entry_attachments",
         "import_templates",
     ):
         stmt = sql.SQL(

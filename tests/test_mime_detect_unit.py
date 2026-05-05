@@ -1,4 +1,4 @@
-from tallybadger.attachments.mime_detect import detect_attachment_mime
+from tallybadger.attachments.mime_detect import detect_attachment_mime, mime_type_to_snapshot_extension
 
 _MINIMAL_JPEG = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00"
 _PNG_SIG = b"\x89PNG\r\n\x1a\n"
@@ -26,3 +26,10 @@ def test_detect_fallback_extension_when_no_magic() -> None:
 def test_detect_octet_stream_unknown() -> None:
     assert detect_attachment_mime(b"hello", "unknown.bin") == "application/octet-stream"
     assert detect_attachment_mime(b"hello", None) == "application/octet-stream"
+
+
+def test_mime_type_to_snapshot_extension() -> None:
+    assert mime_type_to_snapshot_extension("image/jpeg") == "jpg"
+    assert mime_type_to_snapshot_extension("image/png; charset=binary") == "png"
+    assert mime_type_to_snapshot_extension("application/pdf") == "pdf"
+    assert mime_type_to_snapshot_extension("application/octet-stream") == "bin"
