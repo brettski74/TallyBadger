@@ -89,6 +89,8 @@ export interface JournalEntryFormProps {
   initialLines: LineDraft[] | null;
   onSubmit: (payload: JournalEntryWrite) => Promise<void>;
   onCancel: () => void;
+  /** Shown in edit mode to open the journal entry attachments dialog. */
+  onOpenAttachments?: () => void;
 }
 
 export function JournalEntryForm({
@@ -102,6 +104,7 @@ export function JournalEntryForm({
   initialLines,
   onSubmit,
   onCancel,
+  onOpenAttachments,
 }: JournalEntryFormProps) {
   const [entryDate, setEntryDate] = useState(initialEntryDate);
   const [summary, setSummary] = useState(initialSummary);
@@ -269,10 +272,17 @@ export function JournalEntryForm({
       }}
     >
       <div className="journal-form-header">
-        <h2>{mode === "create" ? "New journal entry" : "Edit journal entry"}</h2>
-        <button type="button" className="button-secondary" onClick={onCancel}>
-          Back to list
-        </button>
+        <h2>{mode === "create" ? "New journal entry" : "Journal entry details"}</h2>
+        <div className="journal-form-header-actions">
+          {mode === "edit" && onOpenAttachments ? (
+            <button type="button" className="button-secondary" onClick={onOpenAttachments}>
+              Attachments
+            </button>
+          ) : null}
+          <button type="button" className="button-secondary" onClick={onCancel}>
+            Back to list
+          </button>
+        </div>
       </div>
 
       <label>

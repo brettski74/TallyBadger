@@ -10,6 +10,7 @@ import {
   type JournalEntryListItem,
   type JournalEntryWrite,
 } from "../api/journalEntries";
+import { JournalEntryAttachmentsDialog } from "./JournalEntryAttachmentsDialog";
 import { JournalEntryForm, type LineDraft } from "./JournalEntryForm";
 
 const PAGE_SIZE = 50;
@@ -64,6 +65,7 @@ export function JournalEntriesPanel({
   const [formLines, setFormLines] = useState<LineDraft[] | null>(null);
   const [formLoading, setFormLoading] = useState(false);
   const [formLoadError, setFormLoadError] = useState<string | null>(null);
+  const [attachmentsEntryId, setAttachmentsEntryId] = useState<number | null>(null);
 
   const refreshList = useCallback(async () => {
     setListLoading(true);
@@ -180,43 +182,66 @@ export function JournalEntriesPanel({
     );
   }
 
+  const attachmentsDialog = (
+    <JournalEntryAttachmentsDialog
+      entryId={attachmentsEntryId}
+      onDismiss={() => setAttachmentsEntryId(null)}
+    />
+  );
+
   if (view === "form") {
     if (formLoading) {
-      return <p>Loading entry…</p>;
+      return (
+        <>
+          {attachmentsDialog}
+          <p>Loading entry…</p>
+        </>
+      );
     }
     if (formLoadError) {
       return (
-        <div className="card">
-          <p className="error" role="alert">
-            {formLoadError}
-          </p>
-          <button type="button" className="button-secondary" onClick={handleCancelForm}>
-            Back to list
-          </button>
-        </div>
+        <>
+          {attachmentsDialog}
+          <div className="card">
+            <p className="error" role="alert">
+              {formLoadError}
+            </p>
+            <button type="button" className="button-secondary" onClick={handleCancelForm}>
+              Back to list
+            </button>
+          </div>
+        </>
       );
     }
     return (
-      <section className="card journal-card-wide">
-        <JournalEntryForm
-          key={editingId ?? "new"}
-          mode={editingId == null ? "create" : "edit"}
-          accounts={accounts}
-          parties={parties}
-          initialEntryDate={formEntryDate}
-          initialSummary={formSummary}
-          initialDescription={formDescription}
-          initialRequiresReview={formRequiresReview}
-          initialLines={formLines}
-          onSubmit={handleSubmit}
-          onCancel={handleCancelForm}
-        />
-      </section>
+      <>
+        {attachmentsDialog}
+        <section className="card journal-card-wide">
+          <JournalEntryForm
+            key={editingId ?? "new"}
+            mode={editingId == null ? "create" : "edit"}
+            accounts={accounts}
+            parties={parties}
+            initialEntryDate={formEntryDate}
+            initialSummary={formSummary}
+            initialDescription={formDescription}
+            initialRequiresReview={formRequiresReview}
+            initialLines={formLines}
+            onSubmit={handleSubmit}
+            onCancel={handleCancelForm}
+            onOpenAttachments={
+              editingId != null ? () => setAttachmentsEntryId(editingId) : undefined
+            }
+          />
+        </section>
+      </>
     );
   }
 
   return (
-    <section className="card journal-card-wide">
+    <>
+      {attachmentsDialog}
+      <section className="card journal-card-wide">
       {accounts.length === 0 && (
         <p className="muted banner-info">
           Add at least two accounts under <strong>Accounts</strong> before posting journal lines.
@@ -292,9 +317,19 @@ export function JournalEntriesPanel({
                 <td>{row.credit_side_label}</td>
                 <td className="journal-list-amount">{row.amount}</td>
                 <td>
-                  <button type="button" className="button-link" onClick={() => void openEdit(row.id)}>
-                    Edit
-                  </button>
+                  <div className="journal-list-actions">
+                    <button type="button" className="button-link" onClick={() => void openEdit(row.id)}>
+                      Details
+                    </button>
+                    <button
+                      type="button"
+                      className="button-secondary"
+                      onClick={() => setAttachmentsEntryId(row.id)}
+                      aria-label={`Attachments for ${row.summary}`}
+                    >
+                      Attachments
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}
@@ -313,5 +348,6 @@ export function JournalEntriesPanel({
         </button>
       )}
     </section>
+    </>
   );
 }
