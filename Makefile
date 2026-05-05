@@ -3,7 +3,7 @@ PIP := .venv/bin/pip
 PYTEST := .venv/bin/pytest
 UVICORN := .venv/bin/uvicorn
 
-.PHONY: help venv install test test-unit test-integration run up down restart status logs frontend-install frontend-dev frontend-test db-up db-down db-wait db-migrate db-migrate-local dbempty dbclean dev-seed export-dev-seed export-bootstrap
+.PHONY: help venv install test test-unit test-integration run up down restart status logs frontend-install frontend-dev frontend-test db-up db-down db-wait db-migrate db-migrate-local dbempty dbclean dev-seed export-dev-seed export-bootstrap backup-restore-drill-help
 
 help:
 	@echo "Available targets:"
@@ -113,3 +113,7 @@ export-dev-seed:
 	PYTHONPATH=src $(PYTHON) -m tallybadger.dev_seed export
 
 export-bootstrap: export-dev-seed
+
+backup-restore-drill-help:
+	@echo "Application snapshot restore drill: see README \"Application snapshot (ZIP)\"."
+	@echo "Format reference: docs/backup-snapshot-format.md"
