@@ -33,7 +33,10 @@ from tallybadger.backup.snapshot import (
     COMPLETE_TABLES,
     CONFIGURATION_TABLES,
     FINANCIAL_TABLES,
+    attachment_blob_member_path,
+    current_schema_version,
     export_complete_snapshot,
+    export_format_version,
     export_snapshot,
     import_complete_snapshot,
     import_snapshot,
@@ -174,6 +177,34 @@ def _seed_minimal_ledger(ledger_service: LedgerService) -> None:
     )
 
 
+_MINIMAL_PDF_BYTES = b"%PDF-1.1\n1 0 obj<<>>endobj trailer<<>>\n%%EOF"
+
+
+def _seed_minimal_ledger_with_pdf_attachment(ledger_service: LedgerService) -> int:
+    """Return attachment id after seeding one journal entry with a PDF attachment."""
+    cash = ledger_service.create_account(AccountCreate(name="Cash", type="asset"))
+    rent = ledger_service.create_account(AccountCreate(name="Rent Revenue", type="revenue"))
+    entry = ledger_service.create_entry(
+        JournalEntryWrite(
+            entry_date=date(2026, 1, 3),
+            summary="Rent received",
+            description="Rent received",
+            lines=[
+                JournalLineIn(account_id=cash.id, amount=Decimal("250.00")),
+                JournalLineIn(account_id=rent.id, amount=Decimal("-250.00")),
+            ],
+        )
+    )
+    att = ledger_service.add_journal_entry_attachment(
+        entry.id,
+        file_bytes=_MINIMAL_PDF_BYTES,
+        upload_filename="receipt.pdf",
+        summary="Receipt",
+        external_reference=None,
+    )
+    return att.id
+
+
 def test_complete_export_round_trip_restores_row_counts(
     integration_db_url: str,
     ledger_service: LedgerService,
@@ -191,9 +222,9 @@ def test_complete_export_round_trip_restores_row_counts(
         assert f"{table}.json" in names
     meta = json.loads(zf.read("metadata.json").decode("utf-8"))
     assert meta["export_type"] == "complete"
-    assert meta["format_version"] == "1.0.0"
+    assert meta["format_version"] == export_format_version()
     assert isinstance(meta["member_manifest"], list)
-    assert len(meta["member_manifest"]) == len(COMPLETE_TABLES)
+    assert len(meta["member_manifest"]) == len(names - {"metadata.json"})
 
     _truncate_all_data(integration_db_url)
 
@@ -207,6 +238,79 @@ def test_complete_export_round_trip_restores_row_counts(
         with conn.cursor() as cur:
             cur.execute("SELECT COALESCE(SUM(amount), 0) AS s FROM journal_lines")
             assert Decimal(str(cur.fetchone()["s"])) == Decimal("0")
+
+
+def test_complete_export_round_trip_restores_attachment_blob(
+    integration_db_url: str,
+    ledger_service: LedgerService,
+) -> None:
+    _seed_minimal_ledger_with_pdf_attachment(ledger_service)
+
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, mime_type, blob FROM attachments ORDER BY id LIMIT 1")
+            row = cur.fetchone()
+            assert row is not None
+            att_id = int(row["id"])
+            mime = str(row["mime_type"])
+            blob_raw = row["blob"]
+            before_blob = bytes(blob_raw) if not isinstance(blob_raw, bytes) else blob_raw
+        zip_bytes = export_complete_snapshot(conn)
+
+    zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
+    blob_path = attachment_blob_member_path(att_id, mime)
+    names = {n for n in zf.namelist() if not n.endswith("/")}
+    assert blob_path in names
+    assert zf.read(blob_path) == before_blob
+
+    _truncate_all_data(integration_db_url)
+
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        import_complete_snapshot(conn, zip_bytes)
+        with conn.cursor() as cur:
+            cur.execute("SELECT blob FROM attachments WHERE id = %s", (att_id,))
+            row2 = cur.fetchone()
+            assert row2 is not None
+            br = row2["blob"]
+            after_blob = bytes(br) if not isinstance(br, bytes) else br
+    assert after_blob == before_blob
+
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM journal_entry_attachments WHERE attachment_id = %s",
+                (att_id,),
+            )
+            assert cur.fetchone() is not None
+
+
+def test_import_format_v1_0_0_complete_without_attachment_members(
+    monkeypatch: pytest.MonkeyPatch,
+    integration_db_url: str,
+    ledger_service: LedgerService,
+) -> None:
+    """Archives from releases that only knew ``format_version`` 1.0.0 must still import (#80)."""
+    import tallybadger.backup.snapshot as snap
+
+    monkeypatch.setattr(snap, "FORMAT_VERSION_HISTORY", ("1.0.0",))
+    _seed_minimal_ledger(ledger_service)
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        zip_v1 = export_complete_snapshot(conn)
+
+    meta = json.loads(zipfile.ZipFile(io.BytesIO(zip_v1)).read("metadata.json"))
+    assert meta["format_version"] == "1.0.0"
+    znames = {n for n in zipfile.ZipFile(io.BytesIO(zip_v1)).namelist() if not n.endswith("/")}
+    assert "attachments.json" not in znames
+
+    monkeypatch.setattr(snap, "FORMAT_VERSION_HISTORY", ("1.0.0", "1.1.0"))
+
+    _truncate_all_data(integration_db_url)
+
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        import_complete_snapshot(conn, zip_v1)
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) AS c FROM attachments")
+            assert int(cur.fetchone()["c"]) == 0
 
 
 def test_import_rejects_unbalanced_journal(
@@ -311,8 +415,56 @@ def test_import_rejects_schema_version_mismatch(integration_db_url: str) -> None
 
     with connect(integration_db_url, row_factory=dict_row) as conn, pytest.raises(
         SchemaVersionMismatchError,
+        match="not in this database's schema_migrations",
     ):
         import_complete_snapshot(conn, bad)
+
+
+def test_import_accepts_older_recorded_schema_version(
+    integration_db_url: str,
+    ledger_service: LedgerService,
+) -> None:
+    """A snapshot stamped with an earlier applied migration may load on a newer database."""
+    _seed_minimal_ledger(ledger_service)
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT version FROM schema_migrations")
+            applied = sorted(str(r["version"]) for r in cur.fetchall())
+        if len(applied) < 2:
+            pytest.skip("need at least two schema_migrations rows")
+        older_schema = applied[-2]
+        assert older_schema < current_schema_version(conn)
+        zip_bytes = export_complete_snapshot(conn)
+        before = snapshot_table_counts(conn)
+
+    tweaked = _replace_metadata_only(zip_bytes, schema_version=older_schema)
+
+    _truncate_all_data(integration_db_url)
+
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        import_complete_snapshot(conn, tweaked)
+        assert snapshot_table_counts(conn) == before
+
+
+def test_import_rejects_snapshot_newer_than_target_schema(
+    integration_db_url: str,
+    ledger_service: LedgerService,
+) -> None:
+    _seed_minimal_ledger(ledger_service)
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        zip_bytes = export_complete_snapshot(conn)
+    too_new = _replace_metadata_only(
+        zip_bytes,
+        schema_version="zzz_future_migration_not_applied",
+    )
+
+    _truncate_all_data(integration_db_url)
+
+    with connect(integration_db_url, row_factory=dict_row) as conn, pytest.raises(
+        SchemaVersionMismatchError,
+        match="snapshot is newer than this database",
+    ):
+        import_complete_snapshot(conn, too_new)
 
 
 def test_backup_export_and_import_api_round_trip(

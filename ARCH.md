@@ -30,7 +30,7 @@ Treat the **API container** like any other network-facing process: configure `TA
 
 - **Clients → API:** All HTTP input is untrusted until validated (Pydantic models, explicit checks). CORS allowed origins come from [`Settings`](src/tallybadger/core/config.py) (`TALLYBADGER_CORS_ALLOWED_ORIGINS` or sensible dev defaults). There is **no application-level auth** in the tree today; treat deployments accordingly.
 - **API → database:** Use parameterized queries and transactions; migrations are an operator-controlled, out-of-band change surface.
-- **Snapshot files:** Treat exports as **data at rest** that may move between environments. Integrity is described in the format spec (manifest + hashes). Import enforces **`format_version`** and **`schema_version`** alignment with the target database so restores do not silently apply incompatible shapes.
+- **Snapshot files:** Treat exports as **data at rest** that may move between environments. Integrity is described in the format spec (manifest + hashes). Import enforces **`format_version`** (see format doc) and **`schema_version`** compatibility: restores from an **older** applied migration into a **newer** database are allowed when the snapshot’s migration id is recorded on the target; restores from a **newer** snapshot than the target schema are rejected.
 
 ## Important data flows
 
