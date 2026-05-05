@@ -1,8 +1,11 @@
 from functools import lru_cache
 
+import io
 from datetime import date
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from starlette.responses import StreamingResponse
 
 from tallybadger.ledger.models import (
     AccountCreate,
@@ -20,6 +23,7 @@ from tallybadger.ledger.models import (
     PartyCreate,
     PartyOut,
     PartyUpdate,
+    JournalEntryAttachmentOut,
     JournalEntryListItem,
     JournalEntryOut,
     JournalEntryWrite,
@@ -31,9 +35,16 @@ from tallybadger.ledger.service import (
     LedgerNotFoundError,
     LedgerService,
     LedgerValidationError,
+    read_upload_file_limited,
 )
 
 router = APIRouter(prefix="", tags=["ledger"])
+
+
+def _attachment_content_disposition(filename: str) -> str:
+    escaped = filename.replace("\\", "\\\\").replace('"', '\\"')
+    utf8 = quote(filename, safe="")
+    return f'attachment; filename="{escaped}"; filename*=UTF-8\'\'{utf8}'
 
 
 @lru_cache
@@ -296,5 +307,81 @@ def delete_journal_entry(
 ) -> None:
     try:
         service.delete_entry(entry_id)
+    except LedgerNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get(
+    "/journal-entries/{entry_id}/attachments",
+    response_model=list[JournalEntryAttachmentOut],
+)
+def list_journal_entry_attachments(
+    entry_id: int,
+    service: LedgerService = Depends(get_ledger_service),
+) -> list[JournalEntryAttachmentOut]:
+    try:
+        return service.list_journal_entry_attachments(entry_id)
+    except LedgerNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post(
+    "/journal-entries/{entry_id}/attachments",
+    response_model=JournalEntryAttachmentOut,
+    status_code=status.HTTP_201_CREATED,
+)
+def upload_journal_entry_attachment(
+    entry_id: int,
+    service: LedgerService = Depends(get_ledger_service),
+    file: UploadFile = File(...),
+    summary: str = Form(...),
+    external_reference: str | None = Form(default=None),
+) -> JournalEntryAttachmentOut:
+    try:
+        settings = service.get_ledger_settings()
+        raw = read_upload_file_limited(file.file, settings.max_attachment_upload_bytes)
+        return service.add_journal_entry_attachment(
+            entry_id,
+            file_bytes=raw,
+            upload_filename=file.filename,
+            summary=summary,
+            external_reference=external_reference,
+        )
+    except LedgerNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except LedgerValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except LedgerConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.get("/journal-entries/{entry_id}/attachments/{attachment_id}")
+def download_journal_entry_attachment(
+    entry_id: int,
+    attachment_id: int,
+    service: LedgerService = Depends(get_ledger_service),
+) -> StreamingResponse:
+    try:
+        blob, mime, basename = service.get_journal_entry_attachment_download(
+            entry_id,
+            attachment_id,
+        )
+    except LedgerNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    headers = {"Content-Disposition": _attachment_content_disposition(basename)}
+    return StreamingResponse(io.BytesIO(blob), media_type=mime, headers=headers)
+
+
+@router.delete(
+    "/journal-entries/{entry_id}/attachments/{attachment_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def unlink_journal_entry_attachment(
+    entry_id: int,
+    attachment_id: int,
+    service: LedgerService = Depends(get_ledger_service),
+) -> None:
+    try:
+        service.unlink_journal_entry_attachment(entry_id, attachment_id)
     except LedgerNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

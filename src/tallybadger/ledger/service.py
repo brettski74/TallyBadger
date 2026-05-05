@@ -2,6 +2,7 @@ from collections import defaultdict
 from collections.abc import Callable
 from datetime import date, timedelta
 import calendar
+import os
 import re
 from contextlib import AbstractContextManager
 from decimal import Decimal
@@ -9,6 +10,7 @@ from decimal import Decimal
 from psycopg import errors
 from psycopg.rows import dict_row
 
+from tallybadger.attachments.mime_detect import detect_attachment_mime
 from tallybadger.db import get_connection
 from tallybadger.ledger.models import (
     AccountCreate,
@@ -28,6 +30,7 @@ from tallybadger.ledger.models import (
     PartyUpdate,
     SettlementOut,
     SettlementWrite,
+    JournalEntryAttachmentOut,
     JournalEntryOut,
     JournalEntryListItem,
     JournalEntryWrite,
@@ -40,6 +43,24 @@ class LedgerError(Exception):
 
 class LedgerValidationError(LedgerError):
     """Raised when business invariants are violated."""
+
+
+def read_upload_file_limited(file_obj: object, max_bytes: int) -> bytes:
+    """Read until EOF, raising ``LedgerValidationError`` if more than ``max_bytes`` are read."""
+    chunks: list[bytes] = []
+    total = 0
+    read = getattr(file_obj, "read")
+    while True:
+        chunk = read(65536)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise LedgerValidationError(
+                f"attachment exceeds maximum size of {max_bytes} bytes",
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 JOURNAL_LIST_SPLIT_LABEL = "-- Split --"
@@ -624,6 +645,7 @@ class LedgerService:
                     SELECT accounts_receivable_account_id, accounts_payable_account_id,
                            unearned_revenue_account_id,
                            unallocated_debits_account_id, unallocated_credits_account_id,
+                           max_attachment_upload_bytes,
                            updated_at
                     FROM ledger_settings
                     WHERE id = 1
@@ -660,11 +682,15 @@ class LedgerService:
                             unallocated_credits_account_id = COALESCE(
                                 %s, unallocated_credits_account_id
                             ),
+                            max_attachment_upload_bytes = COALESCE(
+                                %s, max_attachment_upload_bytes
+                            ),
                             updated_at = NOW()
                         WHERE id = 1
                         RETURNING accounts_receivable_account_id, accounts_payable_account_id,
                                   unearned_revenue_account_id,
                                   unallocated_debits_account_id, unallocated_credits_account_id,
+                                  max_attachment_upload_bytes,
                                   updated_at
                         """,
                         (
@@ -673,6 +699,7 @@ class LedgerService:
                             payload.unearned_revenue_account_id,
                             payload.unallocated_debits_account_id,
                             payload.unallocated_credits_account_id,
+                            payload.max_attachment_upload_bytes,
                         ),
                     )
                     row = cur.fetchone()
@@ -1728,3 +1755,154 @@ class LedgerService:
                 raise LedgerValidationError("expense plan target account must be type expense")
             if bridge_type != "liability":
                 raise LedgerValidationError("expense plan bridge account must be type liability (A/P)")
+
+    def list_journal_entry_attachments(self, entry_id: int) -> list[JournalEntryAttachmentOut]:
+        with self._connection_factory() as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute("SELECT id FROM journal_entries WHERE id = %s", (entry_id,))
+                if not cur.fetchone():
+                    raise LedgerNotFoundError(f"journal entry {entry_id} not found")
+                cur.execute(
+                    """
+                    SELECT a.id, a.summary, a.external_reference, a.mime_type,
+                           a.original_filename, a.created_at, a.updated_at
+                    FROM attachments a
+                    INNER JOIN journal_entry_attachments j ON j.attachment_id = a.id
+                    WHERE j.journal_entry_id = %s
+                    ORDER BY a.id ASC
+                    """,
+                    (entry_id,),
+                )
+                rows = cur.fetchall()
+        return [JournalEntryAttachmentOut.model_validate(r) for r in rows]
+
+    def add_journal_entry_attachment(
+        self,
+        entry_id: int,
+        *,
+        file_bytes: bytes,
+        upload_filename: str | None,
+        summary: str,
+        external_reference: str | None,
+    ) -> JournalEntryAttachmentOut:
+        summary_clean = summary.strip()
+        if not summary_clean:
+            raise LedgerValidationError("attachment summary must not be blank")
+        ext_ref: str | None
+        if external_reference is not None and external_reference.strip():
+            ext_ref = external_reference.strip()
+        else:
+            ext_ref = None
+        original_name: str | None = None
+        if upload_filename and upload_filename.strip():
+            original_name = os.path.basename(upload_filename.strip()) or None
+        if not file_bytes:
+            raise LedgerValidationError("attachment file is empty")
+        mime = detect_attachment_mime(file_bytes, original_name or upload_filename)
+
+        with self._connection_factory() as conn:
+            with conn.transaction():
+                with conn.cursor(row_factory=dict_row) as cur:
+                    cur.execute(
+                        "SELECT id FROM journal_entries WHERE id = %s",
+                        (entry_id,),
+                    )
+                    if not cur.fetchone():
+                        raise LedgerNotFoundError(f"journal entry {entry_id} not found")
+                    cur.execute(
+                        "SELECT max_attachment_upload_bytes FROM ledger_settings WHERE id = 1",
+                    )
+                    lim_row = cur.fetchone()
+                    if not lim_row:
+                        raise LedgerValidationError("ledger settings row is missing")
+                    max_b = int(lim_row["max_attachment_upload_bytes"])
+                    if len(file_bytes) > max_b:
+                        raise LedgerValidationError(
+                            f"attachment exceeds maximum size of {max_b} bytes",
+                        )
+                    cur.execute(
+                        """
+                        INSERT INTO attachments (
+                          blob, summary, external_reference, mime_type, original_filename
+                        )
+                        VALUES (%s, %s, %s, %s, %s)
+                        RETURNING id, summary, external_reference, mime_type,
+                                  original_filename, created_at, updated_at
+                        """,
+                        (file_bytes, summary_clean, ext_ref, mime, original_name),
+                    )
+                    att = cur.fetchone()
+                    assert att is not None
+                    try:
+                        cur.execute(
+                            """
+                            INSERT INTO journal_entry_attachments (journal_entry_id, attachment_id)
+                            VALUES (%s, %s)
+                            """,
+                            (entry_id, att["id"]),
+                        )
+                    except errors.UniqueViolation as exc:
+                        raise LedgerConflictError(
+                            "this attachment is already linked to the journal entry",
+                        ) from exc
+        return JournalEntryAttachmentOut.model_validate(att)
+
+    def get_journal_entry_attachment_download(
+        self,
+        entry_id: int,
+        attachment_id: int,
+    ) -> tuple[bytes, str, str]:
+        with self._connection_factory() as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(
+                    """
+                    SELECT a.blob, a.mime_type, a.original_filename
+                    FROM attachments a
+                    INNER JOIN journal_entry_attachments j ON j.attachment_id = a.id
+                    WHERE j.journal_entry_id = %s AND a.id = %s
+                    """,
+                    (entry_id, attachment_id),
+                )
+                row = cur.fetchone()
+                if not row:
+                    raise LedgerNotFoundError(
+                        f"attachment {attachment_id} not found for journal entry {entry_id}",
+                    )
+        basename = self._attachment_download_basename(
+            attachment_id,
+            row["mime_type"],
+            row["original_filename"],
+        )
+        return row["blob"], row["mime_type"], basename
+
+    def unlink_journal_entry_attachment(self, entry_id: int, attachment_id: int) -> None:
+        with self._connection_factory() as conn:
+            with conn.transaction():
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        DELETE FROM journal_entry_attachments
+                        WHERE journal_entry_id = %s AND attachment_id = %s
+                        """,
+                        (entry_id, attachment_id),
+                    )
+                    if cur.rowcount == 0:
+                        raise LedgerNotFoundError(
+                            f"attachment {attachment_id} not linked to journal entry {entry_id}",
+                        )
+
+    @staticmethod
+    def _attachment_download_basename(
+        attachment_id: int,
+        mime_type: str,
+        original_filename: str | None,
+    ) -> str:
+        if original_filename and str(original_filename).strip():
+            return os.path.basename(str(original_filename).strip())
+        ext_map = {
+            "image/jpeg": ".jpg",
+            "image/png": ".png",
+            "application/pdf": ".pdf",
+        }
+        ext = ext_map.get(mime_type, "")
+        return f"attachment-{attachment_id}{ext}"
