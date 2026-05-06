@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { IncomeExpenseReportSection } from "./IncomeExpenseReportSection";
@@ -37,9 +37,13 @@ describe("IncomeExpenseReportSection", () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Run report" }));
 
-    expect(await screen.findByText("Total revenue")).toBeInTheDocument();
-    expect(screen.getByRole("cell", { name: "100.00" })).toBeInTheDocument();
-    expect(screen.getByRole("row", { name: /Rent/ })).toBeInTheDocument();
+    expect(await screen.findByText("Revenue subtotal")).toBeInTheDocument();
+    const rentRow = screen.getByRole("row", { name: /Rent/ });
+    expect(within(rentRow).getByRole("cell", { name: "$100.00" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Net income" })).toHaveTextContent("$100.00");
+    expect(screen.getByRole("link", { name: "Export CSV" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Export PDF" })).toBeInTheDocument();
+    expect(screen.queryByText(/Currency:/)).not.toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith(
       expect.objectContaining({
         preset: "current_year_to_date",

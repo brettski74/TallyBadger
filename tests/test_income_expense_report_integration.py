@@ -314,10 +314,21 @@ def test_csv_export_matches_json(api_client: TestClient, ledger_service: LedgerS
     assert "income-expense" in raw.headers["content-disposition"]
     decoded = raw.content.decode("utf-8")
     rows = list(csv.reader(io.StringIO(decoded)))
-    by_field = {r[0]: r for r in rows[1:] if r and r[0] in ("total_revenue", "total_expense", "net_income")}
-    assert Decimal(by_field["total_revenue"][2]) == Decimal(js["total_revenue"])
-    assert Decimal(by_field["total_expense"][2]) == Decimal(js["total_expense"])
+    assert "currency_label" not in [r[0] for r in rows[1:] if r]
+    by_field = {r[0]: r for r in rows[1:] if r and r[0] in ("revenue_subtotal", "expense_subtotal", "net_income")}
+    assert Decimal(by_field["revenue_subtotal"][2]) == Decimal(js["total_revenue"])
+    assert Decimal(by_field["expense_subtotal"][2]) == Decimal(js["total_expense"])
     assert Decimal(by_field["net_income"][2]) == Decimal(js["net_income"])
+    # Ordering: revenue block, expense block (may be subtotal-only), net income last.
+    field_order = [r[0] for r in rows[1:] if r and r[0]]
+    assert field_order.index("revenue") < field_order.index("revenue_subtotal")
+    assert field_order.index("revenue_subtotal") < field_order.index("expense_subtotal")
+    assert field_order.index("expense_subtotal") < field_order.index("net_income")
+    assert field_order[-1] == "net_income"
+    if "expense" in field_order:
+        assert max(i for i, f in enumerate(field_order) if f == "expense") < field_order.index(
+            "expense_subtotal"
+        )
 
 
 def test_pdf_export_contains_key_totals(api_client: TestClient, ledger_service: LedgerService) -> None:
@@ -353,3 +364,7 @@ def test_pdf_export_contains_key_totals(api_client: TestClient, ledger_service: 
     assert "Income" in text and "Expense" in text
     assert "99.25" in text
     assert "2026-07-01" in text
+    assert "Revenue subtotal" in text
+    assert "Expense subtotal" in text
+    assert "Net income" in text
+    assert "Currency:" not in text

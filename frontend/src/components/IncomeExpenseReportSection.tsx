@@ -16,6 +16,20 @@ function localCalendarTodayIso(): string {
   return `${y}-${m}-${day}`;
 }
 
+/** Formats API decimal strings for on-screen P&L preview (USD, 2 dp, grouping). */
+function formatReportCurrency(amountStr: string): string {
+  const n = Number(amountStr);
+  if (!Number.isFinite(n)) {
+    return amountStr;
+  }
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(n);
+}
+
 type PeriodMode = "custom" | IncomeExpensePreset;
 
 export function IncomeExpenseReportSection() {
@@ -110,23 +124,13 @@ export function IncomeExpenseReportSection() {
           <button type="submit" disabled={loading}>
             {loading ? "Loading…" : "Run report"}
           </button>
-          <a
-            className="button-secondary"
-            href={incomeExpenseExportUrl("csv", buildParams())}
-            download
-          >
-            Export CSV
-          </a>
-          <a className="button-secondary" href={incomeExpenseExportUrl("pdf", buildParams())} download>
-            Export PDF
-          </a>
         </div>
       </form>
 
       {error && <p role="alert">{error}</p>}
 
       {report && (
-        <div className="report-output">
+        <div className="report-output income-exp-report">
           <p>
             <strong>Period:</strong> {report.period.start_date} to {report.period.end_date}
             {report.preset && (
@@ -136,25 +140,14 @@ export function IncomeExpenseReportSection() {
               </span>
             )}
           </p>
-          <ul className="banner-info">
-            <li>
-              <strong>Total revenue</strong> {report.total_revenue}
-            </li>
-            <li>
-              <strong>Total expense</strong> {report.total_expense}
-            </li>
-            <li>
-              <strong>Net income</strong> {report.net_income}
-            </li>
-            <li className="muted">Currency: {report.currency_label}</li>
-          </ul>
-
           <h3>Revenue accounts</h3>
-          <table className="journal-entry-list">
+          <table className="journal-entry-list income-exp-report-table">
             <thead>
               <tr>
                 <th scope="col">Account</th>
-                <th scope="col">Amount</th>
+                <th className="journal-list-amount" scope="col">
+                  Amount
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -164,18 +157,24 @@ export function IncomeExpenseReportSection() {
                     {row.account_name}
                     {!row.is_active && <span className="muted"> (inactive)</span>}
                   </td>
-                  <td>{row.amount}</td>
+                  <td className="journal-list-amount">{formatReportCurrency(row.amount)}</td>
                 </tr>
               ))}
+              <tr className="income-exp-report-subtotal">
+                <td className="income-exp-report-subtotal-label">Revenue subtotal</td>
+                <td className="journal-list-amount">{formatReportCurrency(report.total_revenue)}</td>
+              </tr>
             </tbody>
           </table>
 
           <h3>Expense accounts</h3>
-          <table className="journal-entry-list">
+          <table className="journal-entry-list income-exp-report-table">
             <thead>
               <tr>
                 <th scope="col">Account</th>
-                <th scope="col">Amount</th>
+                <th className="journal-list-amount" scope="col">
+                  Amount
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -185,11 +184,39 @@ export function IncomeExpenseReportSection() {
                     {row.account_name}
                     {!row.is_active && <span className="muted"> (inactive)</span>}
                   </td>
-                  <td>{row.amount}</td>
+                  <td className="journal-list-amount">{formatReportCurrency(row.amount)}</td>
                 </tr>
               ))}
+              <tr className="income-exp-report-subtotal">
+                <td className="income-exp-report-subtotal-label">Expense subtotal</td>
+                <td className="journal-list-amount">{formatReportCurrency(report.total_expense)}</td>
+              </tr>
             </tbody>
           </table>
+
+          <div className="income-exp-report-net" role="region" aria-label="Net income">
+            <span className="income-exp-report-net-label">Net income</span>
+            <span className="income-exp-report-net-amount journal-list-amount">
+              {formatReportCurrency(report.net_income)}
+            </span>
+          </div>
+
+          <div className="income-exp-report-export-bar form-actions-inline">
+            <a
+              className="button-secondary income-exp-report-export-btn"
+              href={incomeExpenseExportUrl("csv", buildParams())}
+              download
+            >
+              Export CSV
+            </a>
+            <a
+              className="button-secondary income-exp-report-export-btn"
+              href={incomeExpenseExportUrl("pdf", buildParams())}
+              download
+            >
+              Export PDF
+            </a>
+          </div>
         </div>
       )}
     </section>
