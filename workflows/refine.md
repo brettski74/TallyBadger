@@ -6,9 +6,9 @@ Use this workflow when turning a **feature** GitHub issue into a single, agreed 
 
 - A **fresh chat** dedicated to this refinement (do not reuse a thread that mixed another ticket’s implementation or UAT).
 - The target issue **number** `N` and repository context (owner/repo or equivalent).
-- **GitHub access** via **`user-github` MCP** (or equivalent API) for reading and updating issues when available; **do not** rely on the `gh` CLI where it is unavailable.
-- If the issue is **not** assigned to the maintainer **`brettski74`**, set assignees via the GitHub API when the tools allow (for example `issue_write` with `assignees`); otherwise assign manually in the GitHub UI.
-- Workflows assume the issue is **open**; if it is closed or marked duplicate, confirm with the user before proceeding.
+- **GitHub access** via **`user-github` MCP**. If github MCP is unavailable or fails, abort and report the problem to the user.
+- If the issue is **not** assigned to the current user, assign the issue to the current user.
+- The issue must be **open**; if it is closed or marked duplicate, confirm with the user before proceeding.
 
 ## Steps
 

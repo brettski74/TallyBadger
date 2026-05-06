@@ -6,9 +6,9 @@ Use this workflow for **user-led acceptance testing** after implementation exist
 
 - A **fresh chat** focused on UAT for this issue (avoid mixing unrelated tickets).
 - The issue **number** `N`, the branch or build under test, and repository context.
-- **GitHub access** via **`user-github` MCP** (or equivalent) for comments and, when needed, PR reads; **do not** rely on the `gh` CLI where it is unavailable.
-- If the issue is **not** assigned to **`brettski74`**, set assignees when the API allows; otherwise assign manually.
-- Assume the issue is **open** for tracking UAT unless the user says otherwise.
+- **GitHub access** via **`user-github` MCP**. If github MCP is unavailable or fails, abort and report the problem to the user.
+- If the issue is **not** assigned to the current user, assign the issue to the current user.
+- The issue must be **open**; if it is closed or marked duplicate, confirm with the user before proceeding.
 
 ## Steps
 
