@@ -16,6 +16,7 @@ from tallybadger.api.routes import (
     import_rules_cel,
     import_templates,
     ledger,
+    reports,
 )
 from tallybadger.core.config import get_settings
 
@@ -42,6 +43,7 @@ app.include_router(cel_rule_sets.router)
 app.include_router(import_templates.router)
 app.include_router(import_csv.router)
 app.include_router(ledger.router)
+app.include_router(reports.router)
 
 
 @app.get("/")

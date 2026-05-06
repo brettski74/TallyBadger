@@ -214,6 +214,45 @@ th {
   grid-column: 1 / -1;
 }
 
+.income-exp-report-table {
+  width: 100%;
+  table-layout: fixed;
+}
+
+.income-exp-report-table .journal-list-amount {
+  width: 10rem;
+}
+
+.income-exp-report-subtotal td {
+  border-top: 1px solid var(--border);
+  padding-top: 0.5rem;
+}
+
+.income-exp-report-subtotal-label {
+  padding-left: 0.75rem;
+  font-weight: 600;
+}
+
+.income-exp-report-export-bar {
+  margin: 1.25rem 0 0;
+}
+
+.income-exp-report-net {
+  display: grid;
+  grid-template-columns: 1fr 10rem;
+  gap: 0.5rem;
+  align-items: baseline;
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+  border-top: 2px solid var(--border);
+  font-weight: 600;
+  font-size: 1.05rem;
+}
+
+.income-exp-report-net-amount {
+  text-align: right;
+}
+
 .config-subheading {
   margin: 1.25rem 0 0.5rem;
   font-size: 1rem;
@@ -343,6 +382,19 @@ th {
   flex-wrap: wrap;
   gap: 0.5rem;
   align-items: center;
+}
+
+.form-actions-inline a.button-secondary {
+  width: auto;
+  display: inline-block;
+  margin-top: 0.25rem;
+  padding: 0.55rem;
+  border-radius: 8px;
+  text-decoration: none;
+  text-align: center;
+  font-weight: 600;
+  border: none;
+  box-sizing: border-box;
 }
 
 .button-secondary {

@@ -304,3 +304,31 @@ class SettlementOut(BaseModel):
 class ObligationStatusUpdate(BaseModel):
     status: ObligationStatus
     force_override: bool = False
+
+
+class IncomeExpensePeriodEcho(BaseModel):
+    start_date: date
+    end_date: date
+
+
+class IncomeExpenseAccountRowOut(BaseModel):
+    account_id: int
+    account_name: str
+    account_type: Literal["revenue", "expense"]
+    is_active: bool
+    amount: Decimal
+
+
+class IncomeExpenseReportOut(BaseModel):
+    """Stable JSON contract for the Income & Expense report (schema version 1)."""
+
+    report_schema_version: Literal[1] = 1
+    period: IncomeExpensePeriodEcho
+    currency_label: str
+    preset: Literal["current_year_to_date", "prior_full_year", "prior_year_to_date"] | None = None
+    exclude_zero_balance_accounts: bool
+    revenue_accounts: list[IncomeExpenseAccountRowOut]
+    expense_accounts: list[IncomeExpenseAccountRowOut]
+    total_revenue: Decimal
+    total_expense: Decimal
+    net_income: Decimal

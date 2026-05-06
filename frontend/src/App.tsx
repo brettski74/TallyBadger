@@ -11,6 +11,7 @@ import { ConfigurationSection } from "./components/ConfigurationSection";
 import { SettlementsSection } from "./components/SettlementsSection";
 import { CelRuleSetsSection } from "./components/CelRuleSetsSection";
 import { CsvImportSection } from "./components/CsvImportSection";
+import { IncomeExpenseReportSection } from "./components/IncomeExpenseReportSection";
 
 type MainTab =
   | "accounts"
@@ -20,7 +21,8 @@ type MainTab =
   | "configuration"
   | "settlements"
   | "import_rules"
-  | "csv_import";
+  | "csv_import"
+  | "reports";
 
 function App() {
   const [tab, setTab] = useState<MainTab>("accounts");
@@ -128,6 +130,13 @@ function App() {
           >
             CSV import
           </button>
+          <button
+            type="button"
+            className={tab === "reports" ? "app-nav-active" : undefined}
+            onClick={() => setTab("reports")}
+          >
+            Reports
+          </button>
         </nav>
       </header>
 
@@ -165,6 +174,7 @@ function App() {
         {tab === "csv_import" && (
           <CsvImportSection accounts={accounts} onImportSucceeded={() => setTab("journal")} />
         )}
+        {tab === "reports" && <IncomeExpenseReportSection />}
       </main>
     </div>
   );

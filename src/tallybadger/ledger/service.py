@@ -12,6 +12,10 @@ from psycopg.rows import dict_row
 
 from tallybadger.attachments.mime_detect import detect_attachment_mime
 from tallybadger.db import get_connection
+from tallybadger.ledger.income_expense_report import (
+    INCOME_EXPENSE_CURRENCY_LABEL,
+    natural_pl_total_for_account_type,
+)
 from tallybadger.ledger.models import (
     AccountCreate,
     AccountOut,
@@ -22,6 +26,9 @@ from tallybadger.ledger.models import (
     AccrualPlanOut,
     AccrualPlanUpdate,
     AccrualPreviewItem,
+    IncomeExpenseAccountRowOut,
+    IncomeExpensePeriodEcho,
+    IncomeExpenseReportOut,
     LedgerSettingsOut,
     LedgerSettingsUpdate,
     ObligationStatusUpdate,
@@ -1013,6 +1020,89 @@ class LedgerService:
                 )
             )
         return out
+
+    def income_expense_report(
+        self,
+        *,
+        start_date: date,
+        end_date: date,
+        exclude_zero_balance_accounts: bool,
+        preset: str | None = None,
+    ) -> IncomeExpenseReportOut:
+        """Aggregate posted P&L lines for ``[start_date, end_date]`` inclusive on ``entry_date``."""
+        if end_date < start_date:
+            raise LedgerValidationError("end_date must be on or after start_date")
+
+        with self._connection_factory() as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(
+                    """
+                    SELECT a.id, a.name, a.type, a.is_active,
+                           COALESCE(SUM(pl.amount), 0) AS raw_line_total
+                    FROM accounts a
+                    LEFT JOIN (
+                        SELECT jl.account_id, jl.amount
+                        FROM journal_lines jl
+                        INNER JOIN journal_entries je ON je.id = jl.entry_id
+                          AND je.entry_date >= %s AND je.entry_date <= %s
+                    ) pl ON pl.account_id = a.id
+                    WHERE a.type IN ('revenue', 'expense')
+                    GROUP BY a.id, a.name, a.type, a.is_active
+                    """,
+                    (start_date, end_date),
+                )
+                raw_rows = cur.fetchall()
+
+        rows_sorted = sorted(raw_rows, key=lambda r: str(r["name"]))
+
+        revenue_all: list[IncomeExpenseAccountRowOut] = []
+        expense_all: list[IncomeExpenseAccountRowOut] = []
+        total_revenue = Decimal("0")
+        total_expense = Decimal("0")
+
+        for row in rows_sorted:
+            acct_type = row["type"]
+            raw_total = Decimal(row["raw_line_total"])
+            natural = natural_pl_total_for_account_type(acct_type, raw_total)
+            out_row = IncomeExpenseAccountRowOut(
+                account_id=row["id"],
+                account_name=row["name"],
+                account_type=acct_type,
+                is_active=bool(row["is_active"]),
+                amount=natural,
+            )
+            if acct_type == "revenue":
+                revenue_all.append(out_row)
+                total_revenue += natural
+            else:
+                expense_all.append(out_row)
+                total_expense += natural
+
+        if exclude_zero_balance_accounts:
+            revenue_accounts = [r for r in revenue_all if r.amount != Decimal("0")]
+            expense_accounts = [r for r in expense_all if r.amount != Decimal("0")]
+        else:
+            revenue_accounts = revenue_all
+            expense_accounts = expense_all
+
+        net_income = total_revenue - total_expense
+        preset_out = (
+            preset
+            if preset in ("current_year_to_date", "prior_full_year", "prior_year_to_date")
+            else None
+        )
+
+        return IncomeExpenseReportOut(
+            period=IncomeExpensePeriodEcho(start_date=start_date, end_date=end_date),
+            currency_label=INCOME_EXPENSE_CURRENCY_LABEL,
+            preset=preset_out,
+            exclude_zero_balance_accounts=exclude_zero_balance_accounts,
+            revenue_accounts=revenue_accounts,
+            expense_accounts=expense_accounts,
+            total_revenue=total_revenue,
+            total_expense=total_expense,
+            net_income=net_income,
+        )
 
     def list_account_lines(
         self,

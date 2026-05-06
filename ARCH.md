@@ -11,6 +11,7 @@ TallyBadger is a **double-entry accounting** backend for small rental portfolios
 | Subsystem | Role | Primary locations |
 |-----------|------|-------------------|
 | **HTTP API** | REST-ish routes, request validation, orchestration | [`src/tallybadger/main.py`](src/tallybadger/main.py), [`src/tallybadger/api/routes/`](src/tallybadger/api/routes/) |
+| **Financial reports** | Read-only aggregates over posted journal data (P&L-style), JSON + exports | [`src/tallybadger/api/routes/reports.py`](src/tallybadger/api/routes/reports.py), [`src/tallybadger/ledger/income_expense_report.py`](src/tallybadger/ledger/income_expense_report.py) |
 | **CSV / bank import** | Uploaded CSV → templates + optional CEL → journal lines | [`src/tallybadger/api/routes/import_csv.py`](src/tallybadger/api/routes/import_csv.py), [`src/tallybadger/import_templates/`](src/tallybadger/import_templates/) |
 | **Domain / ledger** | Journal rules, posting, invariants | [`src/tallybadger/ledger/`](src/tallybadger/ledger/) |
 | **Import rules** | Rule evaluation (including CEL), templates | [`src/tallybadger/import_rules/`](src/tallybadger/import_rules/), [`src/tallybadger/import_templates/`](src/tallybadger/import_templates/) |
