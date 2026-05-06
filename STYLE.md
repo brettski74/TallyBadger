@@ -57,6 +57,26 @@ This pairs with schema work so portable paths (clone → migrate → seed) stay 
 - **Link GitHub issues** in the **PR body** with closing keywords when appropriate (`Fixes #42`, `Closes #42`, `Refs #42`) so links survive squash; see [GitHub linking](https://docs.github.com/en/issues/tracking-your-work-with-issues/linking-a-pull-request-to-an-issue).
 - **Features and bugs** are tracked in **GitHub Issues**; PRs should reference them for traceability.
 
+## AI-assisted delivery workflows
+
+Repeatable **phase** procedures live under repo-root **[`workflows/`](workflows/)**:
+
+| File | Phase |
+|------|--------|
+| [`workflows/refine.md`](workflows/refine.md) | Requirements refinement (feature issues) |
+| [`workflows/implement.md`](workflows/implement.md) | Implementation, verification, and PR |
+| [`workflows/uat.md`](workflows/uat.md) | User acceptance testing and fix loop |
+
+**Shortcut vocabulary (normative):** When the user’s **core instruction** is one of the following, `N` must be the GitHub issue number (for example `84`). Any assistant that has read this file **must** treat the instruction as: **read** the listed workflow file and **execute** that procedure for issue `#N` (incorporating that file into the effective task prompt).
+
+| Shortcut | Workflow |
+|----------|----------|
+| `/refine #N` | [`workflows/refine.md`](workflows/refine.md) |
+| `/implement #N` | [`workflows/implement.md`](workflows/implement.md) |
+| `/uat #N` | [`workflows/uat.md`](workflows/uat.md) |
+
+This mapping is **agent-agnostic** (not editor-specific). **Do not** duplicate these shortcut definitions under [`.cursor/rules/`](.cursor/rules/); the existing rule there only points agents at **ARCH.md** and **STYLE.md**—that remains the single Cursor-specific hook.
+
 ## PR description hygiene
 
 State **what changed**, **why**, how to **verify** (commands run, screenshots for UI), and **which issue(s)** the PR addresses.
