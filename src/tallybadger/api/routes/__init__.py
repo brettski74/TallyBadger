@@ -9,6 +9,7 @@ from tallybadger.api.routes import (
     import_rules_cel,
     import_templates,
     ledger,
+    reports,
 )
 
 __all__ = [
@@ -20,4 +21,5 @@ __all__ = [
     "import_rules_cel",
     "import_templates",
     "ledger",
+    "reports",
 ]
