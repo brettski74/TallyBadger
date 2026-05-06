@@ -71,9 +71,9 @@ Repeatable **phase** procedures live under repo-root **[`workflows/`](workflows/
 
 | Shortcut | Workflow |
 |----------|----------|
-| `/refine #N` | [`workflows/refine.md`](workflows/refine.md) |
-| `/implement #N` | [`workflows/implement.md`](workflows/implement.md) |
-| `/uat #N` | [`workflows/uat.md`](workflows/uat.md) |
+| `!refine #N` | [`workflows/refine.md`](workflows/refine.md) |
+| `!implement #N` | [`workflows/implement.md`](workflows/implement.md) |
+| `!uat #N` | [`workflows/uat.md`](workflows/uat.md) |
 
 This mapping is **agent-agnostic** (not editor-specific). **Do not** duplicate these shortcut definitions under [`.cursor/rules/`](.cursor/rules/); the existing rule there only points agents at **ARCH.md** and **STYLE.md**—that remains the single Cursor-specific hook.
 
