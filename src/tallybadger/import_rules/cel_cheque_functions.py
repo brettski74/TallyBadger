@@ -72,7 +72,9 @@ def _cel_map_from_python(d: dict[str, Any]) -> celtypes.MapType:
         if isinstance(v, str):
             entries[ck] = celtypes.StringType(v)
         elif isinstance(v, Decimal):
-            entries[ck] = celtypes.StringType(str(v))
+            entries[ck] = celtypes.DoubleType(float(v))
+        elif isinstance(v, float):
+            entries[ck] = celtypes.DoubleType(v)
         elif isinstance(v, int):
             entries[ck] = celtypes.IntType(v)
         elif isinstance(v, list):
@@ -134,12 +136,13 @@ def build_cheque_cel_functions(
         dr_name = dr_acc.name if dr_acc else f"#{ch.debit_account_id}"
 
         # Register amount is exposed as `cheque-amount`, not `amount`, so CSV / rule-derived
-        # posting amount stays authoritative; later rules can still read the register figure.
+        # posting amount stays authoritative. Use a CEL double (same idea as bag Decimals in
+        # activation) so `+` and comparisons behave numerically, not as string concat.
         out: dict[str, Any] = {
             "dr-account": dr_name,
             "cheque-id": ch.id,
             "summary": ch.summary,
-            "cheque-amount": str(ch.amount),
+            "cheque-amount": ch.amount,
         }
         if ch.party_id is not None:
             pname = party_name_by_id.get(ch.party_id)

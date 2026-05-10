@@ -128,7 +128,7 @@ These functions read **current ledger state** (active parties, accounts) passed 
 |-----|--------|
 | **`account`** | **Credit account** **`name`** (trimmed), matching the cheque register’s **credit** side (the “cheque” / bank account). Must be **active** and present in the account snapshot for a successful match. |
 | **`nr`** | **Cheque number** — positive integer as **`int`**, whole **`double`**, or **numeric string** (e.g. regex capture); strings are coerced so rules stay short. |
-| **`amt`** | **Import-side amount** — the value from the CSV row (or derived from it). This is treated as the **authoritative** amount for posting: the function **never** returns **`amount`**, so nothing overwrites that. **`amt`** is used only to **compare** against the register and to emit **review** text when it differs. On a match, the register figure is exposed separately as **`cheque-amount`** (string, decimal form) for later rules if needed. |
+| **`amt`** | **Import-side amount** — the value from the CSV row (or derived from it). This is treated as the **authoritative** amount for posting: the function **never** returns **`amount`**, so nothing overwrites that. **`amt`** is used only to **compare** against the register and to emit **review** text when it differs. On a match, the register figure is exposed as **`cheque-amount`** as a **CEL number** (double — same family as other monetary attributes in rules), so **`+`**, **`-`**, and comparisons behave arithmetically, not as string concatenation. |
 | **`date`** | **Journal entry date** for the row. **Preferred:** a real **`date`** / **`datetime`** (or CEL timestamp) after attribute activation — same as other date fields. **Also accepted:** non-blank **ISO** **date** (`YYYY-MM-DD`) or **date-time** strings, using the same rules as **`day`** / **`month`** / **`match_date`** (string parsing is for that case). |
 
 ### On match (open cheque found for credit account + number)
@@ -138,7 +138,7 @@ The map includes at least:
 - **`dr-account`** — debit account **`name`** from the register row.
 - **`cheque-id`** — integer id (also read by CSV import when building **`journal_entries.cheque_id`**).
 - **`summary`** — register **`summary`** for the cheque.
-- **`cheque-amount`** — register **amount** as a **string** (e.g. `100.00`). This is **not** named **`amount`** so the CSV / rule **`amount`** used for posting stays the source of truth; authors can still read **`attr["cheque-amount"]`** (or **`attributes[...]`**) in later rules for comparisons or messaging.
+- **`cheque-amount`** — register **amount** as a **number** (IEEE double in CEL; in the Python bag after evaluation it is a **`float`**). This is **not** named **`amount`** so the CSV / rule **`amount`** used for posting stays the source of truth. Use **`attr["cheque-amount"]`** in later rules for arithmetic; precision matches other import-rule money that round-trips through doubles (see **`abs`** note under generic helpers).
 
 **`dr-party`:** included **only** when the register row has a **`party_id`** and that id resolves to a **party name** in the party snapshot. If there is no party on the cheque, **omit** **`dr-party`** entirely (do not set **`null`** or a placeholder), so earlier rules can still supply **`dr-party`** without being overwritten.
 
@@ -221,6 +221,6 @@ These functions are registered on the same CEL **`Environment`** as **`party`** 
 | *#57 follow-up* | CSV execute **422** **`row_errors[]`** may include **`debug`** (same shape as successful **`entries[]`**) when CEL ran before journal validation failed. |
 | *#50 ship* | **`abs`**, **`day`**, **`month`**, **`decode`**, **`defined`**, **`account_type`**, **`match_date`** — stdlib-style helpers; **`evaluate_cel(..., accounts=)`** wires **`list_accounts()`** for evaluate + CSV. Engine walks CEL results for embedded **`CELEvalError`** values so **`ImportRulesCelError`** from custom functions (including **`party_*`**) surfaces as **`ImportRulesCelError`** / HTTP **422** instead of being left inside the **`set`** map. |
 | *#92 ship* | **`cheque(account, nr, amt, date)`** — open-register map for **`set`**; **`evaluate_cel(..., cheques=)`** / CSV execute use **`list_cheques(status=open)`**; CSV maps **`cheque-id`** from the bag to **`JournalEntryWrite.cheque_id`**. |
-| *#92 follow-up* | **`cheque-amount`** on match (register figure, string); **`nr`** accepts numeric strings; **`_cel_int_param`** accepts trimmed integer strings (also used by **`match_date`** day/tolerance). |
+| *#92 follow-up* | **`cheque-amount`** on match (register figure as CEL double / Python **`float`**); **`nr`** accepts numeric strings; **`_cel_int_param`** accepts trimmed integer strings (also used by **`match_date`** day/tolerance). |
 
 Update this table whenever functions are added or signatures/semantics change.

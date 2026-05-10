@@ -743,9 +743,35 @@ def test_cel_cheque_match_sets_bag_and_omits_empty_review_messages() -> None:
     assert out.attributes["cheque-id"] == 99
     assert out.attributes["dr-account"] == "Rent Expense"
     assert out.attributes["summary"] == "May rent"
-    assert out.attributes["cheque-amount"] == "100.00"
+    assert out.attributes["cheque-amount"] == 100.0
     assert "review-messages" not in out.attributes
     assert out.review_messages == []
+
+
+def test_cel_cheque_amount_is_numeric_for_later_rules() -> None:
+    """cheque-amount must be a number so + is arithmetic, not string concat."""
+    cr = _account_row(id=10, name="Operating", type="asset")
+    dr = _account_row(id=20, name="Rent Expense", type="expense")
+    ch = _cheque_row(credit_account_id=10, debit_account_id=20, amount=Decimal("100.00"))
+    rs = CelRuleSet(
+        rules=[
+            CelRule(
+                sort_order=10,
+                expression='{"set": cheque("Operating", 42, attr["amt"], attr["entry_date"])}',
+            ),
+            CelRule(
+                sort_order=20,
+                expression='{"set": {"check_plus_one": attr["cheque-amount"] + 1}}',
+            ),
+        ],
+    )
+    out = evaluate_cel(
+        rs,
+        {"amt": Decimal("100.00"), "entry_date": date(2026, 5, 5)},
+        accounts=[cr, dr],
+        cheques=[ch],
+    )
+    assert out.attributes["check_plus_one"] == 101.0
 
 
 def test_cel_cheque_coerces_nr_from_numeric_string() -> None:
@@ -766,7 +792,7 @@ def test_cel_cheque_coerces_nr_from_numeric_string() -> None:
         cheques=[ch],
     )
     assert out.attributes["cheque-id"] == 1
-    assert out.attributes["cheque-amount"] == "100.00"
+    assert out.attributes["cheque-amount"] == 100.0
 
 
 def test_cel_cheque_accepts_entry_date_as_iso_string() -> None:
