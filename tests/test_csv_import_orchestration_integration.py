@@ -280,6 +280,9 @@ def test_csv_import_defaults_unallocated_debit_and_marks_requires_review(
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["entries"][0]["requires_review"] is True
+    rev = body["entries"][0]["review_messages"]
+    assert len(rev) == 1
+    assert rev[0]["message"] == "The debit amount is unallocated."
     lines = body["entries"][0]["lines"]
     debit_names = [ln["account_name"] for ln in lines if Decimal(ln["amount"]) > 0]
     credit_names = [ln["account_name"] for ln in lines if Decimal(ln["amount"]) < 0]
@@ -334,6 +337,7 @@ def test_csv_import_execute_default_import_account_avoids_unallocated_and_review
     assert r_explicit.status_code == 200, r_explicit.text
     body_explicit = r_explicit.json()
     assert body_explicit["entries"][0]["requires_review"] is False
+    assert body_explicit["entries"][0]["review_messages"] == []
     lines_e = body_explicit["entries"][0]["lines"]
     assert [ln["account_name"] for ln in lines_e if Decimal(ln["amount"]) > 0] == ["Chequing"]
     assert [ln["account_name"] for ln in lines_e if Decimal(ln["amount"]) < 0] == ["Rent Revenue"]
@@ -350,6 +354,7 @@ def test_csv_import_execute_default_import_account_avoids_unallocated_and_review
     assert r_infer.status_code == 200, r_infer.text
     body_infer = r_infer.json()
     assert body_infer["entries"][0]["requires_review"] is False
+    assert body_infer["entries"][0]["review_messages"] == []
     lines_i = body_infer["entries"][0]["lines"]
     assert [ln["account_name"] for ln in lines_i if Decimal(ln["amount"]) > 0] == ["Chequing"]
 

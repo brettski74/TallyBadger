@@ -46,8 +46,7 @@ def test_cel_evaluate_endpoint_happy_path(cel_evaluate_client: TestClient) -> No
     data = r.json()
     assert data["attributes"]["party"] == "BOB"
     assert data["attributes"]["amount"] == 150.5
-    assert data["require_review"] is True
-    assert data["review_reason"] == "confirm party"
+    assert data["review_messages"] == ["confirm party"]
 
 
 def test_cel_evaluate_endpoint_omits_debug_when_unused(cel_evaluate_client: TestClient) -> None:

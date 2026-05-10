@@ -97,12 +97,24 @@ class JournalLineOut(BaseModel):
     amount: Decimal
 
 
+class JournalEntryReviewMessageOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    message: str
+    created_at: datetime
+
+
 class JournalEntryWrite(BaseModel):
     entry_date: date
     summary: str = Field(min_length=1, max_length=200)
     description: str | None = Field(default=None, max_length=500)
     lines: list[JournalLineIn] = Field(min_length=2)
     requires_review: bool = False
+    """When true, at least one non-empty ``review_messages`` item is required (or existing messages on update)."""
+
+    review_messages: list[str] = Field(default_factory=list)
+    """New review reasons to append when creating or updating an entry (non-empty strings only)."""
 
 
 class JournalEntryOut(BaseModel):
@@ -116,6 +128,7 @@ class JournalEntryOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     lines: list[JournalLineOut]
+    review_messages: list[JournalEntryReviewMessageOut] = Field(default_factory=list)
 
 
 class JournalEntryListItem(BaseModel):
@@ -125,6 +138,7 @@ class JournalEntryListItem(BaseModel):
     entry_date: date
     summary: str
     description: str | None
+    requires_review: bool = False
     created_at: datetime
     updated_at: datetime
     debit_side_label: str

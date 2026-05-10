@@ -8,6 +8,7 @@ import {
   listJournalEntries,
   updateJournalEntry,
   type JournalEntryListItem,
+  type JournalEntryReviewMessage,
   type JournalEntryWrite,
 } from "../api/journalEntries";
 import { JournalEntryAttachmentsDialog } from "./JournalEntryAttachmentsDialog";
@@ -61,7 +62,7 @@ export function JournalEntriesPanel({
   const [formEntryDate, setFormEntryDate] = useState("");
   const [formSummary, setFormSummary] = useState("");
   const [formDescription, setFormDescription] = useState("");
-  const [formRequiresReview, setFormRequiresReview] = useState(false);
+  const [formReviewMessages, setFormReviewMessages] = useState<JournalEntryReviewMessage[]>([]);
   const [formLines, setFormLines] = useState<LineDraft[] | null>(null);
   const [formLoading, setFormLoading] = useState(false);
   const [formLoadError, setFormLoadError] = useState<string | null>(null);
@@ -119,7 +120,7 @@ export function JournalEntriesPanel({
     setFormEntryDate(new Date().toISOString().slice(0, 10));
     setFormSummary("");
     setFormDescription("");
-    setFormRequiresReview(false);
+    setFormReviewMessages([]);
     setFormLines(null);
     setFormLoadError(null);
     setView("form");
@@ -135,7 +136,7 @@ export function JournalEntriesPanel({
       setFormEntryDate(entry.entry_date);
       setFormSummary(entry.summary);
       setFormDescription(entry.description ?? "");
-      setFormRequiresReview(Boolean(entry.requires_review));
+      setFormReviewMessages(entry.review_messages ?? []);
       setFormLines(linesFromEntry(entry.lines));
     } catch (err) {
       setFormLoadError(err instanceof Error ? err.message : "Failed to load entry");
@@ -153,6 +154,14 @@ export function JournalEntriesPanel({
     }
     setView("list");
     await refreshList();
+  }
+
+  async function reloadReviewMessagesForEditor() {
+    if (editingId == null) {
+      return;
+    }
+    const entry = await getJournalEntry(editingId);
+    setFormReviewMessages(entry.review_messages ?? []);
   }
 
   function handleCancelForm() {
@@ -225,7 +234,9 @@ export function JournalEntriesPanel({
             initialEntryDate={formEntryDate}
             initialSummary={formSummary}
             initialDescription={formDescription}
-            initialRequiresReview={formRequiresReview}
+            reviewMessages={formReviewMessages}
+            entryId={editingId}
+            onReviewMessagesChanged={() => void reloadReviewMessagesForEditor()}
             initialLines={formLines}
             onSubmit={handleSubmit}
             onCancel={handleCancelForm}

@@ -66,8 +66,7 @@ class CelEvaluationResult(BaseModel):
     attributes: dict[str, Any]
     dropped: bool = False
     drop_reason: str | None = None
-    require_review: bool = False
-    review_reason: str | None = None
+    review_messages: list[str] = Field(default_factory=list)
     stopped_after_rule: str | None = None
     trace: list[CelTraceEvent] = Field(default_factory=list)
     debug: list[CelDebugEvent] | None = None

@@ -49,6 +49,7 @@ from tallybadger.ledger.models import (
     JournalEntryAttachmentOut,
     JournalEntryOut,
     JournalEntryListItem,
+    JournalEntryReviewMessageOut,
     JournalEntryWrite,
     JournalLineOut,
 )
@@ -59,6 +60,23 @@ class LedgerError(Exception):
 
 class LedgerValidationError(LedgerError):
     """Raised when business invariants are violated."""
+
+
+def _coerce_new_review_messages(payload: JournalEntryWrite) -> list[str]:
+    out: list[str] = []
+    for item in payload.review_messages:
+        s = str(item).strip()
+        if s:
+            out.append(s)
+    return out
+
+
+def _validate_review_request(payload: JournalEntryWrite, existing_message_count: int) -> None:
+    new_msgs = _coerce_new_review_messages(payload)
+    if payload.requires_review and not new_msgs and existing_message_count == 0:
+        raise LedgerValidationError(
+            "Flagging an entry for review requires at least one review message.",
+        )
 
 
 def read_upload_file_limited(file_obj: object, max_bytes: int) -> bytes:
@@ -1300,6 +1318,8 @@ class LedgerService:
     def create_entry(self, payload: JournalEntryWrite) -> JournalEntryOut:
         self._validate_summary(payload.summary)
         self._validate_lines(payload.lines)
+        _validate_review_request(payload, 0)
+        new_review = _coerce_new_review_messages(payload)
         try:
             with self._connection_factory() as conn:
                 with conn.transaction():
@@ -1309,14 +1329,13 @@ class LedgerService:
                         cur.execute(
                             """
                             INSERT INTO journal_entries (entry_date, summary, description, requires_review)
-                            VALUES (%s, %s, %s, %s)
+                            VALUES (%s, %s, %s, FALSE)
                             RETURNING id
                             """,
                             (
                                 payload.entry_date,
                                 payload.summary.strip(),
                                 payload.description,
-                                payload.requires_review,
                             ),
                         )
                         entry_id = cur.fetchone()["id"]
@@ -1331,6 +1350,7 @@ class LedgerService:
                                 (entry_id, line.account_id, line.party_id, line.amount),
                             )
                         self._assert_entry_balanced(cur, entry_id)
+                        self._insert_review_messages(cur, entry_id, new_review)
                     return self.get_entry(entry_id, conn=conn)
         except errors.ForeignKeyViolation as exc:
             raise LedgerValidationError("journal line references unknown account") from exc
@@ -1341,6 +1361,7 @@ class LedgerService:
         for payload in payloads:
             self._validate_summary(payload.summary)
             self._validate_lines(payload.lines)
+            _validate_review_request(payload, 0)
         created_ids: list[int] = []
         try:
             with self._connection_factory() as conn:
@@ -1352,14 +1373,13 @@ class LedgerService:
                             cur.execute(
                                 """
                                 INSERT INTO journal_entries (entry_date, summary, description, requires_review)
-                                VALUES (%s, %s, %s, %s)
+                                VALUES (%s, %s, %s, FALSE)
                                 RETURNING id
                                 """,
                                 (
                                     payload.entry_date,
                                     payload.summary.strip(),
                                     payload.description,
-                                    payload.requires_review,
                                 ),
                             )
                             entry_id = cur.fetchone()["id"]
@@ -1374,6 +1394,11 @@ class LedgerService:
                                     (entry_id, line.account_id, line.party_id, line.amount),
                                 )
                             self._assert_entry_balanced(cur, entry_id)
+                            self._insert_review_messages(
+                                cur,
+                                entry_id,
+                                _coerce_new_review_messages(payload),
+                            )
                             created_ids.append(entry_id)
                     return [self.get_entry(entry_id, conn=conn) for entry_id in created_ids]
         except errors.ForeignKeyViolation as exc:
@@ -1382,24 +1407,34 @@ class LedgerService:
     def update_entry(self, entry_id: int, payload: JournalEntryWrite) -> JournalEntryOut:
         self._validate_summary(payload.summary)
         self._validate_lines(payload.lines)
+        new_review = _coerce_new_review_messages(payload)
         try:
             with self._connection_factory() as conn:
                 with conn.transaction():
                     with conn.cursor(row_factory=dict_row) as cur:
+                        cur.execute(
+                            """
+                            SELECT COUNT(*)::int AS c
+                            FROM journal_entry_review_messages
+                            WHERE journal_entry_id = %s
+                            """,
+                            (entry_id,),
+                        )
+                        existing_review_ct = int(cur.fetchone()["c"])
+                        _validate_review_request(payload, existing_review_ct)
+
                         self._assert_all_line_accounts_exist(cur, payload.lines)
                         self._assert_all_line_parties_exist(cur, payload.lines)
                         cur.execute(
                             """
                             UPDATE journal_entries
-                            SET entry_date = %s, summary = %s, description = %s,
-                                requires_review = %s, updated_at = NOW()
+                            SET entry_date = %s, summary = %s, description = %s, updated_at = NOW()
                             WHERE id = %s
                             """,
                             (
                                 payload.entry_date,
                                 payload.summary.strip(),
                                 payload.description,
-                                payload.requires_review,
                                 entry_id,
                             ),
                         )
@@ -1421,9 +1456,39 @@ class LedgerService:
                                 (entry_id, line.account_id, line.party_id, line.amount),
                             )
                         self._assert_entry_balanced(cur, entry_id)
+                        self._insert_review_messages(cur, entry_id, new_review)
                     return self.get_entry(entry_id, conn=conn)
         except errors.ForeignKeyViolation as exc:
             raise LedgerValidationError("journal line references unknown account") from exc
+
+    def delete_journal_entry_review_message(self, entry_id: int, message_id: int) -> None:
+        with self._connection_factory() as conn:
+            with conn.transaction():
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT 1 FROM journal_entries WHERE id = %s",
+                        (entry_id,),
+                    )
+                    if cur.fetchone() is None:
+                        raise LedgerNotFoundError(f"journal entry {entry_id} not found")
+                    cur.execute(
+                        """
+                        DELETE FROM journal_entry_review_messages
+                        WHERE id = %s AND journal_entry_id = %s
+                        """,
+                        (message_id, entry_id),
+                    )
+
+    @staticmethod
+    def _insert_review_messages(cur, entry_id: int, messages: list[str]) -> None:
+        for msg in messages:
+            cur.execute(
+                """
+                INSERT INTO journal_entry_review_messages (journal_entry_id, message)
+                VALUES (%s, %s)
+                """,
+                (entry_id, msg),
+            )
 
     def delete_entry(self, entry_id: int) -> None:
         with self._connection_factory() as conn:
@@ -1471,7 +1536,21 @@ class LedgerService:
                     (entry_id,),
                 )
                 lines = [JournalLineOut.model_validate(row) for row in cur.fetchall()]
-            return JournalEntryOut.model_validate({**header, "lines": lines})
+
+                cur.execute(
+                    """
+                    SELECT id, message, created_at
+                    FROM journal_entry_review_messages
+                    WHERE journal_entry_id = %s
+                    ORDER BY id ASC
+                    """,
+                    (entry_id,),
+                )
+                review_rows = cur.fetchall()
+                review_messages = [JournalEntryReviewMessageOut.model_validate(r) for r in review_rows]
+            return JournalEntryOut.model_validate(
+                {**header, "lines": lines, "review_messages": review_messages},
+            )
         finally:
             if owns_connection:
                 connection_cm.__exit__(None, None, None)
