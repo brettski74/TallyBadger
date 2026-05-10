@@ -90,7 +90,7 @@ describe("JournalEntryForm", () => {
         initialEntryDate="2026-04-20"
         initialSummary="Rent accrual"
         initialDescription=""
-        initialRequiresReview={false}
+        reviewMessages={[]}
         initialLines={null}
         onSubmit={onSubmit}
         onCancel={() => {}}
@@ -123,6 +123,7 @@ describe("JournalEntryForm", () => {
         { account_id: 2, party_id: null, amount: "-250.00" },
       ],
       requires_review: false,
+      review_messages: [],
     });
   });
 
@@ -136,7 +137,7 @@ describe("JournalEntryForm", () => {
         initialEntryDate="2026-04-20"
         initialSummary="Unbalanced"
         initialDescription=""
-        initialRequiresReview={false}
+        reviewMessages={[]}
         initialLines={null}
         onSubmit={onSubmit}
         onCancel={() => {}}
@@ -169,7 +170,7 @@ describe("JournalEntryForm", () => {
         initialEntryDate="2026-04-20"
         initialSummary="API error test"
         initialDescription=""
-        initialRequiresReview={false}
+        reviewMessages={[]}
         initialLines={null}
         onSubmit={onSubmit}
         onCancel={() => {}}
@@ -207,7 +208,7 @@ describe("JournalEntryForm", () => {
         initialEntryDate="2026-03-01"
         initialSummary="Monthly rent"
         initialDescription="Rent"
-        initialRequiresReview={false}
+        reviewMessages={[]}
         initialLines={initialLines}
         onSubmit={onSubmit}
         onCancel={() => {}}
@@ -227,6 +228,7 @@ describe("JournalEntryForm", () => {
         { account_id: 2, party_id: null, amount: "-40" },
       ],
       requires_review: false,
+      review_messages: [],
     });
   });
 
@@ -239,7 +241,7 @@ describe("JournalEntryForm", () => {
         initialEntryDate="2026-04-20"
         initialSummary="Show active accounts"
         initialDescription=""
-        initialRequiresReview={false}
+        reviewMessages={[]}
         initialLines={null}
         onSubmit={vi.fn()}
         onCancel={() => {}}

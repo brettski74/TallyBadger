@@ -240,7 +240,7 @@ def _build_lines_from_simple(
     accounts_by_id: dict[int, AccountOut],
     default_import_account_id: int | None = None,
     default_import_normal_balance: str | None = None,
-) -> tuple[list[JournalLineIn], bool]:
+) -> tuple[list[JournalLineIn], bool, bool, bool]:
     dr = str(bag.get("dr-account") or "").strip()
     cr = str(bag.get("cr-account") or "").strip()
 
@@ -296,18 +296,23 @@ def _build_lines_from_simple(
     if cr_party_name and cr_party_name not in party_ids:
         raise ValueError(f"unknown party '{cr_party_name}'")
     defaulted_to_unallocated = used_unalloc_dr or used_unalloc_cr
-    return [
-        JournalLineIn(
-            account_id=account_ids[dr],
-            party_id=party_ids.get(dr_party_name) if dr_party_name else None,
-            amount=mag,
-        ),
-        JournalLineIn(
-            account_id=account_ids[cr],
-            party_id=party_ids.get(cr_party_name) if cr_party_name else None,
-            amount=-mag,
-        ),
-    ], defaulted_to_unallocated
+    return (
+        [
+            JournalLineIn(
+                account_id=account_ids[dr],
+                party_id=party_ids.get(dr_party_name) if dr_party_name else None,
+                amount=mag,
+            ),
+            JournalLineIn(
+                account_id=account_ids[cr],
+                party_id=party_ids.get(cr_party_name) if cr_party_name else None,
+                amount=-mag,
+            ),
+        ],
+        defaulted_to_unallocated,
+        used_unalloc_dr,
+        used_unalloc_cr,
+    )
 
 
 def _build_lines_from_array(
@@ -367,6 +372,7 @@ def _bag_to_journal_entry(
     *,
     ledger_settings: LedgerSettingsOut,
     accounts_by_id: dict[int, AccountOut],
+    cel_review_messages: list[str] | None = None,
     default_import_account_id: int | None = None,
     default_import_normal_balance: str | None = None,
 ) -> JournalEntryWrite:
@@ -376,13 +382,17 @@ def _bag_to_journal_entry(
     description = None if description_value is None else str(description_value).strip() or None
     has_line = _has_nonempty_line_array(bag)
     has_amount = _has_simple_amount(bag)
+    review_messages: list[str] = list(cel_review_messages or [])
     if has_line and has_amount:
         raise ValueError("do not provide both amount and line[]")
     if has_line:
         lines = _build_lines_from_array(bag, account_ids, party_ids)
-        requires_review = _truthy_rule_flag(bag.get("require_review"))
+        if _truthy_rule_flag(bag.get("require_review")):
+            review_messages.append(
+                "This entry was flagged for review by an import rule or column mapping.",
+            )
     elif has_amount:
-        lines, defaulted_unallocated = _build_lines_from_simple(
+        lines, _defaulted_unallocated, used_unalloc_dr, used_unalloc_cr = _build_lines_from_simple(
             bag,
             account_ids,
             party_ids,
@@ -391,17 +401,26 @@ def _bag_to_journal_entry(
             default_import_account_id=default_import_account_id,
             default_import_normal_balance=default_import_normal_balance,
         )
-        requires_review = defaulted_unallocated or _truthy_rule_flag(bag.get("require_review"))
+        if used_unalloc_dr:
+            review_messages.append("The debit amount is unallocated.")
+        if used_unalloc_cr:
+            review_messages.append("The credit amount is unallocated.")
+        if _truthy_rule_flag(bag.get("require_review")):
+            review_messages.append(
+                "This entry was flagged for review by an import rule or column mapping.",
+            )
     else:
         raise ValueError(
             "either amount (with optional dr-account/cr-account) or line[] is required",
         )
+    requires_review = len(review_messages) > 0
     return JournalEntryWrite(
         entry_date=entry_date,
         summary=summary,
         description=description,
         lines=lines,
         requires_review=requires_review,
+        review_messages=review_messages,
     )
 
 
@@ -472,7 +491,12 @@ def execute_csv_import(
                 dropped_rows += 1
                 continue
             bag = result.attributes
+            bag.pop("review", None)
+            bag.pop("review-messages", None)
             row_debug = list(result.debug) if result.debug else None
+            cel_msgs = list(result.review_messages)
+        else:
+            cel_msgs = []
 
         try:
             pending_entries.append(
@@ -482,6 +506,7 @@ def execute_csv_import(
                     party_ids,
                     ledger_settings=ledger_settings,
                     accounts_by_id=accounts_by_id,
+                    cel_review_messages=cel_msgs,
                     default_import_account_id=payload.default_import_account_id,
                     default_import_normal_balance=payload.default_import_normal_balance,
                 ),

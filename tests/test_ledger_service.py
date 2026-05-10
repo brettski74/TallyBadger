@@ -105,6 +105,7 @@ def test_update_entry_runs_inside_transaction() -> None:
     cur.rowcount = 1
     cur.fetchall.return_value = [{"id": 1}, {"id": 2}]
     cur.fetchone.side_effect = [
+        {"c": 0},
         {"is_active": True},
         {"is_active": True},
         {"line_count": 2, "total": Decimal("0")},

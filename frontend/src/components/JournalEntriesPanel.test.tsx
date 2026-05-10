@@ -65,6 +65,7 @@ describe("JournalEntriesPanel", () => {
       requires_review: false,
       created_at: "2026-04-01T00:00:00Z",
       updated_at: "2026-04-01T00:00:00Z",
+      review_messages: [],
       lines: [
         { id: 10, account_id: 1, party_id: 1, amount: "25.00", account_name: "Cash", party_name: "Acme Yard Maintenance" },
         { id: 11, account_id: 2, party_id: 1, amount: "-25.00", account_name: "Income", party_name: "Acme Yard Maintenance" },
@@ -236,6 +237,7 @@ describe("JournalEntriesPanel", () => {
       requires_review: false,
       created_at: "2026-04-01T00:00:00Z",
       updated_at: "2026-04-01T00:00:00Z",
+      review_messages: [],
       lines: [
         {
           id: 10,

@@ -256,6 +256,38 @@ def _normalize_rule_output(result: Any, rule_label: str) -> dict[str, Any] | Non
     return py
 
 
+def _append_review_string(rule_label: str, value: Any, acc: list[str]) -> None:
+    if value is None:
+        return
+    if not isinstance(value, str):
+        raise ImportRulesCelError(f"CEL rule {rule_label}: `review` must be null or a string")
+    text = value.strip()
+    if not text:
+        raise ImportRulesCelError(
+            f"CEL rule {rule_label}: `review` must be a non-empty string when provided",
+        )
+    acc.append(text)
+
+
+def _append_review_messages_list(rule_label: str, value: Any, acc: list[str]) -> None:
+    if value is None:
+        return
+    if not isinstance(value, (list, tuple)):
+        raise ImportRulesCelError(
+            f"CEL rule {rule_label}: `review-messages` must be null or a list",
+        )
+    for i, item in enumerate(value):
+        if item is None:
+            continue
+        if not isinstance(item, str):
+            raise ImportRulesCelError(
+                f"CEL rule {rule_label}: `review-messages[{i}]` must be a string",
+            )
+        s = item.strip()
+        if s:
+            acc.append(s)
+
+
 def evaluate_cel(
     rule_set: CelRuleSet,
     attributes: dict[str, Any],
@@ -280,8 +312,7 @@ def evaluate_cel(
     }
     dropped = False
     drop_reason: str | None = None
-    require_review = False
-    review_reason: str | None = None
+    review_messages: list[str] = []
     stopped_after_rule: str | None = None
 
     env = Environment()
@@ -352,6 +383,29 @@ def evaluate_cel(
             raise ImportRulesCelError(f"CEL rule {label}: `set` must be a map/object")
         for k, v in set_map.items():
             key = str(k)
+            if key == "review":
+                before = len(review_messages)
+                _append_review_string(label, v, review_messages)
+                if len(review_messages) > before:
+                    trace.append(
+                        CelTraceEvent(
+                            event="require_review",
+                            detail={"rule": label, "review": review_messages[-1]},
+                        ),
+                    )
+                continue
+            if key == "review-messages":
+                before = len(review_messages)
+                _append_review_messages_list(label, v, review_messages)
+                added = review_messages[before:]
+                if added:
+                    trace.append(
+                        CelTraceEvent(
+                            event="require_review_messages",
+                            detail={"rule": label, "messages": added},
+                        ),
+                    )
+                continue
             if v is CEL_ATTRIBUTE_BAG_UNSET:
                 bag.pop(key, None)
                 trace.append(CelTraceEvent(event="remove_attribute", detail={"rule": label, "name": key}))
@@ -361,19 +415,34 @@ def evaluate_cel(
 
         stop = payload.get("stop")
         drop = payload.get("drop")
-        review = payload.get("review")
 
         if stop is not None and not isinstance(stop, str):
             raise ImportRulesCelError(f"CEL rule {label}: `stop` must be null or string")
         if drop is not None and not isinstance(drop, str):
             raise ImportRulesCelError(f"CEL rule {label}: `drop` must be null or string")
-        if review is not None and not isinstance(review, str):
-            raise ImportRulesCelError(f"CEL rule {label}: `review` must be null or string")
 
-        if review is not None:
-            require_review = True
-            review_reason = review
-            trace.append(CelTraceEvent(event="require_review", detail={"rule": label, "reason": review}))
+        before_top = len(review_messages)
+        _append_review_string(label, payload.get("review"), review_messages)
+        if len(review_messages) > before_top:
+            trace.append(
+                CelTraceEvent(
+                    event="require_review",
+                    detail={"rule": label, "review": review_messages[-1]},
+                ),
+            )
+        before_list = len(review_messages)
+        _append_review_messages_list(label, payload.get("review-messages"), review_messages)
+        added_list = review_messages[before_list:]
+        if added_list:
+            trace.append(
+                CelTraceEvent(
+                    event="require_review_messages",
+                    detail={"rule": label, "messages": added_list},
+                ),
+            )
+
+        bag.pop("review", None)
+        bag.pop("review-messages", None)
 
         if drop is not None:
             dropped = True
@@ -386,13 +455,15 @@ def evaluate_cel(
             trace.append(CelTraceEvent(event="stop", detail={"rule": label, "reason": stop}))
             break
 
+    bag.pop("review", None)
+    bag.pop("review-messages", None)
+
     debug_out: list[CelDebugEvent] | None = debug_records if debug_records else None
     return CelEvaluationResult(
         attributes=bag,
         dropped=dropped,
         drop_reason=drop_reason,
-        require_review=require_review,
-        review_reason=review_reason,
+        review_messages=review_messages,
         stopped_after_rule=stopped_after_rule,
         trace=trace,
         debug=debug_out,

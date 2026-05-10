@@ -10,6 +10,12 @@ export interface JournalLineOut {
   amount: string;
 }
 
+export interface JournalEntryReviewMessage {
+  id: number;
+  message: string;
+  created_at: string;
+}
+
 export interface JournalEntryOut {
   id: number;
   entry_date: string;
@@ -19,6 +25,7 @@ export interface JournalEntryOut {
   created_at: string;
   updated_at: string;
   lines: JournalLineOut[];
+  review_messages: JournalEntryReviewMessage[];
 }
 
 export interface JournalEntryListItem {
@@ -47,6 +54,7 @@ export interface JournalEntryWrite {
   description: string | null;
   lines: JournalLineIn[];
   requires_review?: boolean;
+  review_messages?: string[];
 }
 
 export interface ListJournalEntriesParams {
@@ -119,4 +127,17 @@ export async function updateJournalEntry(
     throw new Error(await readApiErrorMessage(response));
   }
   return response.json();
+}
+
+export async function deleteJournalEntryReviewMessage(
+  entryId: number,
+  messageId: number,
+): Promise<void> {
+  const response = await fetch(
+    `${getApiBase()}/journal-entries/${entryId}/review-messages/${messageId}`,
+    { method: "DELETE" },
+  );
+  if (!response.ok) {
+    throw new Error(await readApiErrorMessage(response));
+  }
 }

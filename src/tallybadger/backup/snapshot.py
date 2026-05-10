@@ -29,6 +29,7 @@ from tallybadger.backup.errors import (
 FORMAT_VERSION_HISTORY: tuple[str, ...] = (
     "1.0.0",
     "1.1.0",
+    "1.2.0",
 )
 
 
@@ -56,20 +57,8 @@ CONFIGURATION_TABLES: tuple[str, ...] = (
     "import_templates",
 )
 
-FINANCIAL_TABLES_CORE: tuple[str, ...] = (
-    "journal_entries",
-    "journal_lines",
-    "accrual_obligations",
-    "settlement_events",
-    "settlement_allocations",
-)
-
 # Journal entry attachment metadata + links (``format_version`` ≥ 1.1.0, complete/financial only).
 ATTACHMENT_SNAPSHOT_TABLES: tuple[str, ...] = ("attachments", "journal_entry_attachments")
-
-FINANCIAL_TABLES: tuple[str, ...] = FINANCIAL_TABLES_CORE + ATTACHMENT_SNAPSHOT_TABLES
-
-COMPLETE_TABLES: tuple[str, ...] = CONFIGURATION_TABLES + FINANCIAL_TABLES
 
 SUPPORTED_EXPORT_TYPES: frozenset[str] = frozenset({"complete", "configuration", "financial"})
 
@@ -97,11 +86,40 @@ def snapshot_includes_attachment_tables(format_version: str) -> bool:
     return _format_version_tuple(format_version) >= (1, 1, 0)
 
 
+def financial_tables_core(format_version: str) -> tuple[str, ...]:
+    """Journal-related tables in load order (parents before dependents where required)."""
+    parts: list[str] = ["journal_entries"]
+    if _format_version_tuple(format_version) >= (1, 2, 0):
+        parts.append("journal_entry_review_messages")
+    parts.extend(
+        [
+            "journal_lines",
+            "accrual_obligations",
+            "settlement_events",
+            "settlement_allocations",
+        ],
+    )
+    return tuple(parts)
+
+
+def financial_tables_for_format(format_version: str) -> tuple[str, ...]:
+    """Financial snapshot members for ``format_version`` (core ± attachment sidecars)."""
+    core = financial_tables_core(format_version)
+    if snapshot_includes_attachment_tables(format_version):
+        return core + ATTACHMENT_SNAPSHOT_TABLES
+    return core
+
+
+COMPLETE_TABLES: tuple[str, ...] = CONFIGURATION_TABLES + financial_tables_for_format(
+    export_format_version(),
+)
+
+
 def tables_for_import(export_type: str, format_version: str) -> tuple[str, ...]:
     """Table JSON members expected for this ``export_type`` and archive ``format_version``."""
     if export_type == "configuration":
         return CONFIGURATION_TABLES
-    fin = FINANCIAL_TABLES if snapshot_includes_attachment_tables(format_version) else FINANCIAL_TABLES_CORE
+    fin = financial_tables_for_format(format_version)
     if export_type == "financial":
         return fin
     if export_type == "complete":
@@ -257,6 +275,7 @@ def _truncate_complete_scope(conn: Connection) -> None:
               settlement_events,
               accrual_obligations,
               journal_lines,
+              journal_entry_review_messages,
               journal_entry_attachments,
               attachments,
               journal_entries,
@@ -566,6 +585,15 @@ def _validate_complete_fk_graph(payloads: dict[str, list[dict[str, Any]]]) -> No
                 f"journal_entries[{i}] accrual_plan_id={ap} has no matching row in accrual_plans.json"
             )
 
+    if "journal_entry_review_messages" in payloads:
+        for i, row in enumerate(payloads["journal_entry_review_messages"]):
+            eid = int(row["journal_entry_id"])
+            if eid not in je:
+                raise SnapshotValidationError(
+                    f"journal_entry_review_messages[{i}] journal_entry_id={eid} "
+                    "has no matching row in journal_entries.json"
+                )
+
     for i, row in enumerate(payloads["journal_lines"]):
         if int(row["entry_id"]) not in je:
             raise SnapshotValidationError(
@@ -671,6 +699,15 @@ def _validate_financial_fks(
                 "(financial snapshots do not include accrual_plans; import configuration first "
                 "or fix the snapshot)."
             )
+
+    if "journal_entry_review_messages" in payloads:
+        for i, row in enumerate(payloads["journal_entry_review_messages"]):
+            eid = int(row["journal_entry_id"])
+            if eid not in je:
+                raise SnapshotValidationError(
+                    f"journal_entry_review_messages[{i}] journal_entry_id={eid} "
+                    "has no matching row in journal_entries.json"
+                )
 
     for i, row in enumerate(payloads["journal_lines"]):
         if int(row["entry_id"]) not in je:
@@ -928,6 +965,7 @@ def _resync_serials(conn: Connection) -> None:
         "accrual_plans",
         "cel_rule_sets",
         "journal_entries",
+        "journal_entry_review_messages",
         "journal_lines",
         "accrual_obligations",
         "settlement_events",

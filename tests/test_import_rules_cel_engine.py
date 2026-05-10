@@ -105,9 +105,37 @@ def test_stop_drop_review_are_nullable_reason_strings() -> None:
     )
     out = evaluate_cel(rs, {})
     assert out.attributes["x"] == 2
-    assert out.require_review is True
-    assert out.review_reason == "needs eyeballs"
+    assert out.review_messages == ["needs eyeballs"]
     assert out.stopped_after_rule == "b"
+
+
+def test_review_messages_accumulate_across_rules() -> None:
+    rs = CelRuleSet(
+        rules=[
+            CelRule(sort_order=10, expression='{"review":"first"}'),
+            CelRule(sort_order=20, expression='{"review":"second"}'),
+        ],
+    )
+    out = evaluate_cel(rs, {})
+    assert out.review_messages == ["first", "second"]
+
+
+def test_review_in_set_map_does_not_enter_attribute_bag() -> None:
+    rs = CelRuleSet(
+        rules=[
+            CelRule(expression='{"set":{"review":"side channel","x":1}}'),
+        ],
+    )
+    out = evaluate_cel(rs, {})
+    assert out.review_messages == ["side channel"]
+    assert out.attributes.get("x") == 1
+    assert "review" not in out.attributes
+
+
+def test_empty_top_level_review_string_rejected() -> None:
+    rs = CelRuleSet(rules=[CelRule(expression='{"review":""}')])
+    with pytest.raises(ImportRulesCelError, match="non-empty"):
+        evaluate_cel(rs, {})
 
 
 def test_drop_stops_and_sets_reason() -> None:

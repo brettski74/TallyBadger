@@ -115,6 +115,7 @@ def _seed_balance_sheet_data(ledger_service: LedgerService) -> None:
             summary="repair pending review",
             description=None,
             requires_review=True,
+            review_messages=["Repair expense needs classification."],
             lines=[
                 JournalLineIn(account_id=cash.id, amount=Decimal("-50.00")),
                 JournalLineIn(account_id=expense.id, amount=Decimal("50.00")),

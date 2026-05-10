@@ -286,6 +286,21 @@ def get_journal_entry(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+@router.delete(
+    "/journal-entries/{entry_id}/review-messages/{message_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_journal_entry_review_message(
+    entry_id: int,
+    message_id: int,
+    service: LedgerService = Depends(get_ledger_service),
+) -> None:
+    try:
+        service.delete_journal_entry_review_message(entry_id, message_id)
+    except LedgerNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @router.put("/journal-entries/{entry_id}", response_model=JournalEntryOut)
 def update_journal_entry(
     entry_id: int,

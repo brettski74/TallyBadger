@@ -2,7 +2,11 @@ import { useMemo, useState } from "react";
 
 import type { Account } from "../api/accounts";
 import type { Party } from "../api/parties";
-import type { JournalEntryWrite } from "../api/journalEntries";
+import {
+  deleteJournalEntryReviewMessage,
+  type JournalEntryReviewMessage,
+  type JournalEntryWrite,
+} from "../api/journalEntries";
 import { accountsForJournalLinePickers } from "../journal/accountSelect";
 
 export interface LineDraft {
@@ -85,8 +89,12 @@ export interface JournalEntryFormProps {
   initialEntryDate: string;
   initialSummary: string;
   initialDescription: string;
-  initialRequiresReview: boolean;
+  reviewMessages: JournalEntryReviewMessage[];
   initialLines: LineDraft[] | null;
+  /** Set in edit mode so review messages can be cleared via the API. */
+  entryId?: number | null;
+  /** Called after a review message is removed (refetch entry in the parent). */
+  onReviewMessagesChanged?: () => void | Promise<void>;
   onSubmit: (payload: JournalEntryWrite) => Promise<void>;
   onCancel: () => void;
   /** Shown in edit mode to open the journal entry attachments dialog. */
@@ -100,8 +108,10 @@ export function JournalEntryForm({
   initialEntryDate,
   initialSummary,
   initialDescription,
-  initialRequiresReview,
+  reviewMessages,
   initialLines,
+  entryId = null,
+  onReviewMessagesChanged,
   onSubmit,
   onCancel,
   onOpenAttachments,
@@ -109,13 +119,14 @@ export function JournalEntryForm({
   const [entryDate, setEntryDate] = useState(initialEntryDate);
   const [summary, setSummary] = useState(initialSummary);
   const [description, setDescription] = useState(initialDescription);
-  const [requiresReview, setRequiresReview] = useState(initialRequiresReview);
+  const [newReviewNote, setNewReviewNote] = useState("");
   const [lines, setLines] = useState<LineDraft[]>(() =>
     initialLines && initialLines.length > 0 ? initialLines : emptyLines(2),
   );
   const [clientError, setClientError] = useState<string | null>(null);
   const [apiError, setApiError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [dismissingId, setDismissingId] = useState<number | null>(null);
 
   const lineAccountIds = useMemo(
     () =>
@@ -200,6 +211,8 @@ export function JournalEntryForm({
     setClientError(null);
     setApiError(null);
 
+    const trimmedNote = newReviewNote.trim();
+
     for (const line of lines) {
       const hasAmt = line.amount.trim() !== "";
       const hasAcct = line.account_id !== "";
@@ -226,6 +239,7 @@ export function JournalEntryForm({
       return;
     }
 
+    const requiresReview = reviewMessages.length > 0 || Boolean(trimmedNote);
     const payload: JournalEntryWrite = {
       entry_date: entryDate,
       summary: summary.trim(),
@@ -236,6 +250,7 @@ export function JournalEntryForm({
         amount: l.amount.trim(),
       })),
       requires_review: requiresReview,
+      review_messages: trimmedNote ? [trimmedNote] : [],
     };
 
     setSubmitting(true);
@@ -319,15 +334,58 @@ export function JournalEntryForm({
         />
       </label>
 
-      <label className="checkbox">
-        <input
-          aria-label="Requires review"
-          type="checkbox"
-          checked={requiresReview}
-          onChange={(e) => setRequiresReview(e.target.checked)}
+      {reviewMessages.length > 0 ? (
+        <div className="journal-review-messages" role="region" aria-label="Review messages">
+          <h3 className="journal-review-messages-title">Needs review</h3>
+          <ul className="journal-review-messages-list">
+            {reviewMessages.map((m) => (
+              <li key={m.id} className="journal-review-message-row">
+                <span className="journal-review-message-text">{m.message}</span>
+                {mode === "edit" && entryId != null ? (
+                  <button
+                    type="button"
+                    className="button-secondary journal-review-message-clear"
+                    disabled={dismissingId === m.id}
+                    aria-label={`Clear review message: ${m.message.slice(0, 80)}`}
+                    onClick={() => {
+                      void (async () => {
+                        setApiError(null);
+                        setDismissingId(m.id);
+                        try {
+                          await deleteJournalEntryReviewMessage(entryId, m.id);
+                          await onReviewMessagesChanged?.();
+                        } catch (err) {
+                          setApiError(err instanceof Error ? err.message : "Could not clear message");
+                        } finally {
+                          setDismissingId(null);
+                        }
+                      })();
+                    }}
+                  >
+                    {dismissingId === m.id ? "Clearing…" : "Clear"}
+                  </button>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      <label>
+        Add review note (optional)
+        <textarea
+          aria-label="New review message"
+          className="journal-review-note-input"
+          rows={2}
+          value={newReviewNote}
+          onChange={(e) => setNewReviewNote(e.target.value)}
+          placeholder="Each save can append one new reason (e.g. confirm allocation)."
         />
-        Flag for review (e.g. after import to suspense — clear when reclassified)
       </label>
+      <p className="muted journal-review-hint">
+        Reasons you add are stored separately. Clear a message when it no longer applies; when none remain, the entry is
+        no longer flagged for review.
+      </p>
 
       <div
         className={`balance-banner ${balanced && hasMinimumMaterialLines ? "balance-ok" : "balance-bad"}`}

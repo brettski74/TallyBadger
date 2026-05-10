@@ -389,6 +389,54 @@ th {
   background: #fffbeb;
 }
 
+.journal-review-messages {
+  border: 1px solid #dc2626;
+  background: #fef2f2;
+  color: #991b1b;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  margin: 0.75rem 0;
+}
+
+.journal-review-messages-title {
+  margin: 0 0 0.5rem 0;
+  font-size: 1rem;
+}
+
+.journal-review-messages-list {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+
+.journal-review-message-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.journal-review-message-text {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+
+.journal-review-message-clear {
+  flex: 0 0 auto;
+}
+
+.journal-review-note-input {
+  width: 100%;
+  margin-top: 0.35rem;
+  box-sizing: border-box;
+}
+
+.journal-review-hint {
+  margin: 0.35rem 0 0 0;
+  font-size: 0.9rem;
+}
+
 .journal-lines th:last-child,
 .journal-lines td:last-child {
   width: 6rem;

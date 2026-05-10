@@ -32,12 +32,12 @@ from tallybadger.backup.errors import (
 from tallybadger.backup.snapshot import (
     COMPLETE_TABLES,
     CONFIGURATION_TABLES,
-    FINANCIAL_TABLES,
     attachment_blob_member_path,
     current_schema_version,
     export_complete_snapshot,
     export_format_version,
     export_snapshot,
+    financial_tables_for_format,
     import_complete_snapshot,
     import_snapshot,
     snapshot_table_counts,
@@ -593,7 +593,7 @@ def test_financial_export_has_only_financial_members(
     meta = json.loads(zf.read("metadata.json").decode("utf-8"))
     assert meta["export_type"] == "financial"
     data_members = names - {"metadata.json"}
-    assert data_members == {f"{t}.json" for t in FINANCIAL_TABLES}
+    assert data_members == {f"{t}.json" for t in financial_tables_for_format(export_format_version())}
 
 
 def test_configuration_then_financial_two_step_import(
