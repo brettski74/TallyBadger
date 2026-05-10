@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 
 import type { Account } from "../api/accounts";
+import type { Cheque } from "../api/cheques";
+import { getCheque, listCheques } from "../api/cheques";
 import type { Party } from "../api/parties";
 import {
   createJournalEntry,
@@ -66,6 +68,8 @@ export function JournalEntriesPanel({
   const [formLines, setFormLines] = useState<LineDraft[] | null>(null);
   const [formLoading, setFormLoading] = useState(false);
   const [formLoadError, setFormLoadError] = useState<string | null>(null);
+  const [formChequeChoices, setFormChequeChoices] = useState<Cheque[]>([]);
+  const [formInitialChequeId, setFormInitialChequeId] = useState<number | null>(null);
   const [attachmentsEntryId, setAttachmentsEntryId] = useState<number | null>(null);
 
   const refreshList = useCallback(async () => {
@@ -115,8 +119,9 @@ export function JournalEntriesPanel({
     }
   }
 
-  function openCreate() {
+  async function openCreate() {
     setEditingId(null);
+    setFormInitialChequeId(null);
     setFormEntryDate(new Date().toISOString().slice(0, 10));
     setFormSummary("");
     setFormDescription("");
@@ -124,6 +129,15 @@ export function JournalEntriesPanel({
     setFormLines(null);
     setFormLoadError(null);
     setView("form");
+    setFormLoading(true);
+    try {
+      const open = await listCheques({ status: "open" });
+      setFormChequeChoices(open);
+    } catch {
+      setFormChequeChoices([]);
+    } finally {
+      setFormLoading(false);
+    }
   }
 
   async function openEdit(id: number) {
@@ -132,7 +146,20 @@ export function JournalEntriesPanel({
     setFormLoading(true);
     setView("form");
     try {
-      const entry = await getJournalEntry(id);
+      const [entry, open] = await Promise.all([
+        getJournalEntry(id),
+        listCheques({ status: "open" }),
+      ]);
+      let choices = [...open];
+      const cid = entry.cheque_id ?? null;
+      if (cid != null) {
+        const linked = await getCheque(cid);
+        if (!choices.some((c) => c.id === linked.id)) {
+          choices = [...choices, linked];
+        }
+      }
+      setFormChequeChoices(choices);
+      setFormInitialChequeId(cid);
       setFormEntryDate(entry.entry_date);
       setFormSummary(entry.summary);
       setFormDescription(entry.description ?? "");
@@ -141,6 +168,8 @@ export function JournalEntriesPanel({
     } catch (err) {
       setFormLoadError(err instanceof Error ? err.message : "Failed to load entry");
       setFormLines(null);
+      setFormChequeChoices([]);
+      setFormInitialChequeId(null);
     } finally {
       setFormLoading(false);
     }
@@ -170,6 +199,8 @@ export function JournalEntriesPanel({
     setFormSummary("");
     setFormLines(null);
     setFormLoadError(null);
+    setFormChequeChoices([]);
+    setFormInitialChequeId(null);
   }
 
   if (accountsLoading && accounts.length === 0) {
@@ -203,7 +234,7 @@ export function JournalEntriesPanel({
       return (
         <>
           {attachmentsDialog}
-          <p>Loading entry…</p>
+          <p>{editingId == null ? "Loading…" : "Loading entry…"}</p>
         </>
       );
     }
@@ -243,6 +274,8 @@ export function JournalEntriesPanel({
             onOpenAttachments={
               editingId != null ? () => setAttachmentsEntryId(editingId) : undefined
             }
+            chequeLinkChoices={formChequeChoices}
+            initialChequeId={formInitialChequeId}
           />
         </section>
       </>
@@ -260,7 +293,7 @@ export function JournalEntriesPanel({
       )}
       <div className="journal-list-toolbar">
         <h2>Journal entries</h2>
-        <button type="button" onClick={openCreate} disabled={accounts.length < 2}>
+        <button type="button" onClick={() => void openCreate()} disabled={accounts.length < 2}>
           New entry
         </button>
       </div>

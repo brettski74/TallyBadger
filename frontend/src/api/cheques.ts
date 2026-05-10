@@ -52,6 +52,14 @@ export async function listCheques(params: { status?: ChequeListStatus } = {}): P
   return response.json();
 }
 
+export async function getCheque(chequeId: number): Promise<Cheque> {
+  const response = await fetch(`${getApiBase()}/cheques/${chequeId}`);
+  if (!response.ok) {
+    throw new Error(await readApiErrorMessage(response));
+  }
+  return response.json();
+}
+
 export async function createCheque(payload: ChequeCreateInput): Promise<Cheque> {
   const response = await fetch(`${getApiBase()}/cheques`, {
     method: "POST",

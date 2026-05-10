@@ -22,6 +22,7 @@ export interface JournalEntryOut {
   summary: string;
   description: string | null;
   requires_review: boolean;
+  cheque_id: number | null;
   created_at: string;
   updated_at: string;
   lines: JournalLineOut[];
@@ -34,6 +35,7 @@ export interface JournalEntryListItem {
   summary: string;
   description: string | null;
   requires_review: boolean;
+  cheque_id: number | null;
   created_at: string;
   updated_at: string;
   debit_side_label: string;
@@ -55,6 +57,7 @@ export interface JournalEntryWrite {
   lines: JournalLineIn[];
   requires_review?: boolean;
   review_messages?: string[];
+  cheque_id?: number | null;
 }
 
 export interface ListJournalEntriesParams {

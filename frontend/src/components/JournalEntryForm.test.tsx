@@ -124,6 +124,7 @@ describe("JournalEntryForm", () => {
       ],
       requires_review: false,
       review_messages: [],
+      cheque_id: null,
     });
   });
 
@@ -229,6 +230,7 @@ describe("JournalEntryForm", () => {
       ],
       requires_review: false,
       review_messages: [],
+      cheque_id: null,
     });
   });
 

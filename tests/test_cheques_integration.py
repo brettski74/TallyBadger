@@ -14,8 +14,8 @@ from psycopg import connect
 from psycopg.rows import dict_row
 
 from tallybadger.db_migrations import apply_sql_migrations
-from tallybadger.ledger.models import AccountCreate, JournalEntryWrite, JournalLineIn
-from tallybadger.ledger.service import LedgerService
+from tallybadger.ledger.models import AccountCreate, ChequeCreate, JournalEntryWrite, JournalLineIn
+from tallybadger.ledger.service import LedgerService, LedgerValidationError
 from tallybadger.main import app
 
 pytestmark = pytest.mark.integration
@@ -203,7 +203,7 @@ def test_cleared_cheque_cannot_void_via_api(api_client: TestClient, ledger_servi
     assert bad.status_code == 422
 
 
-def test_journal_unlink_reopens_cleared_cheque(
+def test_journal_create_marks_cheque_cleared(
     api_client: TestClient,
     ledger_service: LedgerService,
 ) -> None:
@@ -221,11 +221,117 @@ def test_journal_unlink_reopens_cleared_cheque(
     )
     assert ch.status_code == 201
     cheque_id = ch.json()["id"]
-    mark_cleared = api_client.patch(
-        f"/cheques/{cheque_id}",
-        json={"status": "cleared", "cleared_date": "2026-05-05"},
+
+    entry = ledger_service.create_entry(
+        JournalEntryWrite(
+            entry_date=date(2026, 5, 5),
+            summary="Clearing",
+            lines=[
+                JournalLineIn(account_id=dr_id, amount=Decimal("75.00")),
+                JournalLineIn(account_id=cr_id, amount=Decimal("-75.00")),
+            ],
+            cheque_id=cheque_id,
+        )
     )
-    assert mark_cleared.status_code == 200, mark_cleared.text
+    assert entry.cheque_id == cheque_id
+
+    reg = api_client.get(f"/cheques/{cheque_id}")
+    assert reg.status_code == 200
+    data = reg.json()
+    assert data["status"] == "cleared"
+    assert data["cleared_date"] == "2026-05-05"
+
+
+def test_journal_second_entry_cannot_link_same_cheque(ledger_service: LedgerService) -> None:
+    cr_id, dr_id = _two_accounts(ledger_service)
+    ch = ledger_service.create_cheque(
+        ChequeCreate(
+            credit_account_id=cr_id,
+            debit_account_id=dr_id,
+            summary="Dup test",
+            cheque_number=101,
+            issue_date=date(2026, 5, 1),
+            amount=Decimal("10.00"),
+        )
+    )
+    ledger_service.create_entry(
+        JournalEntryWrite(
+            entry_date=date(2026, 5, 2),
+            summary="First",
+            lines=[
+                JournalLineIn(account_id=dr_id, amount=Decimal("10.00")),
+                JournalLineIn(account_id=cr_id, amount=Decimal("-10.00")),
+            ],
+            cheque_id=ch.id,
+        )
+    )
+    with pytest.raises(LedgerValidationError, match="already cleared"):
+        ledger_service.create_entry(
+            JournalEntryWrite(
+                entry_date=date(2026, 5, 3),
+                summary="Second",
+                lines=[
+                    JournalLineIn(account_id=dr_id, amount=Decimal("10.00")),
+                    JournalLineIn(account_id=cr_id, amount=Decimal("-10.00")),
+                ],
+                cheque_id=ch.id,
+            )
+        )
+
+
+def test_journal_cannot_link_void_cheque(
+    api_client: TestClient,
+    ledger_service: LedgerService,
+) -> None:
+    cr_id, dr_id = _two_accounts(ledger_service)
+    ch = api_client.post(
+        "/cheques",
+        json={
+            "credit_account_id": cr_id,
+            "debit_account_id": dr_id,
+            "summary": "Voided",
+            "cheque_number": 102,
+            "issue_date": "2026-05-04",
+            "amount": "5.00",
+        },
+    )
+    assert ch.status_code == 201
+    cheque_id = ch.json()["id"]
+    voided = api_client.patch(f"/cheques/{cheque_id}", json={"status": "void"})
+    assert voided.status_code == 200, voided.text
+
+    with pytest.raises(LedgerValidationError, match="void"):
+        ledger_service.create_entry(
+            JournalEntryWrite(
+                entry_date=date(2026, 5, 5),
+                summary="Bad",
+                lines=[
+                    JournalLineIn(account_id=dr_id, amount=Decimal("5.00")),
+                    JournalLineIn(account_id=cr_id, amount=Decimal("-5.00")),
+                ],
+                cheque_id=cheque_id,
+            )
+        )
+
+
+def test_journal_unlink_reopens_cleared_cheque(
+    api_client: TestClient,
+    ledger_service: LedgerService,
+) -> None:
+    cr_id, dr_id = _two_accounts(ledger_service)
+    ch = api_client.post(
+        "/cheques",
+        json={
+            "credit_account_id": cr_id,
+            "debit_account_id": dr_id,
+            "summary": "To clear",
+            "cheque_number": 103,
+            "issue_date": "2026-05-04",
+            "amount": "75.00",
+        },
+    )
+    assert ch.status_code == 201
+    cheque_id = ch.json()["id"]
 
     entry = ledger_service.create_entry(
         JournalEntryWrite(

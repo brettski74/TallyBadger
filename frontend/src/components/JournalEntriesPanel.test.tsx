@@ -49,6 +49,7 @@ describe("JournalEntriesPanel", () => {
         summary: "Rent accrual",
         description: "Test",
         requires_review: false,
+        cheque_id: null,
         created_at: "2026-04-01T00:00:00Z",
         updated_at: "2026-04-01T00:00:00Z",
         debit_side_label: "Cash",
@@ -63,6 +64,7 @@ describe("JournalEntriesPanel", () => {
       summary: "Rent accrual",
       description: "Test",
       requires_review: false,
+      cheque_id: null,
       created_at: "2026-04-01T00:00:00Z",
       updated_at: "2026-04-01T00:00:00Z",
       review_messages: [],
@@ -75,6 +77,9 @@ describe("JournalEntriesPanel", () => {
     vi.spyOn(global, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
       const method = init?.method ?? "GET";
+      if (url.includes("/cheques")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
       if (url.includes("/journal-entries/7/attachments")) {
         return new Response(JSON.stringify([]), { status: 200 });
       }
@@ -175,6 +180,7 @@ describe("JournalEntriesPanel", () => {
         summary: "Rent accrual",
         description: "Test",
         requires_review: false,
+        cheque_id: null,
         created_at: "2026-04-01T00:00:00Z",
         updated_at: "2026-04-01T00:00:00Z",
         debit_side_label: "Cash",
@@ -186,6 +192,9 @@ describe("JournalEntriesPanel", () => {
 
     vi.spyOn(global, "fetch").mockImplementation(async (input) => {
       const url = String(input);
+      if (url.includes("/cheques")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
       if (url.includes("/journal-entries/7/attachments")) {
         return new Response(JSON.stringify([]), { status: 200 });
       }
@@ -221,6 +230,7 @@ describe("JournalEntriesPanel", () => {
         summary: "Rent accrual",
         description: "Test",
         requires_review: false,
+        cheque_id: null,
         created_at: "2026-04-01T00:00:00Z",
         updated_at: "2026-04-01T00:00:00Z",
         debit_side_label: "Cash",
@@ -235,6 +245,7 @@ describe("JournalEntriesPanel", () => {
       summary: "Rent accrual",
       description: "Test",
       requires_review: false,
+      cheque_id: null,
       created_at: "2026-04-01T00:00:00Z",
       updated_at: "2026-04-01T00:00:00Z",
       review_messages: [],
@@ -260,6 +271,9 @@ describe("JournalEntriesPanel", () => {
 
     vi.spyOn(global, "fetch").mockImplementation(async (input) => {
       const url = String(input);
+      if (url.includes("/cheques")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
       if (url.includes("/journal-entries/7/attachments")) {
         return new Response(JSON.stringify([]), { status: 200 });
       }
@@ -297,6 +311,7 @@ describe("JournalEntriesPanel", () => {
         summary: "Rent accrual",
         description: "Test",
         requires_review: false,
+        cheque_id: null,
         created_at: "2026-04-01T00:00:00Z",
         updated_at: "2026-04-01T00:00:00Z",
         debit_side_label: "Cash",
@@ -321,6 +336,9 @@ describe("JournalEntriesPanel", () => {
     const fetchMock = vi.spyOn(global, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
       const method = init?.method ?? "GET";
+      if (url.includes("/cheques")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
       if (url.includes("/journal-entries/7/attachments/44") && method === "DELETE") {
         attachmentList = [];
         return new Response(null, { status: 204 });
