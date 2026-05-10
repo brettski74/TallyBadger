@@ -67,7 +67,13 @@ Repeatable **phase** procedures live under repo-root **[`workflows/`](workflows/
 | [`workflows/implement.md`](workflows/implement.md) | Implementation, verification, and PR |
 | [`workflows/ship.md`](workflows/ship.md) | User acceptance testing and fix loop (ship) |
 
-**Shortcut vocabulary (normative):** When the user’s **core instruction** is of the form `!<word> #id`, look for a file named `word.md` in the workflows directory, read that file and apply the instructions therein to the github issue with the corresponding id.
+**Shortcut vocabulary (normative):** When the user’s **core instruction** is of the form `!<word> #id`, look for a file named `word.md` in the workflows directory, read that file and apply the instructions therein to the github issue with the corresponding id. For example, if a prompt line contains the text:
+
+```
+!implement #12345
+```
+
+Then read the workflows/implement.md file from the current workspace and apply the instructions to the github issue #12345.
 
 This mapping is **agent-agnostic** (not editor-specific). **Do not** duplicate these shortcut definitions under [`.cursor/rules/`](.cursor/rules/); the existing rule there only points agents at **ARCH.md** and **STYLE.md**—that remains the single Cursor-specific hook.
 
