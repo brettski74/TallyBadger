@@ -16,6 +16,10 @@ from tallybadger.ledger.income_expense_report import (
     INCOME_EXPENSE_CURRENCY_LABEL,
     natural_pl_total_for_account_type,
 )
+from tallybadger.ledger.balance_sheet_report import (
+    BALANCE_SHEET_CURRENCY_LABEL,
+    natural_balance_sheet_total_for_account_type,
+)
 from tallybadger.ledger.models import (
     AccountCreate,
     AccountOut,
@@ -29,6 +33,11 @@ from tallybadger.ledger.models import (
     IncomeExpenseAccountRowOut,
     IncomeExpensePeriodEcho,
     IncomeExpenseReportOut,
+    BalanceSheetAccountRowOut,
+    BalanceSheetBalanceCheckOut,
+    BalanceSheetPeriodEcho,
+    BalanceSheetReportOut,
+    BalanceSheetSectionOut,
     LedgerSettingsOut,
     LedgerSettingsUpdate,
     ObligationStatusUpdate,
@@ -1102,6 +1111,144 @@ class LedgerService:
             total_revenue=total_revenue,
             total_expense=total_expense,
             net_income=net_income,
+        )
+
+    def balance_sheet_report(
+        self,
+        *,
+        as_of_date: date,
+        exclude_requires_review: bool,
+        preset: str | None = None,
+    ) -> BalanceSheetReportOut:
+        with self._connection_factory() as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                review_filter = ""
+                params: list[object] = [as_of_date]
+                if exclude_requires_review:
+                    review_filter = "AND je.requires_review IS NOT TRUE"
+
+                cur.execute(
+                    f"""
+                    SELECT a.id, a.name, a.type, a.is_active, COALESCE(SUM(jl.amount), 0) AS raw_line_total
+                    FROM accounts a
+                    LEFT JOIN (
+                        SELECT jl.account_id, jl.amount
+                        FROM journal_lines jl
+                        INNER JOIN journal_entries je ON je.id = jl.entry_id
+                          AND je.entry_date <= %s
+                          {review_filter}
+                    ) jl ON jl.account_id = a.id
+                    WHERE a.type IN ('asset', 'liability', 'equity')
+                    GROUP BY a.id, a.name, a.type, a.is_active
+                    """,
+                    params,
+                )
+                raw_bs_rows = cur.fetchall()
+
+                cur.execute(
+                    f"""
+                    SELECT a.type, COALESCE(SUM(pl.amount), 0) AS raw_line_total
+                    FROM accounts a
+                    LEFT JOIN (
+                        SELECT jl.account_id, jl.amount
+                        FROM journal_lines jl
+                        INNER JOIN journal_entries je ON je.id = jl.entry_id
+                          AND je.entry_date <= %s
+                          {review_filter}
+                    ) pl ON pl.account_id = a.id
+                    WHERE a.type IN ('revenue', 'expense')
+                    GROUP BY a.type
+                    """,
+                    params,
+                )
+                raw_pl_rows = cur.fetchall()
+
+        rows_sorted = sorted(raw_bs_rows, key=lambda r: str(r["name"]))
+        assets_accounts: list[BalanceSheetAccountRowOut] = []
+        liabilities_accounts: list[BalanceSheetAccountRowOut] = []
+        equity_accounts: list[BalanceSheetAccountRowOut] = []
+        assets_total = Decimal("0")
+        liabilities_total = Decimal("0")
+        equity_ledger_total = Decimal("0")
+
+        for row in rows_sorted:
+            acct_type = str(row["type"])
+            natural = natural_balance_sheet_total_for_account_type(
+                acct_type,
+                Decimal(row["raw_line_total"]),
+            )
+            out_row = BalanceSheetAccountRowOut(
+                account_id=int(row["id"]),
+                account_name=str(row["name"]),
+                account_type=acct_type,  # type: ignore[arg-type]
+                is_active=bool(row["is_active"]),
+                is_computed=False,
+                amount=natural,
+            )
+            if acct_type == "asset":
+                assets_accounts.append(out_row)
+                assets_total += natural
+            elif acct_type == "liability":
+                liabilities_accounts.append(out_row)
+                liabilities_total += natural
+            else:
+                equity_accounts.append(out_row)
+                equity_ledger_total += natural
+
+        pl_by_type: dict[str, Decimal] = {"revenue": Decimal("0"), "expense": Decimal("0")}
+        for row in raw_pl_rows:
+            acct_type = str(row["type"])
+            pl_by_type[acct_type] = natural_pl_total_for_account_type(
+                acct_type,
+                Decimal(row["raw_line_total"]),
+            )
+        retained_earnings = pl_by_type["revenue"] - pl_by_type["expense"]
+        equity_accounts.append(
+            BalanceSheetAccountRowOut(
+                account_id=None,
+                account_name="Retained Earnings",
+                account_type="computed_equity",
+                is_active=None,
+                is_computed=True,
+                amount=retained_earnings,
+            )
+        )
+        equity_total = equity_ledger_total + retained_earnings
+        liabilities_plus_equity = liabilities_total + equity_total
+        difference = assets_total - liabilities_plus_equity
+
+        preset_out = preset if preset in ("today", "prior_year_end") else None
+        return BalanceSheetReportOut(
+            period=BalanceSheetPeriodEcho(as_of_date=as_of_date),
+            currency_label=BALANCE_SHEET_CURRENCY_LABEL,
+            preset=preset_out,
+            exclude_requires_review=exclude_requires_review,
+            assets=BalanceSheetSectionOut(
+                section="assets",
+                label="Assets",
+                accounts=assets_accounts,
+                total=assets_total,
+            ),
+            liabilities=BalanceSheetSectionOut(
+                section="liabilities",
+                label="Liabilities",
+                accounts=liabilities_accounts,
+                total=liabilities_total,
+            ),
+            equity=BalanceSheetSectionOut(
+                section="equity",
+                label="Equity",
+                accounts=equity_accounts,
+                total=equity_total,
+            ),
+            balance_check=BalanceSheetBalanceCheckOut(
+                assets_total=assets_total,
+                liabilities_total=liabilities_total,
+                equity_total=equity_total,
+                liabilities_plus_equity=liabilities_plus_equity,
+                is_balanced=difference == Decimal("0"),
+                difference=difference,
+            ),
         )
 
     def list_account_lines(

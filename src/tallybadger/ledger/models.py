@@ -332,3 +332,55 @@ class IncomeExpenseReportOut(BaseModel):
     total_revenue: Decimal
     total_expense: Decimal
     net_income: Decimal
+
+
+BalanceSheetSection = Literal["assets", "liabilities", "equity"]
+
+
+class BalanceSheetPeriodEcho(BaseModel):
+    as_of_date: date
+
+
+class BalanceSheetAccountRowOut(BaseModel):
+    account_id: int | None = Field(
+        default=None,
+        description="Null when this row is system-computed (not a ledger account).",
+    )
+    account_name: str
+    account_type: Literal["asset", "liability", "equity", "computed_equity"]
+    is_active: bool | None = Field(
+        default=None,
+        description="Null when this row is system-computed.",
+    )
+    is_computed: bool = False
+    amount: Decimal
+
+
+class BalanceSheetSectionOut(BaseModel):
+    section: BalanceSheetSection
+    label: str
+    accounts: list[BalanceSheetAccountRowOut]
+    total: Decimal
+
+
+class BalanceSheetBalanceCheckOut(BaseModel):
+    assets_total: Decimal
+    liabilities_total: Decimal
+    equity_total: Decimal
+    liabilities_plus_equity: Decimal
+    is_balanced: bool
+    difference: Decimal
+
+
+class BalanceSheetReportOut(BaseModel):
+    """Stable JSON contract for the Balance Sheet report (schema version 1)."""
+
+    report_schema_version: Literal[1] = 1
+    period: BalanceSheetPeriodEcho
+    currency_label: str
+    preset: Literal["today", "prior_year_end"] | None = None
+    exclude_requires_review: bool
+    assets: BalanceSheetSectionOut
+    liabilities: BalanceSheetSectionOut
+    equity: BalanceSheetSectionOut
+    balance_check: BalanceSheetBalanceCheckOut

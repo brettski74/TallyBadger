@@ -6,13 +6,19 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from starlette.responses import Response
 
+from tallybadger.api.balance_sheet_export import (
+    balance_sheet_report_csv_bytes,
+    balance_sheet_report_filename_stem,
+    balance_sheet_report_pdf_bytes,
+)
 from tallybadger.api.income_expense_export import (
     income_expense_report_csv_bytes,
     income_expense_report_filename_stem,
     income_expense_report_pdf_bytes,
 )
+from tallybadger.ledger.balance_sheet_report import resolve_balance_sheet_preset
 from tallybadger.ledger.income_expense_report import resolve_income_expense_preset
-from tallybadger.ledger.models import IncomeExpenseReportOut
+from tallybadger.ledger.models import BalanceSheetReportOut, IncomeExpenseReportOut
 from tallybadger.ledger.service import LedgerService, LedgerValidationError
 
 from .ledger import _attachment_content_disposition, get_ledger_service
@@ -20,6 +26,7 @@ from .ledger import _attachment_content_disposition, get_ledger_service
 router = APIRouter(prefix="/reports", tags=["reports"])
 
 IncomeExpensePresetParam = Literal["current_year_to_date", "prior_full_year", "prior_year_to_date"]
+BalanceSheetPresetParam = Literal["today", "prior_year_end"]
 ExportFormat = Literal["csv", "pdf"]
 
 
@@ -53,6 +60,27 @@ def _resolve_income_expense_dates(
         return start, end, preset
     assert start_date is not None and end_date is not None
     return start_date, end_date, None
+
+
+def _resolve_balance_sheet_as_of(
+    *,
+    as_of_date: date | None,
+    preset: BalanceSheetPresetParam | None,
+    preset_anchor_date: date | None,
+) -> tuple[date, BalanceSheetPresetParam | None]:
+    if as_of_date is not None and preset is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="do not pass preset together with as_of_date",
+        )
+    if preset is None and as_of_date is None:
+        # Default to today to keep the endpoint convenient while still allowing explicit options.
+        return date.today(), None
+    if preset is not None:
+        anchor = preset_anchor_date or date.today()
+        return resolve_balance_sheet_preset(preset, anchor), preset
+    assert as_of_date is not None
+    return as_of_date, None
 
 
 @router.get("/income-expense", response_model=IncomeExpenseReportOut)
@@ -120,5 +148,67 @@ def export_income_expense_report(
         media = "application/pdf"
         filename = f"{stem}.pdf"
 
+    headers = {"Content-Disposition": _attachment_content_disposition(filename)}
+    return Response(content=body, media_type=media, headers=headers)
+
+
+@router.get("/balance-sheet", response_model=BalanceSheetReportOut)
+def get_balance_sheet_report(
+    as_of_date: date | None = Query(default=None),
+    preset: BalanceSheetPresetParam | None = Query(default=None),
+    preset_anchor_date: date | None = Query(
+        default=None,
+        description="Optional anchor date for preset resolution; defaults to the server's calendar date.",
+    ),
+    exclude_requires_review: bool = False,
+    service: LedgerService = Depends(get_ledger_service),
+) -> BalanceSheetReportOut:
+    try:
+        as_of, preset_out = _resolve_balance_sheet_as_of(
+            as_of_date=as_of_date,
+            preset=preset,
+            preset_anchor_date=preset_anchor_date,
+        )
+        return service.balance_sheet_report(
+            as_of_date=as_of,
+            exclude_requires_review=exclude_requires_review,
+            preset=preset_out,
+        )
+    except LedgerValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+
+@router.get("/balance-sheet/export")
+def export_balance_sheet_report(
+    format: Annotated[ExportFormat, Query(description="Download format")],
+    as_of_date: date | None = Query(default=None),
+    preset: BalanceSheetPresetParam | None = Query(default=None),
+    preset_anchor_date: date | None = Query(default=None),
+    exclude_requires_review: bool = False,
+    service: LedgerService = Depends(get_ledger_service),
+) -> Response:
+    try:
+        as_of, preset_out = _resolve_balance_sheet_as_of(
+            as_of_date=as_of_date,
+            preset=preset,
+            preset_anchor_date=preset_anchor_date,
+        )
+        report = service.balance_sheet_report(
+            as_of_date=as_of,
+            exclude_requires_review=exclude_requires_review,
+            preset=preset_out,
+        )
+    except LedgerValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+    stem = balance_sheet_report_filename_stem(report)
+    if format == "csv":
+        body = balance_sheet_report_csv_bytes(report)
+        media = "text/csv; charset=utf-8"
+        filename = f"{stem}.csv"
+    else:
+        body = balance_sheet_report_pdf_bytes(report)
+        media = "application/pdf"
+        filename = f"{stem}.pdf"
     headers = {"Content-Disposition": _attachment_content_disposition(filename)}
     return Response(content=body, media_type=media, headers=headers)
