@@ -67,13 +67,7 @@ Repeatable **phase** procedures live under repo-root **[`workflows/`](workflows/
 | [`workflows/implement.md`](workflows/implement.md) | Implementation, verification, and PR |
 | [`workflows/ship.md`](workflows/ship.md) | User acceptance testing and fix loop (ship) |
 
-**Shortcut vocabulary (normative):** When the user’s **core instruction** is one of the following, `N` must be the GitHub issue number (for example `84`). Any assistant that has read this file **must** treat the instruction as: **read** the listed workflow file and **execute** that procedure for issue `#N` (incorporating that file into the effective task prompt).
-
-| Shortcut | Workflow |
-|----------|----------|
-| `!refine #N` | [`workflows/refine.md`](workflows/refine.md) |
-| `!implement #N` | [`workflows/implement.md`](workflows/implement.md) |
-| `!uat #N` | [`workflows/ship.md`](workflows/ship.md) |
+**Shortcut vocabulary (normative):** When the user’s **core instruction** is of the form `!<word> #id`, look for a file named `word.md` in the workflows directory, read that file and apply the instructions therein to the github issue with the corresponding id.
 
 This mapping is **agent-agnostic** (not editor-specific). **Do not** duplicate these shortcut definitions under [`.cursor/rules/`](.cursor/rules/); the existing rule there only points agents at **ARCH.md** and **STYLE.md**—that remains the single Cursor-specific hook.
 
