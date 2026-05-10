@@ -730,7 +730,7 @@ def test_cel_cheque_match_sets_bag_and_omits_empty_review_messages() -> None:
     rs = CelRuleSet(
         rules=[
             CelRule(
-                expression='{"set": cheque("Operating", 42, attributes["amt"], attributes["entry_date"])}',
+                expression='{"set": cheque("Operating", 42, attr["amt"], attr["entry_date"])}',
             ),
         ],
     )
@@ -743,8 +743,30 @@ def test_cel_cheque_match_sets_bag_and_omits_empty_review_messages() -> None:
     assert out.attributes["cheque-id"] == 99
     assert out.attributes["dr-account"] == "Rent Expense"
     assert out.attributes["summary"] == "May rent"
+    assert out.attributes["cheque-amount"] == "100.00"
     assert "review-messages" not in out.attributes
     assert out.review_messages == []
+
+
+def test_cel_cheque_coerces_nr_from_numeric_string() -> None:
+    cr = _account_row(id=10, name="Operating", type="asset")
+    dr = _account_row(id=20, name="Rent Expense", type="expense")
+    ch = _cheque_row(credit_account_id=10, debit_account_id=20, cheque_number=42)
+    rs = CelRuleSet(
+        rules=[
+            CelRule(
+                expression='{"set": cheque("Operating", attr["nr"], attr["amt"], attr["entry_date"])}',
+            ),
+        ],
+    )
+    out = evaluate_cel(
+        rs,
+        {"nr": "42", "amt": Decimal("100.00"), "entry_date": date(2026, 5, 5)},
+        accounts=[cr, dr],
+        cheques=[ch],
+    )
+    assert out.attributes["cheque-id"] == 1
+    assert out.attributes["cheque-amount"] == "100.00"
 
 
 def test_cel_cheque_accepts_entry_date_as_iso_string() -> None:
@@ -754,7 +776,7 @@ def test_cel_cheque_accepts_entry_date_as_iso_string() -> None:
     rs = CelRuleSet(
         rules=[
             CelRule(
-                expression='{"set": cheque("Operating", 42, attributes["amt"], attributes["entry_date"])}',
+                expression='{"set": cheque("Operating", 42, attr["amt"], attr["entry_date"])}',
             ),
         ],
     )
@@ -775,7 +797,7 @@ def test_cel_cheque_amount_mismatch_adds_review_message() -> None:
     rs = CelRuleSet(
         rules=[
             CelRule(
-                expression='{"set": cheque("Operating", 42, attributes["amt"], attributes["entry_date"])}',
+                expression='{"set": cheque("Operating", 42, attr["amt"], attr["entry_date"])}',
             ),
         ],
     )
@@ -801,7 +823,7 @@ def test_cel_cheque_entry_date_before_issue_date_adds_review_message() -> None:
     rs = CelRuleSet(
         rules=[
             CelRule(
-                expression='{"set": cheque("Operating", 42, attributes["amt"], attributes["entry_date"])}',
+                expression='{"set": cheque("Operating", 42, attr["amt"], attr["entry_date"])}',
             ),
         ],
     )
@@ -822,7 +844,7 @@ def test_cel_cheque_no_open_match_no_cheque_id_in_bag() -> None:
     rs = CelRuleSet(
         rules=[
             CelRule(
-                expression='{"set": cheque("Operating", 42, attributes["amt"], attributes["entry_date"])}',
+                expression='{"set": cheque("Operating", 42, attr["amt"], attr["entry_date"])}',
             ),
         ],
     )
@@ -835,6 +857,7 @@ def test_cel_cheque_no_open_match_no_cheque_id_in_bag() -> None:
     assert "cheque-id" not in out.attributes
     assert "dr-account" not in out.attributes
     assert "summary" not in out.attributes
+    assert "cheque-amount" not in out.attributes
     assert len(out.review_messages) >= 1
 
 
@@ -846,7 +869,7 @@ def test_cel_cheque_includes_dr_party_only_when_party_on_register_row() -> None:
     rs = CelRuleSet(
         rules=[
             CelRule(
-                expression='{"set": cheque("Operating", 42, attributes["amt"], attributes["entry_date"])}',
+                expression='{"set": cheque("Operating", 42, attr["amt"], attr["entry_date"])}',
             ),
         ],
     )
@@ -867,7 +890,7 @@ def test_cel_cheque_omits_dr_party_when_party_id_unknown_in_snapshot() -> None:
     rs = CelRuleSet(
         rules=[
             CelRule(
-                expression='{"set": cheque("Operating", 42, attributes["amt"], attributes["entry_date"])}',
+                expression='{"set": cheque("Operating", 42, attr["amt"], attr["entry_date"])}',
             ),
         ],
     )
@@ -888,7 +911,7 @@ def test_cel_cheque_skips_non_open_rows() -> None:
     rs = CelRuleSet(
         rules=[
             CelRule(
-                expression='{"set": cheque("Operating", 42, attributes["amt"], attributes["entry_date"])}',
+                expression='{"set": cheque("Operating", 42, attr["amt"], attr["entry_date"])}',
             ),
         ],
     )
