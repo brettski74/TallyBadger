@@ -59,7 +59,7 @@ def balance_sheet_report_csv_bytes(report: BalanceSheetReportOut) -> bytes:
         ]
     )
     w.writerow(["is_balanced", "Is balanced", str(report.balance_check.is_balanced).lower()])
-    w.writerow(["difference", "Difference", _decimal_csv(report.balance_check.difference)])
+    w.writerow(["difference", "Balance", _decimal_csv(report.balance_check.difference)])
     return buf.getvalue().encode("utf-8")
 
 
@@ -113,7 +113,21 @@ def balance_sheet_report_pdf_bytes(report: BalanceSheetReportOut) -> bytes:
     )
     _table("Equity", [(r.account_name, r.amount) for r in report.equity.accounts], "Equity total", report.equity.total)
 
+    pdf.ln(4)
+    pdf.set_font("ReportFont", size=12)
+    pdf.cell(0, 8, text="Balance check", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.ln(1)
     pdf.set_font("ReportFont", size=11)
+    pdf.cell(120, 8, text="Assets total", border=1)
+    pdf.cell(
+        40,
+        8,
+        text=_format_currency_usd(report.balance_check.assets_total),
+        border=1,
+        align="R",
+        new_x=XPos.LMARGIN,
+        new_y=YPos.NEXT,
+    )
     pdf.cell(120, 8, text="Liabilities + equity", border=1)
     pdf.cell(
         40,
@@ -124,7 +138,7 @@ def balance_sheet_report_pdf_bytes(report: BalanceSheetReportOut) -> bytes:
         new_x=XPos.LMARGIN,
         new_y=YPos.NEXT,
     )
-    pdf.cell(120, 8, text="Difference", border=1)
+    pdf.cell(120, 8, text="Balance", border=1)
     pdf.cell(
         40,
         8,

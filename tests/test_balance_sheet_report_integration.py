@@ -218,4 +218,5 @@ def test_balance_sheet_pdf_export_contains_labels(api_client: TestClient, ledger
     text = "".join(page.extract_text() or "" for page in PdfReader(io.BytesIO(raw.content)).pages)
     assert "Balance Sheet" in text
     assert "Retained Earnings" in text
+    assert "Balance check" in text
     assert "Liabilities + equity" in text

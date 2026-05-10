@@ -64,7 +64,7 @@ describe("BalanceSheetReportSection", () => {
     expect(await screen.findAllByText("Assets total")).not.toHaveLength(0);
     const retainedRow = screen.getByRole("row", { name: /Retained Earnings/ });
     expect(within(retainedRow).getByRole("cell", { name: "$250.00" })).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Balance check" })).toHaveTextContent("Difference");
+    expect(screen.getByRole("region", { name: "Balance check" })).toHaveTextContent("Balance");
     expect(screen.getByRole("link", { name: "Export CSV" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Export PDF" })).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith(expect.objectContaining({ preset: "today", excludeRequiresReview: false }));

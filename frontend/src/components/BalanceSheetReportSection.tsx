@@ -161,6 +161,7 @@ export function BalanceSheetReportSection() {
           {renderSection(report.liabilities)}
           {renderSection(report.equity)}
 
+          <h3>Balance check</h3>
           <div className="balance-sheet-check" role="region" aria-label="Balance check">
             <span>Assets total</span>
             <span className="journal-list-amount">{formatReportCurrency(report.balance_check.assets_total)}</span>
@@ -168,7 +169,7 @@ export function BalanceSheetReportSection() {
             <span className="journal-list-amount">
               {formatReportCurrency(report.balance_check.liabilities_plus_equity)}
             </span>
-            <span>Difference</span>
+            <span>Balance</span>
             <span className="journal-list-amount">{formatReportCurrency(report.balance_check.difference)}</span>
           </div>
 

@@ -126,5 +126,8 @@ def test_balance_sheet_pdf_contains_key_labels_and_amounts() -> None:
     text = "".join(page.extract_text() or "" for page in PdfReader(io.BytesIO(pdf_bytes)).pages)
     assert "Balance Sheet" in text
     assert "Retained Earnings" in text
+    assert "Balance check" in text
     assert "Liabilities + equity" in text
+    assert "Balance" in text
+    assert "Difference" not in text
     assert "1,450.00" in text
