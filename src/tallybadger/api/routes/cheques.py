@@ -1,6 +1,8 @@
 """HTTP API for the cheque register (#90)."""
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import Annotated, Literal
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from tallybadger.api.routes.ledger import get_ledger_service
 from tallybadger.ledger.models import ChequeCreate, ChequeOut, ChequeUpdate
@@ -15,8 +17,14 @@ router = APIRouter(prefix="", tags=["cheques"])
 
 
 @router.get("/cheques", response_model=list[ChequeOut])
-def list_cheques(service: LedgerService = Depends(get_ledger_service)) -> list[ChequeOut]:
-    return service.list_cheques()
+def list_cheques(
+    list_status: Annotated[
+        Literal["open", "cleared", "void", "all"],
+        Query(alias="status", description="Filter by register status; default is open."),
+    ] = "open",
+    service: LedgerService = Depends(get_ledger_service),
+) -> list[ChequeOut]:
+    return service.list_cheques(list_status=list_status)
 
 
 @router.post("/cheques", response_model=ChequeOut, status_code=status.HTTP_201_CREATED)
