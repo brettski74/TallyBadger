@@ -30,6 +30,7 @@ FORMAT_VERSION_HISTORY: tuple[str, ...] = (
     "1.0.0",
     "1.1.0",
     "1.2.0",
+    "1.3.0",
 )
 
 
@@ -88,7 +89,10 @@ def snapshot_includes_attachment_tables(format_version: str) -> bool:
 
 def financial_tables_core(format_version: str) -> tuple[str, ...]:
     """Journal-related tables in load order (parents before dependents where required)."""
-    parts: list[str] = ["journal_entries"]
+    parts: list[str] = []
+    if _format_version_tuple(format_version) >= (1, 3, 0):
+        parts.append("cheques")
+    parts.append("journal_entries")
     if _format_version_tuple(format_version) >= (1, 2, 0):
         parts.append("journal_entry_review_messages")
     parts.extend(
@@ -279,6 +283,7 @@ def _truncate_complete_scope(conn: Connection) -> None:
               journal_entry_attachments,
               attachments,
               journal_entries,
+              cheques,
               accrual_plans,
               party_match_patterns,
               parties,
@@ -462,7 +467,7 @@ def _coerce_cell(column: str, value: Any) -> Any:
         "business_day_adjust",
     ):
         return bool(value)
-    if column in ("day_of_week", "day_of_month", "month_of_year", "sort_order"):
+    if column in ("day_of_week", "day_of_month", "month_of_year", "sort_order", "cheque_number"):
         return int(value) if value is not None else None
     return value
 
@@ -578,11 +583,36 @@ def _validate_complete_fk_graph(payloads: dict[str, list[dict[str, Any]]]) -> No
     ao = {int(r["id"]) for r in payloads["accrual_obligations"]}
     se = {int(r["id"]) for r in payloads["settlement_events"]}
 
+    chq: set[int] = set()
+    if "cheques" in payloads:
+        chq = {int(r["id"]) for r in payloads["cheques"]}
+        for i, row in enumerate(payloads["cheques"]):
+            if int(row["credit_account_id"]) not in acct:
+                raise SnapshotValidationError(
+                    f"cheques[{i}] credit_account_id={row['credit_account_id']} "
+                    "has no matching row in accounts.json"
+                )
+            if int(row["debit_account_id"]) not in acct:
+                raise SnapshotValidationError(
+                    f"cheques[{i}] debit_account_id={row['debit_account_id']} "
+                    "has no matching row in accounts.json"
+                )
+            pid = row.get("party_id")
+            if pid is not None and int(pid) not in party:
+                raise SnapshotValidationError(
+                    f"cheques[{i}] party_id={pid} has no matching row in parties.json"
+                )
+
     for i, row in enumerate(payloads["journal_entries"]):
         ap = row.get("accrual_plan_id")
         if ap is not None and int(ap) not in plans:
             raise SnapshotValidationError(
                 f"journal_entries[{i}] accrual_plan_id={ap} has no matching row in accrual_plans.json"
+            )
+        cid = row.get("cheque_id")
+        if cid is not None and int(cid) not in chq:
+            raise SnapshotValidationError(
+                f"journal_entries[{i}] cheque_id={cid} has no matching row in cheques.json"
             )
 
     if "journal_entry_review_messages" in payloads:
@@ -686,6 +716,24 @@ def _validate_financial_fks(
     party_db = _existing_ids(conn, "parties")
     plan_db = _existing_ids(conn, "accrual_plans")
 
+    chq: set[int] = set()
+    if "cheques" in payloads:
+        chq = {int(r["id"]) for r in payloads["cheques"]}
+        for i, row in enumerate(payloads["cheques"]):
+            if int(row["credit_account_id"]) not in acct_db:
+                raise SnapshotValidationError(
+                    f"cheques[{i}] credit_account_id={row['credit_account_id']} not found in target database."
+                )
+            if int(row["debit_account_id"]) not in acct_db:
+                raise SnapshotValidationError(
+                    f"cheques[{i}] debit_account_id={row['debit_account_id']} not found in target database."
+                )
+            pid = row.get("party_id")
+            if pid is not None and int(pid) not in party_db:
+                raise SnapshotValidationError(
+                    f"cheques[{i}] party_id={pid} not found in target database."
+                )
+
     je = {int(r["id"]) for r in payloads["journal_entries"]}
     jl = {int(r["id"]) for r in payloads["journal_lines"]}
     ao = {int(r["id"]) for r in payloads["accrual_obligations"]}
@@ -698,6 +746,11 @@ def _validate_financial_fks(
                 f"journal_entries[{i}] accrual_plan_id={ap} not found in target database "
                 "(financial snapshots do not include accrual_plans; import configuration first "
                 "or fix the snapshot)."
+            )
+        cid = row.get("cheque_id")
+        if cid is not None and int(cid) not in chq:
+            raise SnapshotValidationError(
+                f"journal_entries[{i}] cheque_id={cid} has no matching row in cheques.json"
             )
 
     if "journal_entry_review_messages" in payloads:
@@ -964,6 +1017,7 @@ def _resync_serials(conn: Connection) -> None:
         "party_match_patterns",
         "accrual_plans",
         "cel_rule_sets",
+        "cheques",
         "journal_entries",
         "journal_entry_review_messages",
         "journal_lines",

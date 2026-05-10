@@ -3,6 +3,7 @@
 from tallybadger.api.routes import (
     backup,
     cel_rule_sets,
+    cheques,
     health,
     import_csv,
     import_rules,
@@ -15,6 +16,7 @@ from tallybadger.api.routes import (
 __all__ = [
     "backup",
     "cel_rule_sets",
+    "cheques",
     "health",
     "import_csv",
     "import_rules",

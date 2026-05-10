@@ -106,6 +106,7 @@ def test_update_entry_runs_inside_transaction() -> None:
     cur.fetchall.return_value = [{"id": 1}, {"id": 2}]
     cur.fetchone.side_effect = [
         {"c": 0},
+        {"cheque_id": None},
         {"is_active": True},
         {"is_active": True},
         {"line_count": 2, "total": Decimal("0")},
