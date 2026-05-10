@@ -1344,6 +1344,53 @@ class LedgerService:
         if cur.fetchone() is None:
             raise LedgerValidationError("journal entry references unknown cheque")
 
+    @staticmethod
+    def _sync_cheque_register_after_journal_save(
+        cur,
+        *,
+        entry_date: date,
+        new_cheque_id: int | None,
+        prev_cheque_id: int | None,
+    ) -> None:
+        """Set register row to cleared when a journal entry links a cheque (#93); shared by all save paths."""
+        if new_cheque_id is None:
+            return
+        cur.execute(
+            "SELECT status FROM cheques WHERE id = %s FOR UPDATE",
+            (new_cheque_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return
+        status = row["status"]
+        if status == "void":
+            raise LedgerValidationError("cannot link a void cheque to a journal entry")
+        unchanged_link = prev_cheque_id is not None and prev_cheque_id == new_cheque_id
+        if status == "cleared":
+            if not unchanged_link:
+                raise LedgerValidationError(
+                    "cheque is already cleared; only the linked journal entry can reference it",
+                )
+            cur.execute(
+                """
+                UPDATE cheques
+                SET cleared_date = %s, updated_at = NOW()
+                WHERE id = %s
+                """,
+                (entry_date, new_cheque_id),
+            )
+            return
+        if status != "open":
+            raise LedgerValidationError("only open cheques can be linked for clearing")
+        cur.execute(
+            """
+            UPDATE cheques
+            SET status = 'cleared', cleared_date = %s, updated_at = NOW()
+            WHERE id = %s
+            """,
+            (entry_date, new_cheque_id),
+        )
+
     def list_cheques(
         self,
         list_status: Literal["open", "cleared", "void", "all"] = "open",
@@ -1581,6 +1628,12 @@ class LedgerService:
                             )
                         self._assert_entry_balanced(cur, entry_id)
                         self._insert_review_messages(cur, entry_id, new_review)
+                        self._sync_cheque_register_after_journal_save(
+                            cur,
+                            entry_date=payload.entry_date,
+                            new_cheque_id=payload.cheque_id,
+                            prev_cheque_id=None,
+                        )
                     return self.get_entry(entry_id, conn=conn)
         except errors.ForeignKeyViolation as exc:
             raise LedgerValidationError("journal line references unknown account") from exc
@@ -1632,6 +1685,12 @@ class LedgerService:
                                 cur,
                                 entry_id,
                                 _coerce_new_review_messages(payload),
+                            )
+                            self._sync_cheque_register_after_journal_save(
+                                cur,
+                                entry_date=payload.entry_date,
+                                new_cheque_id=payload.cheque_id,
+                                prev_cheque_id=None,
                             )
                             created_ids.append(entry_id)
                     return [self.get_entry(entry_id, conn=conn) for entry_id in created_ids]
@@ -1706,6 +1765,12 @@ class LedgerService:
                         self._insert_review_messages(cur, entry_id, new_review)
                         if old_cheque_id != payload.cheque_id and old_cheque_id is not None:
                             self._reopen_cleared_cheque_if_unreferenced(cur, old_cheque_id)
+                        self._sync_cheque_register_after_journal_save(
+                            cur,
+                            entry_date=payload.entry_date,
+                            new_cheque_id=payload.cheque_id,
+                            prev_cheque_id=old_cheque_id,
+                        )
                     return self.get_entry(entry_id, conn=conn)
         except errors.ForeignKeyViolation as exc:
             raise LedgerValidationError("journal line references unknown account") from exc

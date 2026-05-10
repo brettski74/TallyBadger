@@ -3,7 +3,15 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import type { Account } from "../api/accounts";
-import { JournalEntryForm, isBalanced, materialJournalLines, type LineDraft } from "./JournalEntryForm";
+import type { Cheque } from "../api/cheques";
+import {
+  JournalEntryForm,
+  debitCreditTotals,
+  isBalanced,
+  linesMatchChequeFaceAmount,
+  materialJournalLines,
+  type LineDraft,
+} from "./JournalEntryForm";
 import type { Party } from "../api/parties";
 
 const accounts: Account[] = [
@@ -79,6 +87,28 @@ describe("isBalanced", () => {
   });
 });
 
+describe("debitCreditTotals and linesMatchChequeFaceAmount", () => {
+  it("aggregates debits and credits from material lines", () => {
+    const lines: LineDraft[] = [
+      { key: "a", account_id: 1, party_id: "", amount: "40" },
+      { key: "b", account_id: 1, party_id: "", amount: "60" },
+      { key: "c", account_id: 2, party_id: "", amount: "-100" },
+    ];
+    expect(debitCreditTotals(lines)).toEqual({ debit: 100, credit: 100, complete: true });
+    expect(linesMatchChequeFaceAmount(lines, "100")).toBe(true);
+    expect(linesMatchChequeFaceAmount(lines, "-100")).toBe(true);
+    expect(linesMatchChequeFaceAmount(lines, "99")).toBe(false);
+  });
+
+  it("treats no material lines as matching any cheque amount", () => {
+    const blank: LineDraft[] = [
+      { key: "a", account_id: "", party_id: "", amount: "" },
+      { key: "b", account_id: "", party_id: "", amount: "" },
+    ];
+    expect(linesMatchChequeFaceAmount(blank, "999")).toBe(true);
+  });
+});
+
 describe("JournalEntryForm", () => {
   it("submits a balanced entry via onSubmit", async () => {
     const onSubmit = vi.fn().mockResolvedValue(undefined);
@@ -124,6 +154,7 @@ describe("JournalEntryForm", () => {
       ],
       requires_review: false,
       review_messages: [],
+      cheque_id: null,
     });
   });
 
@@ -229,6 +260,7 @@ describe("JournalEntryForm", () => {
       ],
       requires_review: false,
       review_messages: [],
+      cheque_id: null,
     });
   });
 
@@ -249,5 +281,156 @@ describe("JournalEntryForm", () => {
     );
     const options = screen.getAllByRole("option").map((o) => o.textContent);
     expect(options.some((t) => t?.includes("Retired"))).toBe(false);
+  });
+
+  const openCheque: Cheque = {
+    id: 99,
+    credit_account_id: 1,
+    debit_account_id: 2,
+    summary: "Supplier payment",
+    cheque_number: 42,
+    issue_date: "2026-04-01",
+    cleared_date: null,
+    amount: "100.00",
+    party_id: 1,
+    status: "open",
+    created_at: "2026-04-01T00:00:00Z",
+    updated_at: "2026-04-01T00:00:00Z",
+  };
+
+  it("confirms before replacing lines when the cheque amount does not match entry totals", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(
+      <JournalEntryForm
+        mode="create"
+        accounts={accounts}
+        parties={parties}
+        initialEntryDate="2026-04-20"
+        initialSummary="Rent accrual"
+        initialDescription=""
+        reviewMessages={[]}
+        initialLines={null}
+        chequeLinkChoices={[openCheque]}
+        onSubmit={vi.fn()}
+        onCancel={() => {}}
+      />,
+    );
+
+    const user = userEvent.setup();
+    const accountSelects = screen
+      .getAllByRole("combobox")
+      .filter((el) => String(el.getAttribute("aria-label")).startsWith("Account for line"));
+    await user.selectOptions(accountSelects[0]!, "1");
+    await user.selectOptions(accountSelects[1]!, "2");
+    const amountInputs = screen.getAllByPlaceholderText("100.00 or -100.00");
+    await user.clear(amountInputs[0]!);
+    await user.type(amountInputs[0]!, "250.00");
+    await user.clear(amountInputs[1]!);
+    await user.type(amountInputs[1]!, "-250.00");
+
+    await user.selectOptions(screen.getByLabelText("Link open cheque"), String(openCheque.id));
+
+    expect(confirmSpy).toHaveBeenCalled();
+    const [confirmMessage] = confirmSpy.mock.calls[0] ?? [];
+    expect(confirmMessage).toContain("$250.00");
+    expect(confirmMessage).toContain("$100.00");
+
+    expect(amountInputs[0]).toHaveValue("250.00");
+    expect(amountInputs[1]).toHaveValue("-250.00");
+    expect(screen.getByLabelText("Entry summary")).toHaveValue("Rent accrual");
+
+    confirmSpy.mockReturnValue(true);
+    await user.selectOptions(screen.getByLabelText("Link open cheque"), String(openCheque.id));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Entry summary")).toHaveValue("Supplier payment");
+    });
+    const amountsAfter = screen.getAllByPlaceholderText("100.00 or -100.00");
+    expect(amountsAfter[0]).toHaveValue("100.00");
+    expect(amountsAfter[1]).toHaveValue("-100.00");
+
+    confirmSpy.mockRestore();
+  });
+
+  it("formats confirmation amounts with thousands separators when large", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const bigCheque: Cheque = {
+      ...openCheque,
+      id: 101,
+      amount: "1234567.89",
+    };
+    render(
+      <JournalEntryForm
+        mode="create"
+        accounts={accounts}
+        parties={parties}
+        initialEntryDate="2026-04-20"
+        initialSummary="Rent accrual"
+        initialDescription=""
+        reviewMessages={[]}
+        initialLines={null}
+        chequeLinkChoices={[bigCheque]}
+        onSubmit={vi.fn()}
+        onCancel={() => {}}
+      />,
+    );
+
+    const user = userEvent.setup();
+    const accountSelects = screen
+      .getAllByRole("combobox")
+      .filter((el) => String(el.getAttribute("aria-label")).startsWith("Account for line"));
+    await user.selectOptions(accountSelects[0]!, "1");
+    await user.selectOptions(accountSelects[1]!, "2");
+    const amountInputs = screen.getAllByPlaceholderText("100.00 or -100.00");
+    await user.clear(amountInputs[0]!);
+    await user.type(amountInputs[0]!, "99.00");
+    await user.clear(amountInputs[1]!);
+    await user.type(amountInputs[1]!, "-99.00");
+
+    await user.selectOptions(screen.getByLabelText("Link open cheque"), String(bigCheque.id));
+
+    const [confirmMessage] = confirmSpy.mock.calls[0] ?? [];
+    expect(confirmMessage).toContain("$1,234,567.89");
+    expect(confirmMessage).toContain("$99.00");
+
+    confirmSpy.mockRestore();
+  });
+
+  it("does not confirm when line totals already match the cheque face", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(
+      <JournalEntryForm
+        mode="create"
+        accounts={accounts}
+        parties={parties}
+        initialEntryDate="2026-04-20"
+        initialSummary="Rent accrual"
+        initialDescription=""
+        reviewMessages={[]}
+        initialLines={null}
+        chequeLinkChoices={[openCheque]}
+        onSubmit={vi.fn()}
+        onCancel={() => {}}
+      />,
+    );
+
+    const user = userEvent.setup();
+    const accountSelects = screen
+      .getAllByRole("combobox")
+      .filter((el) => String(el.getAttribute("aria-label")).startsWith("Account for line"));
+    await user.selectOptions(accountSelects[0]!, "1");
+    await user.selectOptions(accountSelects[1]!, "2");
+    const amountInputs = screen.getAllByPlaceholderText("100.00 or -100.00");
+    await user.clear(amountInputs[0]!);
+    await user.type(amountInputs[0]!, "100.00");
+    await user.clear(amountInputs[1]!);
+    await user.type(amountInputs[1]!, "-100.00");
+
+    await user.selectOptions(screen.getByLabelText("Link open cheque"), String(openCheque.id));
+
+    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Entry summary")).toHaveValue("Supplier payment");
+
+    confirmSpy.mockRestore();
   });
 });

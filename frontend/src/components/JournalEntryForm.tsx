@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 
 import type { Account } from "../api/accounts";
+import type { Cheque } from "../api/cheques";
 import type { Party } from "../api/parties";
 import {
   deleteJournalEntryReviewMessage,
@@ -41,6 +42,15 @@ function parseAmount(value: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/** Credit line amount for a positive cheque face amount (+ debit / − credit convention). */
+function creditAmountFromChequeFace(amount: string): string {
+  const t = amount.trim();
+  if (t.startsWith("-")) {
+    return t.slice(1);
+  }
+  return t === "" ? "" : `-${t}`;
+}
+
 /** Lines that have both an account and a non-empty amount string (may still be invalid number). */
 export function materialJournalLines(lines: LineDraft[]): LineDraft[] {
   return lines.filter((l) => l.account_id !== "" && l.amount.trim() !== "");
@@ -62,7 +72,63 @@ export function sumParsedAmounts(lines: LineDraft[]): { sum: number; complete: b
   return { sum, complete };
 }
 
+/** Sum of positive line amounts (debits) and absolute sum of negative amounts (credits). */
+export function debitCreditTotals(lines: LineDraft[]): {
+  debit: number;
+  credit: number;
+  complete: boolean;
+} {
+  const material = materialJournalLines(lines);
+  let debit = 0;
+  let credit = 0;
+  let complete = material.length > 0;
+  for (const line of material) {
+    const n = parseAmount(line.amount);
+    if (n === null) {
+      complete = false;
+      continue;
+    }
+    if (n > BALANCE_EPS) {
+      debit += n;
+    } else if (n < -BALANCE_EPS) {
+      credit += -n;
+    }
+  }
+  return { debit, credit, complete };
+}
+
+/**
+ * True when every material line parses, debits equal credits, and both match the cheque face magnitude.
+ */
+export function linesMatchChequeFaceAmount(lines: LineDraft[], chequeAmountStr: string): boolean {
+  if (materialJournalLines(lines).length === 0) {
+    return true;
+  }
+  const face = parseAmount(chequeAmountStr.trim());
+  if (face === null) {
+    return false;
+  }
+  const { debit, credit, complete } = debitCreditTotals(lines);
+  if (!complete) {
+    return false;
+  }
+  if (Math.abs(debit - credit) > BALANCE_EPS) {
+    return false;
+  }
+  const mag = Math.abs(face);
+  return Math.abs(debit - mag) < BALANCE_EPS && Math.abs(credit - mag) < BALANCE_EPS;
+}
+
 const BALANCE_EPS = 1e-9;
+
+function formatConfirmCurrency(amount: number): string {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(amount);
+}
 
 export function isBalanced(lines: LineDraft[]): boolean {
   const material = materialJournalLines(lines);
@@ -99,6 +165,9 @@ export interface JournalEntryFormProps {
   onCancel: () => void;
   /** Shown in edit mode to open the journal entry attachments dialog. */
   onOpenAttachments?: () => void;
+  /** Open cheques (and optionally the entry’s linked cleared cheque when editing). */
+  chequeLinkChoices?: Cheque[];
+  initialChequeId?: number | null;
 }
 
 export function JournalEntryForm({
@@ -115,6 +184,8 @@ export function JournalEntryForm({
   onSubmit,
   onCancel,
   onOpenAttachments,
+  chequeLinkChoices = [],
+  initialChequeId = null,
 }: JournalEntryFormProps) {
   const [entryDate, setEntryDate] = useState(initialEntryDate);
   const [summary, setSummary] = useState(initialSummary);
@@ -123,6 +194,7 @@ export function JournalEntryForm({
   const [lines, setLines] = useState<LineDraft[]>(() =>
     initialLines && initialLines.length > 0 ? initialLines : emptyLines(2),
   );
+  const [linkedChequeId, setLinkedChequeId] = useState<number | null>(() => initialChequeId ?? null);
   const [clientError, setClientError] = useState<string | null>(null);
   const [apiError, setApiError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -184,6 +256,27 @@ export function JournalEntryForm({
 
   function removeLine(key: string) {
     setLines((prev) => (prev.length <= 2 ? prev : prev.filter((l) => l.key !== key)));
+  }
+
+  function applyChequeAutoFill(ch: Cheque) {
+    setLinkedChequeId(ch.id);
+    setSummary(ch.summary);
+    const face = ch.amount.trim();
+    const debitParty = ch.party_id != null ? ch.party_id : "";
+    setLines([
+      {
+        key: newLineKey(),
+        account_id: ch.debit_account_id,
+        party_id: debitParty,
+        amount: face.startsWith("-") ? face.slice(1) : face,
+      },
+      {
+        key: newLineKey(),
+        account_id: ch.credit_account_id,
+        party_id: "",
+        amount: creditAmountFromChequeFace(face),
+      },
+    ]);
   }
 
   function updateLine(
@@ -251,6 +344,7 @@ export function JournalEntryForm({
       })),
       requires_review: requiresReview,
       review_messages: trimmedNote ? [trimmedNote] : [],
+      cheque_id: linkedChequeId,
     };
 
     setSubmitting(true);
@@ -333,6 +427,56 @@ export function JournalEntryForm({
           maxLength={500}
         />
       </label>
+
+      <label>
+        Link open cheque (optional)
+        <select
+          aria-label="Link open cheque"
+          value={linkedChequeId == null ? "" : String(linkedChequeId)}
+          onChange={(e) => {
+            const v = e.target.value;
+            if (v === "") {
+              setLinkedChequeId(null);
+              return;
+            }
+            const id = Number(v);
+            const ch = chequeLinkChoices.find((c) => c.id === id);
+            if (ch) {
+              const hasMaterial = materialJournalLines(lines).length > 0;
+              const needsConfirm = hasMaterial && !linesMatchChequeFaceAmount(lines, ch.amount);
+              if (needsConfirm) {
+                const { debit, credit, complete } = debitCreditTotals(lines);
+                const face = parseAmount(ch.amount.trim());
+                const faceLabel =
+                  face === null ? ch.amount.trim() || "(invalid)" : formatConfirmCurrency(Math.abs(face));
+                const detail = complete
+                  ? `Debit total ${formatConfirmCurrency(debit)}, credit total ${formatConfirmCurrency(credit)}, cheque amount (absolute) ${faceLabel}.`
+                  : "Some line amounts are missing or invalid.";
+                const ok = window.confirm(
+                  `This entry's amounts do not match the cheque face (${faceLabel}). ${detail} Replace the summary and lines with data from the cheque register?`,
+                );
+                if (!ok) {
+                  return;
+                }
+              }
+              applyChequeAutoFill(ch);
+            } else {
+              setLinkedChequeId(id);
+            }
+          }}
+        >
+          <option value="">None</option>
+          {chequeLinkChoices.map((c) => (
+            <option key={c.id} value={c.id}>
+              #{c.cheque_number} — {c.summary} ({c.status})
+            </option>
+          ))}
+        </select>
+      </label>
+      <p className="muted journal-cheque-hint">
+        Choosing a cheque fills summary and lines from the register (debit expense / credit bank). Saving posts the
+        clearing entry and marks the cheque <strong>cleared</strong>. Clear this field to unlink.
+      </p>
 
       {reviewMessages.length > 0 ? (
         <div className="journal-review-messages" role="region" aria-label="Review messages">
