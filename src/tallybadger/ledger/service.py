@@ -1,6 +1,7 @@
 from collections import defaultdict
 from collections.abc import Callable
 from datetime import date, timedelta
+from typing import Literal
 import calendar
 import os
 import re
@@ -1343,16 +1344,30 @@ class LedgerService:
         if cur.fetchone() is None:
             raise LedgerValidationError("journal entry references unknown cheque")
 
-    def list_cheques(self) -> list[ChequeOut]:
+    def list_cheques(
+        self,
+        list_status: Literal["open", "cleared", "void", "all"] = "open",
+    ) -> list[ChequeOut]:
         with self._connection_factory() as conn:
             with conn.cursor(row_factory=dict_row) as cur:
-                cur.execute(
-                    """
-                    SELECT *
-                    FROM cheques
-                    ORDER BY issue_date DESC, id DESC
-                    """,
-                )
+                if list_status == "all":
+                    cur.execute(
+                        """
+                        SELECT *
+                        FROM cheques
+                        ORDER BY issue_date DESC, id DESC
+                        """,
+                    )
+                else:
+                    cur.execute(
+                        """
+                        SELECT *
+                        FROM cheques
+                        WHERE status = %s
+                        ORDER BY issue_date DESC, id DESC
+                        """,
+                        (list_status,),
+                    )
                 return [ChequeOut.model_validate(r) for r in cur.fetchall()]
 
     def get_cheque(self, cheque_id: int) -> ChequeOut:
@@ -1366,6 +1381,7 @@ class LedgerService:
 
     def create_cheque(self, payload: ChequeCreate) -> ChequeOut:
         self._validate_summary(payload.summary)
+        payload = payload.model_copy(update={"status": "open", "cleared_date": None})
         try:
             with self._connection_factory() as conn:
                 with conn.transaction():

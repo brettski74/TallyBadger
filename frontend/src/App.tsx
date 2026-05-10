@@ -13,10 +13,12 @@ import { CelRuleSetsSection } from "./components/CelRuleSetsSection";
 import { CsvImportSection } from "./components/CsvImportSection";
 import { IncomeExpenseReportSection } from "./components/IncomeExpenseReportSection";
 import { BalanceSheetReportSection } from "./components/BalanceSheetReportSection";
+import { ChequesSection } from "./components/ChequesSection";
 
 type MainTab =
   | "accounts"
   | "journal"
+  | "cheques"
   | "parties"
   | "accruals"
   | "configuration"
@@ -91,6 +93,13 @@ function App() {
           </button>
           <button
             type="button"
+            className={tab === "cheques" ? "app-nav-active" : undefined}
+            onClick={() => setTab("cheques")}
+          >
+            Cheques
+          </button>
+          <button
+            type="button"
             className={tab === "parties" ? "app-nav-active" : undefined}
             onClick={() => setTab("parties")}
           >
@@ -158,6 +167,7 @@ function App() {
             accountsError={error}
           />
         )}
+        {tab === "cheques" && <ChequesSection accounts={accounts} parties={parties} />}
         {tab === "parties" && (
           <PartiesSection
             accounts={accounts}

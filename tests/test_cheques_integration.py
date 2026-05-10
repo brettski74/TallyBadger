@@ -116,9 +116,17 @@ def test_cheque_crud_and_void_reopen(api_client: TestClient, ledger_service: Led
     assert create.status_code == 201, create.text
     cid = create.json()["id"]
 
-    listed = api_client.get("/cheques")
-    assert listed.status_code == 200
-    assert len(listed.json()) == 1
+    listed_default = api_client.get("/cheques")
+    assert listed_default.status_code == 200
+    assert len(listed_default.json()) == 1
+
+    listed_all = api_client.get("/cheques", params={"status": "all"})
+    assert listed_all.status_code == 200
+    assert len(listed_all.json()) == 1
+
+    listed_void = api_client.get("/cheques", params={"status": "void"})
+    assert listed_void.status_code == 200
+    assert len(listed_void.json()) == 0
 
     patch_void = api_client.patch(f"/cheques/{cid}", json={"status": "void"})
     assert patch_void.status_code == 200
@@ -128,6 +136,31 @@ def test_cheque_crud_and_void_reopen(api_client: TestClient, ledger_service: Led
     patch_open = api_client.patch(f"/cheques/{cid}", json={"status": "open"})
     assert patch_open.status_code == 200
     assert patch_open.json()["status"] == "open"
+
+
+def test_create_cheque_always_open_ignores_client_status(
+    api_client: TestClient,
+    ledger_service: LedgerService,
+) -> None:
+    cr_id, dr_id = _two_accounts(ledger_service)
+    create = api_client.post(
+        "/cheques",
+        json={
+            "credit_account_id": cr_id,
+            "debit_account_id": dr_id,
+            "summary": "Sneaky",
+            "cheque_number": 77,
+            "issue_date": "2026-05-01",
+            "cleared_date": "2026-05-02",
+            "amount": "1.00",
+            "party_id": None,
+            "status": "cleared",
+        },
+    )
+    assert create.status_code == 201, create.text
+    data = create.json()
+    assert data["status"] == "open"
+    assert data["cleared_date"] is None
 
 
 def test_duplicate_open_cheque_number_409(api_client: TestClient, ledger_service: LedgerService) -> None:
@@ -156,13 +189,16 @@ def test_cleared_cheque_cannot_void_via_api(api_client: TestClient, ledger_servi
             "summary": "Cleared chq",
             "cheque_number": 99,
             "issue_date": "2026-05-02",
-            "cleared_date": "2026-05-03",
             "amount": "20.00",
-            "status": "cleared",
         },
     )
     assert create.status_code == 201
     cid = create.json()["id"]
+    cleared = api_client.patch(
+        f"/cheques/{cid}",
+        json={"status": "cleared", "cleared_date": "2026-05-03"},
+    )
+    assert cleared.status_code == 200, cleared.text
     bad = api_client.patch(f"/cheques/{cid}", json={"status": "void"})
     assert bad.status_code == 422
 
@@ -180,13 +216,16 @@ def test_journal_unlink_reopens_cleared_cheque(
             "summary": "To clear",
             "cheque_number": 100,
             "issue_date": "2026-05-04",
-            "cleared_date": "2026-05-05",
             "amount": "75.00",
-            "status": "cleared",
         },
     )
     assert ch.status_code == 201
     cheque_id = ch.json()["id"]
+    mark_cleared = api_client.patch(
+        f"/cheques/{cheque_id}",
+        json={"status": "cleared", "cleared_date": "2026-05-05"},
+    )
+    assert mark_cleared.status_code == 200, mark_cleared.text
 
     entry = ledger_service.create_entry(
         JournalEntryWrite(
