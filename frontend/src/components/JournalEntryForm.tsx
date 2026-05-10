@@ -72,7 +72,63 @@ export function sumParsedAmounts(lines: LineDraft[]): { sum: number; complete: b
   return { sum, complete };
 }
 
+/** Sum of positive line amounts (debits) and absolute sum of negative amounts (credits). */
+export function debitCreditTotals(lines: LineDraft[]): {
+  debit: number;
+  credit: number;
+  complete: boolean;
+} {
+  const material = materialJournalLines(lines);
+  let debit = 0;
+  let credit = 0;
+  let complete = material.length > 0;
+  for (const line of material) {
+    const n = parseAmount(line.amount);
+    if (n === null) {
+      complete = false;
+      continue;
+    }
+    if (n > BALANCE_EPS) {
+      debit += n;
+    } else if (n < -BALANCE_EPS) {
+      credit += -n;
+    }
+  }
+  return { debit, credit, complete };
+}
+
+/**
+ * True when every material line parses, debits equal credits, and both match the cheque face magnitude.
+ */
+export function linesMatchChequeFaceAmount(lines: LineDraft[], chequeAmountStr: string): boolean {
+  if (materialJournalLines(lines).length === 0) {
+    return true;
+  }
+  const face = parseAmount(chequeAmountStr.trim());
+  if (face === null) {
+    return false;
+  }
+  const { debit, credit, complete } = debitCreditTotals(lines);
+  if (!complete) {
+    return false;
+  }
+  if (Math.abs(debit - credit) > BALANCE_EPS) {
+    return false;
+  }
+  const mag = Math.abs(face);
+  return Math.abs(debit - mag) < BALANCE_EPS && Math.abs(credit - mag) < BALANCE_EPS;
+}
+
 const BALANCE_EPS = 1e-9;
+
+function formatConfirmCurrency(amount: number): string {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(amount);
+}
 
 export function isBalanced(lines: LineDraft[]): boolean {
   const material = materialJournalLines(lines);
@@ -386,6 +442,23 @@ export function JournalEntryForm({
             const id = Number(v);
             const ch = chequeLinkChoices.find((c) => c.id === id);
             if (ch) {
+              const hasMaterial = materialJournalLines(lines).length > 0;
+              const needsConfirm = hasMaterial && !linesMatchChequeFaceAmount(lines, ch.amount);
+              if (needsConfirm) {
+                const { debit, credit, complete } = debitCreditTotals(lines);
+                const face = parseAmount(ch.amount.trim());
+                const faceLabel =
+                  face === null ? ch.amount.trim() || "(invalid)" : formatConfirmCurrency(Math.abs(face));
+                const detail = complete
+                  ? `Debit total ${formatConfirmCurrency(debit)}, credit total ${formatConfirmCurrency(credit)}, cheque amount (absolute) ${faceLabel}.`
+                  : "Some line amounts are missing or invalid.";
+                const ok = window.confirm(
+                  `This entry's amounts do not match the cheque face (${faceLabel}). ${detail} Replace the summary and lines with data from the cheque register?`,
+                );
+                if (!ok) {
+                  return;
+                }
+              }
               applyChequeAutoFill(ch);
             } else {
               setLinkedChequeId(id);
