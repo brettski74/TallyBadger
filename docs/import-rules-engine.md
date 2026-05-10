@@ -1,314 +1,189 @@
-# Import rules engine (GitHub [#8](https://github.com/brettski74/TallyBadger/issues/8))
+# Import rules engine — CEL and regex captures ([#8](https://github.com/brettski74/TallyBadger/issues/8), doc refresh [#94](https://github.com/brettski74/TallyBadger/issues/94))
 
-This document describes **what is implemented today**: behaviour, API, JSON shapes, tests, and **gaps**. There is **no frontend** for rules in this pass; use `/docs` or pytest.
+This document describes the **import rules path that exists in production for bank CSV import**: **CEL** expressions, optional **ordered regex captures**, **`evaluate_cel`**, persisted **CEL rule sets**, and the HTTP routes that invoke them. Use **OpenAPI** at **`/docs`** for request and response schemas.
 
----
+**Related:** [CEL function reference](cel-function-reference.md) — custom helpers (`debug()`, `unset()`, `party()`, `cheque()`, …). **[ARCH.md](../ARCH.md)** — where CSV import sits in the system (trust boundaries, high-level flow).
 
-## Import template vs rules engine (separation of duties)
-
-| Stage | Responsibility |
-|--------|------------------|
-| **Import template** (future UI / #9) | Map source columns → attribute names (these may be canonical **or** source-specific/ephemeral), plus simple deterministic conversions (e.g. strip currency symbols, parse amounts to numbers, parse date strings to dates). |
-| **Rules engine (#8)** | Take that **bag of attributes** (mixed types). **Match** rows and **enrich** them: regex captures, copies, numeric checks, ordered overwrites, `append_to_attribute` to build strings, etc. Output: **same bag shape**, larger or richer. |
-| **JE readiness** (later) | Check the bag for **everything needed** to build a journal entry; if incomplete, surface **missing fields** or hand off for user fix / drop. |
-| **Posting** | Create ledger entries from a complete bag (#10 / ledger). |
-
-The engine **does not** read CSV, own column mapping, or post journals. It only runs **`evaluate(rule_set, attributes)`**.
-
-Canonical JE fields can be provided directly by the import template, derived in rules, or both. In practice, the **combination** of template + rules should populate whatever canonical fields posting needs, and rules may use ephemeral attributes as intermediate inputs.
+**Frontend:** the SPA **Import rules** tab runs **`CelRuleSetsSection`** ([`frontend/src/components/CelRuleSetsSection.tsx`](../frontend/src/components/CelRuleSetsSection.tsx)) — create, edit, and delete persisted CEL rule sets (name, rule order, captures, expressions). CSV import can attach a rule set by id. Authors can still use **`/docs`** or **`POST /import-rules/cel/evaluate`** for ad-hoc evaluation without saving.
 
 ---
 
-## Pydantic: what it is here
+## Repository note: matcher/action engine (not used by CSV import)
 
-**Pydantic** validates and parses **HTTP JSON** and in-memory structures (e.g. rule definitions): required fields, discriminated `type` tags on matchers/actions, string lengths. It is **not** a substitute for your template layer—it does **not** replace “map this bank column to `posted_on`.” It helps keep **API and `RuleSet` payloads** well-formed.
+The tree still contains an **older** rules model: **ordered rules** made of **matchers** (e.g. regex, equals) and **actions** (e.g. `set_attribute`, `append_to_attribute`, `stop`, `drop_row`, `require_review`). That path is **not** called from **`POST /imports/csv/execute`**; CSV import uses **`evaluate_cel`** only.
 
-The **attribute bag** is modeled as `dict[str, Any]`: after JSON parsing you typically see `str`, `int`, `float`, `bool`, and `null`. For **money**, JSON has no `Decimal`; prefer **strings** in JSON if you need exact decimal semantics, or accept `float` knowing the limitations. In-process Python callers can pass `datetime`, `date`, `Decimal`, etc.; matchers use helpers to interpret them.
+**Inventory (for a future cleanup / usage audit — not part of [#94](https://github.com/brettski74/TallyBadger/issues/94)):**
+
+| Location | Role |
+|----------|------|
+| [`src/tallybadger/import_rules/models.py`](../src/tallybadger/import_rules/models.py) | Pydantic types: `RuleSet`, `Rule`, matcher and action discriminated unions, `EvaluationResult`, `TraceEvent`. |
+| [`src/tallybadger/import_rules/engine.py`](../src/tallybadger/import_rules/engine.py) | `evaluate(rule_set: RuleSet, attributes: dict[str, Any]) -> EvaluationResult` — runs matcher/action rules in sort order. |
+| [`src/tallybadger/api/routes/import_rules.py`](../src/tallybadger/api/routes/import_rules.py) | **`POST /import-rules/evaluate`** — stateless JSON API wrapping `evaluate`. Still **mounted** from [`main.py`](../src/tallybadger/main.py). |
+| [`src/tallybadger/import_rules/errors.py`](../src/tallybadger/import_rules/errors.py) | `ImportRulesError` (matcher path) and `ImportRulesCelError` (CEL path). |
+| [`src/tallybadger/import_rules/__init__.py`](../src/tallybadger/import_rules/__init__.py) | Public re-exports of **both** `evaluate` and `evaluate_cel`, plus matcher and CEL model types. |
+| [`tests/test_import_rules_engine.py`](../tests/test_import_rules_engine.py) | Unit tests for `evaluate`. |
+| [`tests/test_import_rules_api.py`](../tests/test_import_rules_api.py) | HTTP tests for **`POST /import-rules/evaluate`**. |
+
+**Known usage today:** tests and the **`POST /import-rules/evaluate`** endpoint only (no import pipeline integration). Removing or consolidating this code would require a deliberate decision, client impact check, and test updates.
 
 ---
 
-## Code layout
+## End-to-end flow (CSV)
+
+1. Client sends **`POST /imports/csv/execute`** with CSV text, column → attribute mapping, optional **`cel_rule_set_id`**, and template options.
+2. Each **data** row is turned into an **attribute bag** (typed values from cells — see route validation / converters in [`import_csv.py`](../src/tallybadger/api/routes/import_csv.py)).
+3. If a CEL rule set is configured, the row bag is passed to **`evaluate_cel`** (stored definition loaded by id). Otherwise the bag is unchanged by rules.
+4. The bag is converted to a **`JournalEntryWrite`** (summary, lines, review flags, optional cheque link). Rows **dropped** by CEL never become journal entries.
+5. Entries are posted through the ledger service (see ARCH.md).
+
+**Stateless try-out:** **`POST /import-rules/cel/evaluate`** accepts a rule set and bag in the body — no CSV, no persistence required.
+
+---
+
+## Persisted CEL rule sets
+
+CEL rule sets can be stored in the database and referenced by id from CSV execute.
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/import-rules/cel/rule-sets` | List ids, names, `updated_at`. |
+| `POST` | `/import-rules/cel/rule-sets` | Create (name + `CelRuleSet` JSON). |
+| `GET` | `/import-rules/cel/rule-sets/{id}` | Fetch one. |
+| `PATCH` | `/import-rules/cel/rule-sets/{id}` | Update name and/or rule set body. |
+| `DELETE` | `/import-rules/cel/rule-sets/{id}` | Delete. |
+
+Implementation: [`cel_rule_sets.py`](../src/tallybadger/api/routes/cel_rule_sets.py), [`cel_rule_set_service.py`](../src/tallybadger/import_rules/cel_rule_set_service.py).
+
+---
+
+## CEL rule set model
+
+Types live in [`cel_models.py`](../src/tallybadger/import_rules/cel_models.py).
+
+- **`CelRuleSet`** — `rules: list[CelRule]`.
+- **`CelRule`** — `name` (optional), `enabled`, `sort_order`, **`expression`** (CEL source string), **`captures`** (optional ordered list of `CelRegexCapture`).
+- **`CelRegexCapture`** — `attribute` (bag key), `pattern`, `flags` (`ignorecase`, `multiline`, `dotall`), optional `label`.
+
+Rules are processed in order by **`(sort_order, original index)`**. Disabled rules are skipped.
+
+---
+
+## Ordered captures and activation
+
+For each rule, **`captures`** run **in list order** before the CEL **`expression`**:
+
+1. For each capture, the engine runs `re.search(pattern, str(bag[attribute]), flags)` (empty/missing attribute → empty string).
+2. On the **first** failed capture, the rule is a **no-match**: no expression run, trace records `rule_not_matched` with `reason: capture_failed` and the capture index.
+3. If all captures succeed (or the list is empty), the engine builds **`match`** / **`matches`** and evaluates **`expression`**.
+
+**Activation map** passed to CEL (same content surfaced under two names for ergonomics):
+
+| Key | Meaning |
+|-----|---------|
+| `attributes`, `attr` | Current attribute bag (maps). |
+| `match`, `matches` | List of capture results; **`match[i]`** corresponds to **`captures[i]`**. |
+
+Each capture result is a map with `ok`, `whole`, `list` (index `0` = full match, `1…n` = numbered groups), and `groups` (named captures). When the expression runs, every listed capture has **`ok: true`** (failed captures never reach the expression).
+
+---
+
+## Rule result payload (matched rule)
+
+If the expression returns **`null`**, the rule does not match. Any other non-map result is a **422** (`ImportRulesCelError`). If it returns a **map**, it is the **payload**.
+
+### `set`
+
+Map of attribute updates applied **in iteration order**. Values are merged into the bag. Use the CEL **`unset()`** helper as a value to **remove** a key (see [CEL function reference](cel-function-reference.md#unset--remove-a-key-from-the-attribute-bag-57)). **`null`** sets the key to JSON null but **does not** remove it.
+
+Keys **`review`** and **`review-messages`** inside **`set`** are **not** normal bag keys: they are handled like top-level review fields (see below), appended to the run’s review list, and **not** left in the bag.
+
+### `stop` and `drop`
+
+- **`stop`**: must be **`null`** or a **string**. If it is **not `null`**, rule processing **stops** after this rule (later rules do not run). The string is recorded on the result as the stop reason for tracing.
+- **`drop`**: must be **`null`** or a **string**. If it is **not `null`**, the row is **dropped** (no journal entry), processing ends, and the string is the drop reason.
+
+Types other than `null` or `string` are rejected.
+
+### `review` and `review-messages` (aligned with [#89](https://github.com/brettski74/TallyBadger/issues/89))
+
+These fields express **why a row may need human review**. They are **not** durable bag attributes: the engine **strips** `review` and `review-messages` from the bag after each matched rule and after the full run.
+
+**Top-level** (on the payload map) or **inside `set`** (same semantics):
+
+- **`review`**: **`null`** or a **string**. If it is a string, it must be **non-empty** after trim; otherwise **422**. Each valid value **appends one** message to the run’s **`review_messages`** list.
+- **`review-messages`**: **`null`** or a **list**. Each element must be a **string** (or **`null`**, which is skipped); non-strings **422**. Each **non-empty** string after trim **appends** one message.
+
+**Accumulation:**
+
+- Messages are collected in **rule application order** (only from rules that matched and returned a payload).
+- Later rules **append**; they do **not** replace earlier reasons.
+- The CSV path passes the final **`review_messages`** into journal construction so **`requires_review`** is set when the list is non-empty.
+
+For **author diagnostics**, prefer **`debug(x)`** in expressions ([`debug()` in the function reference](cel-function-reference.md#debugx--inspection-helper-59)); it records values without changing rule outcome.
+
+---
+
+## Evaluation result (`CelEvaluationResult`)
+
+Returned by **`evaluate_cel`** and **`POST /import-rules/cel/evaluate`**:
+
+- **`attributes`** — final bag.
+- **`dropped`**, **`drop_reason`** — set when a rule returned **`drop`**.
+- **`review_messages`** — ordered strings from **`review`** / **`review-messages`**.
+- **`stopped_after_rule`** — label of the rule that stopped processing, if any.
+- **`trace`** — list of **`CelTraceEvent`** (`event` + `detail`). This is an **internal step log** in API JSON (rule tried/matched/skipped, `set_attribute`, `remove_attribute`, review events, `stop`, `drop_row`, etc.). It is **not** the primary authoring tool; use **`debug()`** to inspect values while writing rules.
+- **`debug`** — optional array of **`debug()`** records; omitted when empty.
+
+---
+
+## Automatic review after CEL (journal construction)
+
+[`import_csv.py`](../src/tallybadger/api/routes/import_csv.py) merges CEL **`review_messages`** with reasons added while building journal lines from the bag, for example:
+
+- **Unallocated debits / credits** — when the simple amount path falls back to ledger **suspense** accounts configured as unallocated targets, messages such as *“The debit amount is unallocated.”* / *“The credit amount is unallocated.”* are appended.
+- **`require_review`** on the bag — when truthy (from rules or column mapping), an additional explanatory string may be appended.
+
+Exact wording and conditions are defined in **`_bag_to_journal_entry`** and **`_build_lines_from_simple`** in the same module.
+
+---
+
+## HTTP quick reference
+
+| Endpoint | Role |
+|----------|------|
+| **`POST /import-rules/cel/evaluate`** | Run a **`CelRuleSet`** from the request body against **`attributes`**; optional **`debug`** in response. |
+| **`POST /imports/csv/execute`** | Import CSV; optional **`cel_rule_set_id`** loads a stored set and runs **`evaluate_cel`** per row. |
+| **`POST /import-rules/evaluate`** | Matcher/action **`evaluate`** only — see [repository note](#repository-note-matcheraction-engine-not-used-by-csv-import) above. **Not** part of the CSV pipeline. |
+
+---
+
+## Code index (CEL path)
 
 | Path | Purpose |
 |------|---------|
-| `src/tallybadger/import_rules/models.py` | `RuleSet`, `Rule`, matchers, actions, `EvaluationResult`, `TraceEvent` |
-| `src/tallybadger/import_rules/engine.py` | `evaluate(rule_set, attributes)` |
-| `src/tallybadger/import_rules/errors.py` | `ImportRulesError` |
-| `src/tallybadger/api/routes/import_rules.py` | `POST /import-rules/evaluate` |
-| `tests/test_import_rules_engine.py` | Unit tests |
-| `tests/test_import_rules_api.py` | API tests |
-
----
-
-## Typed attribute bag (no blanket string coercion)
-
-1. **Input** — Shallow copy of `attributes`. **Scalars** are kept as-is (`int`, `float`, `str`, `bool`, `None`). **`list` / `dict`** values are shallow-copied with `copy.copy` so rules do not mutate the caller’s nested objects by accident.
-2. **`set_attribute`** — `literal_value` may be any JSON-scalar or structure; `from_attribute` copies the referenced value (same typing); `from_regex_group` always produces a **string** (capture text).
-3. **`append_to_attribute`** — Each piece is turned into a string fragment (`_display_for_concat`: dates → ISO date, `Decimal` → plain `format`, numbers → `str`, etc.). The **stored attribute is always a `str`** after append.
-
----
-
-## Evaluation semantics
-
-1. **Rule order** — `(sort_order, original list index)`.
-2. **Disabled rules** — Skipped; `rule_skipped` in trace.
-3. **Matchers** — All must pass (**AND**). **Empty `matchers`** ⇒ rule always matches.
-4. **Regex** — `re.search` on **`str(attribute value)`** (regex is inherently text).
-5. **Actions** — Run only if the rule matched, in order. Later steps may **overwrite** keys unless you **`stop`** first.
-6. **Actions are first-class** — `stop`, `drop_row`, and `require_review` are normal actions from the author’s perspective. Implementation-wise:
-   - **`stop`** — stop processing **further rules** (only runs if this rule matched).
-   - **`drop_row`** — set `dropped`, optional reason, stop further rules.
-   - **`require_review`** — set `require_review` / `review_reason` only; **does not** stop later rules or matchers (a later rule can still run).
-7. **Trace** — See [Trace events](#trace-events).
-
----
-
-## Matchers (`type` discriminator)
-
-| `type` | Notes |
-|--------|--------|
-| `regex` | `str(value)` as haystack. Capture groups available to actions on this rule via `from_regex_group`. |
-| `equals` / `not_equals` | Compare attribute to rule `value` **string** using typed helpers: if both parse as `Decimal`, numeric compare; if attribute is `date` / ISO `str`, date compare; else string compare (`case_insensitive` where relevant). |
-| `contains` | Substring on `str(attribute)`. |
-| `numeric_compare` | Attribute coerced via `Decimal` rules (`int` ok; `bool` ignored as number). |
-| `in_set` | True if attribute equals **any** list entry under the same rules as `equals` (per-element). |
-| `day_of_month` / `day_of_week` | Attribute as `date`, `datetime`, or ISO `YYYY-MM-DD` string. |
-
----
-
-## Actions (`type` discriminator)
-
-| `type` | Notes |
-|--------|--------|
-| `set_attribute` | Exactly one of: `literal_value` (any JSON-compatible / Python value), `from_attribute`, `from_regex_group` (string). |
-| `append_to_attribute` | Same three sources as fragments; **resulting attribute is a string**. Chain multiple `append_to_attribute` steps in one rule to build e.g. `"{date} {tenant} Rent"`. |
-| `stop` | Stop further rules. |
-| `drop_row` | Mark dropped + reason; stop further rules. |
-| `require_review` | Flags only; processing continues. |
-
-### `from_regex_group`
-
-```json
-{ "matcher_index": 0, "group": "sender" }
-```
-
-`group` may be a **1-based** integer or a **named** group. `matcher_index` indexes this rule’s `matchers` array (the entry must be `regex` and must have matched).
-
----
-
-## Future: safe expression language (not implemented)
-
-A **single** `set_attribute` could someday take a **limited expression** (attribute names as variables, `match[matcherIndex][group]`, string concat, basic math, `upper`/`lower`/title case) with **no** arbitrary Python/JS execution. A common pattern is **[CEL](https://github.com/google/cel-spec)** (`cel-python`) or a **small custom AST** evaluated in a sandbox. That would reduce long chains of `append_to_attribute` for complex labels. **Tracking:** extend [#8](https://github.com/brettski74/TallyBadger/issues/8) or a child issue when you prioritise it.
-
----
-
-## HTTP API
-
-**`POST /import-rules/evaluate`**
-
-- **`attributes`**: object with **any JSON values** (strings, numbers, booleans, null, nested arrays/objects if you pass them—matchers mostly use scalars).
-- **`rule_set`**: ordered rules as in the examples below.
-
-```json
-{
-  "attributes": {
-    "description": "EMT - ACME, ref 1",
-    "amount": 100.0
-  },
-  "rule_set": {
-    "rules": [
-      {
-        "id": "emt-sender",
-        "sort_order": 10,
-        "enabled": true,
-        "matchers": [
-          {
-            "type": "regex",
-            "attribute": "description",
-            "pattern": "EMT\\s*-\\s*(?P<sender>[^,]+),",
-            "flags": []
-          }
-        ],
-        "actions": [
-          {
-            "type": "set_attribute",
-            "name": "party_name_hint",
-            "from_regex_group": { "matcher_index": 0, "group": "sender" }
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-Response **`EvaluationResult`**: `attributes` (typed bag), `dropped`, `drop_reason`, `require_review`, `review_reason`, `stopped_after_rule`, `trace`.
-
-`ImportRulesError` → **422** with `detail` text.
-
-Interactive: **`/docs`** → **import-rules**.
-
----
-
-## Trace events (non-exhaustive)
-
-| `event` | Typical `detail` |
-|---------|------------------|
-| `rule_skipped` | `rule`, `reason` |
-| `rule_tried` / `rule_not_matched` / `rule_matched` | `rule` |
-| `set_attribute` | `rule`, `name`, `value` (value may be non-string) |
-| `remove_attribute` | `rule`, `name` — key removed from bag via **`unset()`** in CEL **`set`** ([#57](https://github.com/brettski74/TallyBadger/issues/57)) |
-| `append_to_attribute` | `rule`, `name`, `fragment` |
-| `stop` | `rule` |
-| `drop_row` | `rule`, `reason` |
-| `require_review` | `rule`, `reason` |
+| [`cel_engine.py`](../src/tallybadger/import_rules/cel_engine.py) | **`evaluate_cel`**, capture gating, payload handling, trace/debug. |
+| [`cel_models.py`](../src/tallybadger/import_rules/cel_models.py) | `CelRuleSet`, `CelRule`, `CelRegexCapture`, `CelEvaluationResult`, `CelTraceEvent`, `CelDebugEvent`. |
+| [`import_rules_cel.py`](../src/tallybadger/api/routes/import_rules_cel.py) | **`POST /import-rules/cel/evaluate`**. |
+| [`import_csv.py`](../src/tallybadger/api/routes/import_csv.py) | **`POST /imports/csv/execute`**, bag → journal, CEL integration. |
+| [`cel_party_functions.py`](../src/tallybadger/import_rules/cel_party_functions.py), [`cel_stdlib_functions.py`](../src/tallybadger/import_rules/cel_stdlib_functions.py), [`cel_cheque_functions.py`](../src/tallybadger/import_rules/cel_cheque_functions.py) | Registered CEL functions. |
 
 ---
 
 ## Tests
 
-- **`make test-unit`** — all non-integration tests (includes import rules).
-- **`make test`** — full suite + DB + integration; **`test-results/pytest.html`**.
-
----
-
-## Not implemented yet (checklist)
-
-- [ ] Persisted **import templates** / profiles and **stored rule sets**; CRUD; SQL migrations.
-- [ ] **Frontend**: template editor, rule wizard, test bench.
-- [ ] **OR / nested matcher groups** (only AND within a rule).
-- [ ] **Post-rules JE completeness** module.
-- [ ] **CSV import (#9)** and **posting (#10)** wired to `evaluate`.
-- [ ] **Safe expression language** for `set_attribute` (optional).
-
----
-
-## Calling from Python
-
-```python
-from datetime import date
-from decimal import Decimal
-
-from tallybadger.import_rules import Rule, RuleSet, evaluate
-from tallybadger.import_rules.models import SetAttributeAction
-
-out = evaluate(
-    RuleSet(rules=[Rule(matchers=[], actions=[SetAttributeAction(name="x", literal_value=1)])]),
-    {"amount": Decimal("10.00"), "posted_on": date(2026, 4, 1)},
-)
-assert out.attributes["x"] == 1
-assert out.attributes["amount"] == Decimal("10.00")
-```
+- **`tests/test_import_rules_cel_engine.py`** — `evaluate_cel` behaviour.
+- **`tests/test_import_rules_cel_api.py`** — **`POST /import-rules/cel/evaluate`**.
+- CSV + CEL integration: search under **`tests/`** for **`csv/execute`**, **`import_csv`**, or **`cel_rule_set`** (names may evolve).
 
 ---
 
 ## References
 
-- [#8 – Pattern and rules engine for transaction categorization during ingest](https://github.com/brettski74/TallyBadger/issues/8)
-- OpenAPI: `/docs`
-
----
-
-## CEL spike (alternative rule model)
-
-There is now a **spike implementation** that models each rule as one CEL expression, with optional ordered **capture** (regex) steps:
-
-- Engine: `src/tallybadger/import_rules/cel_engine.py`
-- Models: `src/tallybadger/import_rules/cel_models.py`
-- API: `POST /import-rules/cel/evaluate` via `src/tallybadger/api/routes/import_rules_cel.py`
-- Tests: `tests/test_import_rules_cel_engine.py`, `tests/test_import_rules_cel_api.py`
-
-**Custom CEL functions** (party helpers, generic helpers): see **[CEL function reference](cel-function-reference.md)** — tracked in GitHub [#46](https://github.com/brettski74/TallyBadger/issues/46), [#50](https://github.com/brettski74/TallyBadger/issues/50), and [#57](https://github.com/brettski74/TallyBadger/issues/57) (`unset()`). Update that doc in the same PR whenever a listed function ships or its contract changes.
-
-### CEL rule contract (spike)
-
-Each rule has:
-
-- `expression`: CEL expression
-- optional `captures`: ordered list of regex specs; see [Capture gating](#capture-gating-spike) below.
-
-The expression should return either:
-
-- `null` -> treated as **no match**
-- map/object -> treated as **matched action payload**
-- anything else -> **error** (422 via `ImportRulesCelError`)
-
-Top-level reserved payload keys:
-
-- `set`: map of attribute updates. Values are assigned into the bag; use CEL **`unset()`** as the value to **remove** a key instead (**[#57](https://github.com/brettski74/TallyBadger/issues/57)**). A **`null`** value still **sets** the attribute to null with the key **present**—it does **not** delete the key.
-- `stop`: `null` or **string reason** (non-null string stops further rules)
-- `drop`: `null` or **string reason** (non-null string drops row + stops)
-- `review`: `null` or **string reason** (non-null string marks require-review; processing continues)
-
-This reflects the compromise design: control flags are top-level; mutable attributes are namespaced under `set`.
-
-### Capture gating (spike)
-
-For each rule, **`captures` are evaluated in list order** (short-circuit):
-
-1. Run `re.search(pattern, str(attributes[attribute]), flags)` for `captures[0]`, then `captures[1]`, and so on.
-2. On the **first** capture that does **not** match, stop: **do not** run further captures for this rule, **do not** run the CEL expression, and treat the rule as **no match** (`rule_not_matched` in the trace, with `reason: capture_failed` and the failing index).
-3. If **every** capture matches (or `captures` is **empty**), build `match` / `matches` from those results and **then** evaluate `expression`.
-
-So when the CEL program runs, **every** `match[i]` corresponds to a successful capture; **`ok` is always `true`**. (The `ok` field remains in the shape for clarity and tooling.)
-
-### Activation context schema (spike)
-
-Each CEL rule is evaluated with an **activation** map. Keys are fixed; values are what `cel-python` sees (strings, numbers, lists, maps).
-
-| Key | Type | Meaning |
-|-----|------|---------|
-| `attributes` | map | Current attribute bag (same content as `attr`). |
-| `attr` | map | Alias of `attributes` (shorter access in expressions). |
-| `match` | list | Precomputed regex results; **one element per** `captures[]` entry **in order**. |
-| `matches` | list | Same as `match` (alias). |
-
-**`match[i]`** (one object per `rule.captures[i]`):
-
-```json
-{
-  "ok": true,
-  "whole": "<full regex match or null if no match>",
-  "list": ["<whole match>", "<group 1>", "<group 2>", "..."],
-  "groups": { "named_group": "<capture text>", "...": "..." }
-}
-```
-
-Semantics:
-
-- **`ok`** — `true` if `re.search(pattern, str(attribute_value), flags)` matched; otherwise `false`.
-- **`whole`** — Full match text when `ok` is `true`; **`null`** when `ok` is `false`.
-- **`list`** — When `ok` is `true`: index **`0`** is the whole match (same as `whole`); indices **`1`…`n`** are **positional** capture groups **1…n** in pattern order. When `ok` is `false`: **`[]`**.
-- **`groups`** — Only **named** capture groups from the pattern; omitted keys are not present. Values are capture strings. When `ok` is `false`: **`{}`**.
-
-Index **`i`** in `match` always corresponds to **`captures[i]`** on that rule (same order as the `captures` array in the rule definition). If the expression is evaluated at all, **all** of those captures succeeded.
-
-### Example CEL expression
-
-After captures succeed, you only need to branch inside CEL when the **payload** should be conditional (e.g. amount threshold). A failed regex no longer requires `match[i]["ok"]` checks—that case never reaches the expression.
-
-```cel
-attributes["amount"] > 0 ?
-  {
-    "set": {
-      "party_name_hint": match[0]["groups"]["sender"],
-      "label": string(attributes["posted_on"]) + " " + match[0]["groups"]["sender"] + " Rent"
-    },
-    "review": "confirm sender match",
-    "stop": null,
-    "drop": null
-  }
-  : null
-```
-
-### Why ordered captures exist (not in-expression regex)
-
-With the current CEL runtime (`cel-python`), `matches()` is available for boolean regex checks, but capture-group extraction helpers are not exposed as convenient CEL functions. Ordered captures give expressions stable access to groups via `match`/`matches` without side-effectful custom CEL functions, and **gate** the rule so the common case (regex must match) does not require boilerplate in the expression.
-
-If we later adopt a CEL runtime with robust capture extraction in-expression, captures could become optional sugar; gating semantics would still match user expectations.
-
-### Notes
-
-- In this spike, non-map/non-null expression results are **errors**.
-- `stop/drop/review` must be null or string; other types return 422 via `ImportRulesCelError`.
-- `append_to_attribute` is not needed in CEL mode; string composition is done directly in expression.
+- [#8](https://github.com/brettski74/TallyBadger/issues/8) — import rules (CEL path is the shipped import story).
+- [#37](https://github.com/brettski74/TallyBadger/issues/37) — persisted CEL rule sets (historical tracking; behaviour is current).
+- [#57](https://github.com/brettski74/TallyBadger/issues/57) — `unset()` in **`set`**.
+- [#59](https://github.com/brettski74/TallyBadger/issues/59) — `debug()`.
+- [#73](https://github.com/brettski74/TallyBadger/issues/73) — parent cheque/import workstream.
+- [#89](https://github.com/brettski74/TallyBadger/issues/89) — review message contract (accumulation, bag stripping).
+- [#92](https://github.com/brettski74/TallyBadger/issues/92) — `cheque()` and CSV cheque wiring.
+- [#94](https://github.com/brettski74/TallyBadger/issues/94) — this documentation rewrite.
