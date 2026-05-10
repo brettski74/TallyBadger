@@ -27,11 +27,13 @@ def evaluate_import_rules_cel(
     try:
         parties = ledger_service.list_parties()
         accounts = ledger_service.list_accounts()
+        cheques = ledger_service.list_cheques(list_status="open")
         return evaluate_cel(
             payload.rule_set,
             payload.attributes,
             parties=parties,
             accounts=accounts,
+            cheques=cheques,
         )
     except ImportRulesCelError as exc:
         raise HTTPException(

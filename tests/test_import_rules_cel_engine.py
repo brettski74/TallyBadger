@@ -8,7 +8,7 @@ import pytest
 from tallybadger.import_rules.cel_engine import evaluate_cel
 from tallybadger.import_rules.cel_models import CelRegexCapture, CelRule, CelRuleSet
 from tallybadger.import_rules.errors import ImportRulesCelError
-from tallybadger.ledger.models import AccountOut, PartyOut
+from tallybadger.ledger.models import AccountOut, ChequeOut, PartyOut
 
 
 def test_cel_rule_can_set_attributes_and_keep_types() -> None:
@@ -297,6 +297,25 @@ def _party_row(**kwargs: object) -> PartyOut:
     }
     base.update(kwargs)
     return PartyOut.model_validate(base)
+
+
+def _cheque_row(**kwargs: object) -> ChequeOut:
+    base: dict[str, object] = {
+        "id": 1,
+        "credit_account_id": 10,
+        "debit_account_id": 20,
+        "summary": "May rent",
+        "cheque_number": 42,
+        "issue_date": date(2026, 5, 1),
+        "cleared_date": None,
+        "amount": Decimal("100.00"),
+        "party_id": None,
+        "status": "open",
+        "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+        "updated_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+    }
+    base.update(kwargs)
+    return ChequeOut.model_validate(base)
 
 
 def test_cel_party_resolves_with_patterns() -> None:
@@ -702,3 +721,182 @@ def test_cel_match_date_invalid_params() -> None:
     rs2 = CelRuleSet(rules=[CelRule(expression='{"set":{"x": match_date(attributes["d"], 5, -1)}}')])
     with pytest.raises(ImportRulesCelError, match="tolerance"):
         evaluate_cel(rs2, {"d": "2026-04-10"})
+
+
+def test_cel_cheque_match_sets_bag_and_omits_empty_review_messages() -> None:
+    cr = _account_row(id=10, name="Operating", type="asset")
+    dr = _account_row(id=20, name="Rent Expense", type="expense")
+    ch = _cheque_row(id=99, credit_account_id=10, debit_account_id=20, cheque_number=42)
+    rs = CelRuleSet(
+        rules=[
+            CelRule(
+                expression='{"set": cheque("Operating", 42, attributes["amt"], attributes["entry_date"])}',
+            ),
+        ],
+    )
+    out = evaluate_cel(
+        rs,
+        {"amt": Decimal("100.00"), "entry_date": date(2026, 5, 5)},
+        accounts=[cr, dr],
+        cheques=[ch],
+    )
+    assert out.attributes["cheque-id"] == 99
+    assert out.attributes["dr-account"] == "Rent Expense"
+    assert out.attributes["summary"] == "May rent"
+    assert "review-messages" not in out.attributes
+    assert out.review_messages == []
+
+
+def test_cel_cheque_accepts_entry_date_as_iso_string() -> None:
+    cr = _account_row(id=10, name="Operating", type="asset")
+    dr = _account_row(id=20, name="Rent Expense", type="expense")
+    ch = _cheque_row(credit_account_id=10, debit_account_id=20)
+    rs = CelRuleSet(
+        rules=[
+            CelRule(
+                expression='{"set": cheque("Operating", 42, attributes["amt"], attributes["entry_date"])}',
+            ),
+        ],
+    )
+    out = evaluate_cel(
+        rs,
+        {"amt": "100.00", "entry_date": "2026-05-05"},
+        accounts=[cr, dr],
+        cheques=[ch],
+    )
+    assert out.attributes["cheque-id"] == 1
+    assert out.review_messages == []
+
+
+def test_cel_cheque_amount_mismatch_adds_review_message() -> None:
+    cr = _account_row(id=10, name="Operating", type="asset")
+    dr = _account_row(id=20, name="Rent Expense", type="expense")
+    ch = _cheque_row(credit_account_id=10, debit_account_id=20, amount=Decimal("100.00"))
+    rs = CelRuleSet(
+        rules=[
+            CelRule(
+                expression='{"set": cheque("Operating", 42, attributes["amt"], attributes["entry_date"])}',
+            ),
+        ],
+    )
+    out = evaluate_cel(
+        rs,
+        {"amt": Decimal("99.00"), "entry_date": date(2026, 5, 5)},
+        accounts=[cr, dr],
+        cheques=[ch],
+    )
+    assert out.attributes["cheque-id"] == 1
+    assert len(out.review_messages) == 1
+    assert "99" in out.review_messages[0] and "100.00" in out.review_messages[0]
+
+
+def test_cel_cheque_entry_date_before_issue_date_adds_review_message() -> None:
+    cr = _account_row(id=10, name="Operating", type="asset")
+    dr = _account_row(id=20, name="Rent Expense", type="expense")
+    ch = _cheque_row(
+        credit_account_id=10,
+        debit_account_id=20,
+        issue_date=date(2026, 5, 10),
+    )
+    rs = CelRuleSet(
+        rules=[
+            CelRule(
+                expression='{"set": cheque("Operating", 42, attributes["amt"], attributes["entry_date"])}',
+            ),
+        ],
+    )
+    out = evaluate_cel(
+        rs,
+        {"amt": Decimal("100.00"), "entry_date": date(2026, 5, 1)},
+        accounts=[cr, dr],
+        cheques=[ch],
+    )
+    assert len(out.review_messages) == 1
+    assert "2026-05-01" in out.review_messages[0]
+    assert "2026-05-10" in out.review_messages[0]
+
+
+def test_cel_cheque_no_open_match_no_cheque_id_in_bag() -> None:
+    cr = _account_row(id=10, name="Operating", type="asset")
+    dr = _account_row(id=20, name="Rent Expense", type="expense")
+    rs = CelRuleSet(
+        rules=[
+            CelRule(
+                expression='{"set": cheque("Operating", 42, attributes["amt"], attributes["entry_date"])}',
+            ),
+        ],
+    )
+    out = evaluate_cel(
+        rs,
+        {"amt": Decimal("100.00"), "entry_date": date(2026, 5, 5)},
+        accounts=[cr, dr],
+        cheques=[],
+    )
+    assert "cheque-id" not in out.attributes
+    assert "dr-account" not in out.attributes
+    assert "summary" not in out.attributes
+    assert len(out.review_messages) >= 1
+
+
+def test_cel_cheque_includes_dr_party_only_when_party_on_register_row() -> None:
+    cr = _account_row(id=10, name="Operating", type="asset")
+    dr = _account_row(id=20, name="Rent Expense", type="expense")
+    vendor = _party_row(id=5, name="Vendor Co", match_patterns=[])
+    ch = _cheque_row(credit_account_id=10, debit_account_id=20, party_id=5)
+    rs = CelRuleSet(
+        rules=[
+            CelRule(
+                expression='{"set": cheque("Operating", 42, attributes["amt"], attributes["entry_date"])}',
+            ),
+        ],
+    )
+    out = evaluate_cel(
+        rs,
+        {"amt": Decimal("100.00"), "entry_date": date(2026, 5, 5)},
+        accounts=[cr, dr],
+        parties=[vendor],
+        cheques=[ch],
+    )
+    assert out.attributes["dr-party"] == "Vendor Co"
+
+
+def test_cel_cheque_omits_dr_party_when_party_id_unknown_in_snapshot() -> None:
+    cr = _account_row(id=10, name="Operating", type="asset")
+    dr = _account_row(id=20, name="Rent Expense", type="expense")
+    ch = _cheque_row(credit_account_id=10, debit_account_id=20, party_id=999)
+    rs = CelRuleSet(
+        rules=[
+            CelRule(
+                expression='{"set": cheque("Operating", 42, attributes["amt"], attributes["entry_date"])}',
+            ),
+        ],
+    )
+    out = evaluate_cel(
+        rs,
+        {"amt": Decimal("100.00"), "entry_date": date(2026, 5, 5)},
+        accounts=[cr, dr],
+        parties=[],
+        cheques=[ch],
+    )
+    assert "dr-party" not in out.attributes
+
+
+def test_cel_cheque_skips_non_open_rows() -> None:
+    cr = _account_row(id=10, name="Operating", type="asset")
+    dr = _account_row(id=20, name="Rent Expense", type="expense")
+    voided = _cheque_row(credit_account_id=10, debit_account_id=20, status="void")
+    rs = CelRuleSet(
+        rules=[
+            CelRule(
+                expression='{"set": cheque("Operating", 42, attributes["amt"], attributes["entry_date"])}',
+            ),
+        ],
+    )
+    out = evaluate_cel(
+        rs,
+        {"amt": Decimal("100.00"), "entry_date": date(2026, 5, 5)},
+        accounts=[cr, dr],
+        cheques=[voided],
+    )
+    assert "cheque-id" not in out.attributes
+    assert out.review_messages

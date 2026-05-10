@@ -14,6 +14,7 @@ def cel_evaluate_client() -> TestClient:
     ledger = MagicMock()
     ledger.list_parties.return_value = []
     ledger.list_accounts.return_value = []
+    ledger.list_cheques.return_value = []
     app.dependency_overrides[get_ledger_service] = lambda: ledger
     yield TestClient(app)
     app.dependency_overrides.pop(get_ledger_service, None)
@@ -77,6 +78,7 @@ def test_cel_evaluate_endpoint_includes_debug_without_row_number(cel_evaluate_cl
 def test_cel_evaluate_endpoint_account_type_reads_list_accounts() -> None:
     ledger = MagicMock()
     ledger.list_parties.return_value = []
+    ledger.list_cheques.return_value = []
     ledger.list_accounts.return_value = [
         AccountOut(
             id=1,

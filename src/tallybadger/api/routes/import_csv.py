@@ -207,6 +207,45 @@ def _require_string(bag: dict[str, Any], key: str) -> str:
     return text
 
 
+def _optional_cheque_id_from_bag(bag: dict[str, Any]) -> int | None:
+    """Read ``cheque-id`` from the attribute bag (CEL / column mapping); ``None`` when absent."""
+    raw = bag.get("cheque-id")
+    if raw is None or raw == "":
+        return None
+    if isinstance(raw, bool):
+        raise ValueError("cheque-id must be an integer")
+    if isinstance(raw, int):
+        if raw <= 0:
+            raise ValueError("cheque-id must be positive")
+        return raw
+    if isinstance(raw, float):
+        if not raw.is_integer():
+            raise ValueError("cheque-id must be an integer")
+        n = int(raw)
+        if n <= 0:
+            raise ValueError("cheque-id must be positive")
+        return n
+    if isinstance(raw, Decimal):
+        if raw % 1 != 0:
+            raise ValueError("cheque-id must be an integer")
+        n = int(raw)
+        if n <= 0:
+            raise ValueError("cheque-id must be positive")
+        return n
+    if isinstance(raw, str):
+        s = raw.strip()
+        if not s:
+            return None
+        try:
+            n = int(s)
+        except ValueError as exc:
+            raise ValueError(f"invalid cheque-id: {raw!r}") from exc
+        if n <= 0:
+            raise ValueError("cheque-id must be positive")
+        return n
+    raise ValueError(f"cheque-id has unsupported type: {type(raw).__name__}")
+
+
 def _resolve_unallocated_account_name(
     *,
     role: str,
@@ -413,6 +452,7 @@ def _bag_to_journal_entry(
         raise ValueError(
             "either amount (with optional dr-account/cr-account) or line[] is required",
         )
+    cheque_id = _optional_cheque_id_from_bag(bag)
     requires_review = len(review_messages) > 0
     return JournalEntryWrite(
         entry_date=entry_date,
@@ -421,6 +461,7 @@ def _bag_to_journal_entry(
         lines=lines,
         requires_review=requires_review,
         review_messages=review_messages,
+        cheque_id=cheque_id,
     )
 
 
@@ -439,6 +480,7 @@ def execute_csv_import(
 
     accounts = ledger_service.list_accounts()
     parties = ledger_service.list_parties()
+    open_cheques = ledger_service.list_cheques(list_status="open")
     account_ids = {a.name: a.id for a in accounts if a.is_active}
     accounts_by_id = {a.id: a for a in accounts}
     party_ids = {p.name: p.id for p in parties if p.is_active}
@@ -482,6 +524,7 @@ def execute_csv_import(
                     bag,
                     parties=ledger_service.list_parties(),
                     accounts=accounts,
+                    cheques=open_cheques,
                     row_number=idx,
                 )
             except ImportRulesCelError as exc:

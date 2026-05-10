@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
-from tallybadger.api.routes.import_csv import _convert_cell
+from tallybadger.api.routes.import_csv import _bag_to_journal_entry, _convert_cell
 from tallybadger.ledger.models import AccountOut, JournalEntryOut, JournalLineOut, LedgerSettingsOut
 from tallybadger.import_rules.cel_models import CelRule, CelRuleSet
 from tallybadger.import_templates.models import ImportTemplateColumn
@@ -33,6 +33,7 @@ def import_execute_client() -> TestClient:
     ledger = MagicMock()
     ledger.list_accounts.return_value = []
     ledger.list_parties.return_value = []
+    ledger.list_cheques.return_value = []
     ledger.get_ledger_settings.return_value = _blank_ledger_settings()
 
     from tallybadger.api.routes.import_csv import get_ledger_service
@@ -46,6 +47,7 @@ def _client_with_cel_rule(expression: str) -> TestClient:
     ledger = MagicMock()
     ledger.list_accounts.return_value = []
     ledger.list_parties.return_value = []
+    ledger.list_cheques.return_value = []
     ledger.get_ledger_settings.return_value = _blank_ledger_settings()
     cel_svc = MagicMock()
     cel_svc.get_rule_set.return_value = MagicMock(
@@ -225,6 +227,32 @@ def test_convert_cell_lenient_yyyy_m_d() -> None:
     assert _convert_cell("2026-4-7", col).isoformat() == "2026-04-07"
 
 
+def test_bag_to_journal_entry_passes_cheque_id_from_bag() -> None:
+    now = datetime.now(tz=timezone.utc)
+    cash = AccountOut(id=1, name="Cash", type="asset", is_active=True, created_at=now, updated_at=now)
+    rev = AccountOut(id=2, name="Revenue", type="revenue", is_active=True, created_at=now, updated_at=now)
+    account_ids = {"Cash": 1, "Revenue": 2}
+    party_ids: dict[str, int] = {}
+    accounts_by_id = {1: cash, 2: rev}
+    bag = {
+        "date": date(2026, 1, 1),
+        "summary": "Cheque-linked import",
+        "cheque-id": 55,
+        "line": [
+            {"account": "Cash", "amount": "100.00"},
+            {"account": "Revenue", "amount": "-100.00"},
+        ],
+    }
+    je = _bag_to_journal_entry(
+        bag,
+        account_ids,
+        party_ids,
+        ledger_settings=_blank_ledger_settings(),
+        accounts_by_id=accounts_by_id,
+    )
+    assert je.cheque_id == 55
+
+
 def test_execute_csv_debug_only_on_entries_that_used_debug() -> None:
     """CEL #59: per-entry ``debug`` on CSV execute; omit key when that row had no ``debug()`` call."""
     now = datetime.now(tz=timezone.utc)
@@ -233,6 +261,7 @@ def test_execute_csv_debug_only_on_entries_that_used_debug() -> None:
     ledger = MagicMock()
     ledger.list_accounts.return_value = [cash, rent]
     ledger.list_parties.return_value = []
+    ledger.list_cheques.return_value = []
     ledger.get_ledger_settings.return_value = LedgerSettingsOut(
         accounts_receivable_account_id=None,
         accounts_payable_account_id=None,
@@ -257,6 +286,7 @@ def test_execute_csv_debug_only_on_entries_that_used_debug() -> None:
         summary="A",
         description=None,
         requires_review=False,
+        cheque_id=None,
         created_at=now,
         updated_at=now,
         lines=[
@@ -284,6 +314,7 @@ def test_execute_csv_debug_only_on_entries_that_used_debug() -> None:
         summary="B",
         description=None,
         requires_review=False,
+        cheque_id=None,
         created_at=now,
         updated_at=now,
         lines=[
