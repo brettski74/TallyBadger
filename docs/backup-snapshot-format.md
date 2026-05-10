@@ -1,6 +1,6 @@
 # TallyBadger backup snapshot format
 
-This document defines the **versioned ZIP snapshot** used for database backup and restore. It stays aligned with **`format_version`** in `metadata.json` (current export: **1.2.0**; prior archives remain importable per the version window in **[STYLE.md](../STYLE.md)**).
+This document defines the **versioned ZIP snapshot** used for database backup and restore. It stays aligned with **`format_version`** in `metadata.json` (current export: **1.3.0**; prior archives remain importable per the version window in **[STYLE.md](../STYLE.md)**).
 
 Parent product spec: GitHub issue [#16](https://github.com/brettski74/TallyBadger/issues/16). Slice 1 ([#67](https://github.com/brettski74/TallyBadger/issues/67)) shipped **complete** export/import; slice 2 ([#68](https://github.com/brettski74/TallyBadger/issues/68)) adds **`configuration`** and **`financial`** modes with scoped validation and duplicate policies.
 
@@ -33,7 +33,7 @@ Snapshot metadata does **not** include restore behaviour (no duplicate-resolutio
 
 ### `export_type` vs ZIP members
 
-The set of data members (excluding `metadata.json`) must match **exactly** the matrix for **`export_type`** and **`format_version`**. For **1.0.0**, that set is only the table JSON files below (no attachments, no journal review messages). For **1.1.0** `complete` / `financial`, it is those JSON files **plus** one manifest entry per attachment row in `attachments.json` (binary path derived from attachment `id` and `mime_type`). From **1.2.0** `complete` / `financial`, **`journal_entry_review_messages.json`** is also required. A mismatch fails import. The importer does **not** infer mode from files alone.
+The set of data members (excluding `metadata.json`) must match **exactly** the matrix for **`export_type`** and **`format_version`**. For **1.0.0**, that set is only the table JSON files below (no attachments, no journal review messages). For **1.1.0** `complete` / `financial`, it is those JSON files **plus** one manifest entry per attachment row in `attachments.json` (binary path derived from attachment `id` and `mime_type`). From **1.2.0** `complete` / `financial`, **`journal_entry_review_messages.json`** is also required. From **1.3.0** `complete` / `financial`, **`cheques.json`** is also required (possibly an empty array). A mismatch fails import. The importer does **not** infer mode from files alone.
 
 ## Export modes
 
@@ -45,13 +45,13 @@ The set of data members (excluding `metadata.json`) must match **exactly** the m
 
 **Includes:** `accounts`, `parties`, `party_match_patterns`, `accrual_plans`, `ledger_settings`, `cel_rule_sets`, `import_templates`.
 
-**Excludes:** `journal_entries`, `journal_lines`, `accrual_obligations`, `settlement_events`, `settlement_allocations`.
+**Excludes:** `cheques`, `journal_entries`, `journal_lines`, `accrual_obligations`, `settlement_events`, `settlement_allocations`.
 
 **Use:** chart of accounts, counterparties, accrual **plan** definitions, CEL / import templates, and ledger settings—without posted history or subledger balances.
 
 ### `financial`
 
-**Includes:** `journal_entries`, `journal_lines`, `accrual_obligations`, `settlement_events`, `settlement_allocations`, from **`format_version` 1.2.0** also `journal_entry_review_messages`, and from **1.1.0** also `attachments`, `journal_entry_attachments`, plus **`attachments/*`** blob members listed in `member_manifest`.
+**Includes:** `journal_entries`, `journal_lines`, `accrual_obligations`, `settlement_events`, `settlement_allocations`, from **`format_version` 1.3.0** also `cheques` (loaded **before** `journal_entries` so `journal_entries.cheque_id` can resolve), from **1.2.0** also `journal_entry_review_messages`, and from **1.1.0** also `attachments`, `journal_entry_attachments`, plus **`attachments/*`** blob members listed in `member_manifest`.
 
 **Excludes:** all configuration tables.
 
@@ -71,15 +71,16 @@ Order for the **full** set (partial archives load only the files present, in thi
 4. `accrual_plans.json`
 5. `ledger_settings.json`
 6. `cel_rule_sets.json`
-7. `journal_entries.json`
-8. `journal_entry_review_messages.json` — **1.2.0** `complete` / `financial` only.
-9. `journal_lines.json`
-10. `accrual_obligations.json`
-11. `settlement_events.json`
-12. `settlement_allocations.json`
-13. `attachments.json` — **1.1.0** `complete` / `financial` only (metadata columns; `blob` is filled from manifest-listed `attachments/*` members).
-14. `journal_entry_attachments.json` — **1.1.0** `complete` / `financial` only.
-15. `import_templates.json`
+7. `cheques.json` — **1.3.0** `complete` / `financial` only.
+8. `journal_entries.json`
+9. `journal_entry_review_messages.json` — **1.2.0** `complete` / `financial` only.
+10. `journal_lines.json`
+11. `accrual_obligations.json`
+12. `settlement_events.json`
+13. `settlement_allocations.json`
+14. `attachments.json` — **1.1.0** `complete` / `financial` only (metadata columns; `blob` is filled from manifest-listed `attachments/*` members).
+15. `journal_entry_attachments.json` — **1.1.0** `complete` / `financial` only.
+16. `import_templates.json`
 
 `ledger_settings` is exported as an array (typically one row with `id = 1`).
 

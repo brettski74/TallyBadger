@@ -13,6 +13,7 @@ AccrualFrequency = Literal["weekly", "monthly_day", "yearly"]
 ObligationType = Literal["receivable", "payable", "unearned"]
 ObligationStatus = Literal["open", "partially_settled", "settled", "reconciled"]
 SettlementType = Literal["receipt", "payment"]
+ChequeStatus = Literal["open", "cleared", "void"]
 
 
 def _optional_byte_size(value: Any) -> int | None:
@@ -116,6 +117,9 @@ class JournalEntryWrite(BaseModel):
     review_messages: list[str] = Field(default_factory=list)
     """New review reasons to append when creating or updating an entry (non-empty strings only)."""
 
+    cheque_id: int | None = Field(default=None, gt=0)
+    """Optional link to a row in ``cheques`` (clearing / register linkage)."""
+
 
 class JournalEntryOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -125,6 +129,7 @@ class JournalEntryOut(BaseModel):
     summary: str
     description: str | None
     requires_review: bool = False
+    cheque_id: int | None = None
     created_at: datetime
     updated_at: datetime
     lines: list[JournalLineOut]
@@ -139,12 +144,63 @@ class JournalEntryListItem(BaseModel):
     summary: str
     description: str | None
     requires_review: bool = False
+    cheque_id: int | None = None
     created_at: datetime
     updated_at: datetime
     debit_side_label: str
     credit_side_label: str
     party_labels: str
     amount: Decimal
+
+
+class ChequeCreate(BaseModel):
+    credit_account_id: int = Field(gt=0)
+    debit_account_id: int = Field(gt=0)
+    summary: str = Field(min_length=1, max_length=200)
+    cheque_number: int = Field(gt=0)
+    issue_date: date
+    cleared_date: date | None = None
+    amount: Decimal = Field(gt=0)
+    party_id: int | None = Field(default=None, gt=0)
+    status: ChequeStatus = "open"
+
+    @model_validator(mode="after")
+    def cleared_shape_matches_status(self) -> "ChequeCreate":
+        if self.status == "cleared":
+            if self.cleared_date is None:
+                raise ValueError("cleared_date is required when status is cleared")
+        elif self.cleared_date is not None:
+            raise ValueError("cleared_date must be null unless status is cleared")
+        return self
+
+
+class ChequeUpdate(BaseModel):
+    credit_account_id: int | None = Field(default=None, gt=0)
+    debit_account_id: int | None = Field(default=None, gt=0)
+    summary: str | None = Field(default=None, min_length=1, max_length=200)
+    cheque_number: int | None = Field(default=None, gt=0)
+    issue_date: date | None = None
+    cleared_date: date | None = None
+    amount: Decimal | None = Field(default=None, gt=0)
+    party_id: int | None = Field(default=None, gt=0)
+    status: ChequeStatus | None = None
+
+
+class ChequeOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    credit_account_id: int
+    debit_account_id: int
+    summary: str
+    cheque_number: int
+    issue_date: date
+    cleared_date: date | None
+    amount: Decimal
+    party_id: int | None
+    status: ChequeStatus
+    created_at: datetime
+    updated_at: datetime
 
 
 class AccountLedgerLineOut(BaseModel):

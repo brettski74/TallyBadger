@@ -30,14 +30,17 @@ from tallybadger.ledger.models import (
     AccrualPlanOut,
     AccrualPlanUpdate,
     AccrualPreviewItem,
-    IncomeExpenseAccountRowOut,
-    IncomeExpensePeriodEcho,
-    IncomeExpenseReportOut,
     BalanceSheetAccountRowOut,
     BalanceSheetBalanceCheckOut,
     BalanceSheetPeriodEcho,
     BalanceSheetReportOut,
     BalanceSheetSectionOut,
+    ChequeCreate,
+    ChequeOut,
+    ChequeUpdate,
+    IncomeExpenseAccountRowOut,
+    IncomeExpensePeriodEcho,
+    IncomeExpenseReportOut,
     LedgerSettingsOut,
     LedgerSettingsUpdate,
     ObligationStatusUpdate,
@@ -987,7 +990,7 @@ class LedgerService:
                 cur.execute(
                     f"""
                     SELECT je.id, je.entry_date, je.summary, je.description, je.requires_review,
-                           je.created_at, je.updated_at
+                           je.cheque_id, je.created_at, je.updated_at
                     FROM journal_entries je
                     WHERE EXISTS (SELECT 1 FROM journal_lines jl WHERE jl.entry_id = je.id)
                     {where_clause.replace("WHERE", "AND") if where_clause else ""}
@@ -1038,6 +1041,7 @@ class LedgerService:
                     summary=header["summary"],
                     description=header["description"],
                     requires_review=bool(header.get("requires_review")),
+                    cheque_id=header.get("cheque_id"),
                     created_at=header["created_at"],
                     updated_at=header["updated_at"],
                     debit_side_label=debit_label,
@@ -1315,6 +1319,212 @@ class LedgerService:
                 rows = cur.fetchall()
         return [AccountLedgerLineOut.model_validate(row) for row in rows]
 
+    @staticmethod
+    def _reopen_cleared_cheque_if_unreferenced(cur, cheque_id: int | None) -> None:
+        """When no journal entry references a cheque, cleared register rows return to open (#90)."""
+        if cheque_id is None:
+            return
+        cur.execute(
+            """
+            UPDATE cheques
+            SET status = 'open', cleared_date = NULL, updated_at = NOW()
+            WHERE id = %s
+              AND status = 'cleared'
+              AND NOT EXISTS (SELECT 1 FROM journal_entries WHERE cheque_id = %s)
+            """,
+            (cheque_id, cheque_id),
+        )
+
+    @staticmethod
+    def _assert_journal_cheque_reference(cur, cheque_id: int | None) -> None:
+        if cheque_id is None:
+            return
+        cur.execute("SELECT 1 FROM cheques WHERE id = %s", (cheque_id,))
+        if cur.fetchone() is None:
+            raise LedgerValidationError("journal entry references unknown cheque")
+
+    def list_cheques(self) -> list[ChequeOut]:
+        with self._connection_factory() as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(
+                    """
+                    SELECT *
+                    FROM cheques
+                    ORDER BY issue_date DESC, id DESC
+                    """,
+                )
+                return [ChequeOut.model_validate(r) for r in cur.fetchall()]
+
+    def get_cheque(self, cheque_id: int) -> ChequeOut:
+        with self._connection_factory() as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute("SELECT * FROM cheques WHERE id = %s", (cheque_id,))
+                row = cur.fetchone()
+        if not row:
+            raise LedgerNotFoundError(f"cheque {cheque_id} not found")
+        return ChequeOut.model_validate(row)
+
+    def create_cheque(self, payload: ChequeCreate) -> ChequeOut:
+        self._validate_summary(payload.summary)
+        try:
+            with self._connection_factory() as conn:
+                with conn.transaction():
+                    with conn.cursor(row_factory=dict_row) as cur:
+                        self._assert_cheque_accounts_and_party(cur, payload)
+                        cur.execute(
+                            """
+                            INSERT INTO cheques (
+                              credit_account_id, debit_account_id, summary, cheque_number,
+                              issue_date, cleared_date, amount, party_id, status
+                            )
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            RETURNING *
+                            """,
+                            (
+                                payload.credit_account_id,
+                                payload.debit_account_id,
+                                payload.summary.strip(),
+                                payload.cheque_number,
+                                payload.issue_date,
+                                payload.cleared_date,
+                                payload.amount,
+                                payload.party_id,
+                                payload.status,
+                            ),
+                        )
+                        row = cur.fetchone()
+        except errors.UniqueViolation as exc:
+            raise LedgerConflictError(
+                "an open cheque with this number already exists for the credit account",
+            ) from exc
+        except errors.ForeignKeyViolation as exc:
+            raise LedgerValidationError("cheque references unknown account or party") from exc
+        return ChequeOut.model_validate(row)
+
+    def update_cheque(self, cheque_id: int, payload: ChequeUpdate) -> ChequeOut:
+        patch = payload.model_dump(exclude_unset=True)
+        if not patch:
+            raise LedgerValidationError("empty patch body")
+
+        with self._connection_factory() as conn:
+            with conn.transaction():
+                with conn.cursor(row_factory=dict_row) as cur:
+                    cur.execute("SELECT * FROM cheques WHERE id = %s FOR UPDATE", (cheque_id,))
+                    row = cur.fetchone()
+                    if not row:
+                        raise LedgerNotFoundError(f"cheque {cheque_id} not found")
+
+                    merged = {**row, **patch}
+                    old_status = str(row["status"])
+                    new_status = str(merged.get("status", old_status))
+
+                    if "status" in patch and new_status != old_status:
+                        self._validate_cheque_api_status_change(
+                            old_status,
+                            new_status,
+                            row,
+                            patch,
+                        )
+
+                    if new_status == "cleared" and merged.get("cleared_date") is None:
+                        merged["cleared_date"] = merged.get("issue_date", row["issue_date"])
+
+                    if new_status in ("open", "void") and merged.get("cleared_date") is not None:
+                        merged["cleared_date"] = None
+
+                    if "summary" in patch:
+                        self._validate_summary(patch["summary"])
+                        merged["summary"] = patch["summary"].strip()
+
+                    next_credit = int(merged["credit_account_id"])
+                    next_debit = int(merged["debit_account_id"])
+                    next_party = merged.get("party_id")
+                    cur.execute("SELECT 1 FROM accounts WHERE id = %s", (next_credit,))
+                    if not cur.fetchone():
+                        raise LedgerValidationError("credit_account_id not found")
+                    cur.execute("SELECT 1 FROM accounts WHERE id = %s", (next_debit,))
+                    if not cur.fetchone():
+                        raise LedgerValidationError("debit_account_id not found")
+                    if next_party is not None:
+                        cur.execute("SELECT 1 FROM parties WHERE id = %s", (next_party,))
+                        if not cur.fetchone():
+                            raise LedgerValidationError("party_id not found")
+
+                    try:
+                        cur.execute(
+                            """
+                            UPDATE cheques
+                            SET credit_account_id = %s,
+                                debit_account_id = %s,
+                                summary = %s,
+                                cheque_number = %s,
+                                issue_date = %s,
+                                cleared_date = %s,
+                                amount = %s,
+                                party_id = %s,
+                                status = %s,
+                                updated_at = NOW()
+                            WHERE id = %s
+                            RETURNING *
+                            """,
+                            (
+                                next_credit,
+                                next_debit,
+                                merged["summary"],
+                                int(merged["cheque_number"]),
+                                merged["issue_date"],
+                                merged["cleared_date"],
+                                merged["amount"],
+                                next_party,
+                                new_status,
+                                cheque_id,
+                            ),
+                        )
+                        out = cur.fetchone()
+                    except errors.UniqueViolation as exc:
+                        raise LedgerConflictError(
+                            "an open cheque with this number already exists for the credit account",
+                        ) from exc
+        return ChequeOut.model_validate(out)
+
+    @staticmethod
+    def _validate_cheque_api_status_change(
+        old_status: str,
+        new_status: str,
+        _row: dict,
+        patch: dict,
+    ) -> None:
+        if old_status == new_status:
+            return
+        if old_status == "cleared":
+            raise LedgerValidationError(
+                "cannot change status of a cleared cheque via the API; "
+                "unlink or retarget the journal entry that clears it",
+            )
+        if old_status == "open" and new_status not in ("cleared", "void"):
+            raise LedgerValidationError("invalid status transition from open")
+        if old_status == "void":
+            if new_status != "open":
+                raise LedgerValidationError("void cheques may only return to open via the API")
+        if new_status == "cleared" and old_status != "cleared":
+            if patch.get("cleared_date") is None and old_status == "open":
+                return
+            if patch.get("cleared_date") is None and old_status != "open":
+                raise LedgerValidationError("cleared_date is required when setting status to cleared")
+
+    @staticmethod
+    def _assert_cheque_accounts_and_party(cur, payload: ChequeCreate) -> None:
+        cur.execute("SELECT 1 FROM accounts WHERE id = %s", (payload.credit_account_id,))
+        if not cur.fetchone():
+            raise LedgerValidationError("credit_account_id not found")
+        cur.execute("SELECT 1 FROM accounts WHERE id = %s", (payload.debit_account_id,))
+        if not cur.fetchone():
+            raise LedgerValidationError("debit_account_id not found")
+        if payload.party_id is not None:
+            cur.execute("SELECT 1 FROM parties WHERE id = %s", (payload.party_id,))
+            if not cur.fetchone():
+                raise LedgerValidationError("party_id not found")
+
     def create_entry(self, payload: JournalEntryWrite) -> JournalEntryOut:
         self._validate_summary(payload.summary)
         self._validate_lines(payload.lines)
@@ -1326,16 +1536,20 @@ class LedgerService:
                     with conn.cursor(row_factory=dict_row) as cur:
                         self._assert_all_line_accounts_exist(cur, payload.lines)
                         self._assert_all_line_parties_exist(cur, payload.lines)
+                        self._assert_journal_cheque_reference(cur, payload.cheque_id)
                         cur.execute(
                             """
-                            INSERT INTO journal_entries (entry_date, summary, description, requires_review)
-                            VALUES (%s, %s, %s, FALSE)
+                            INSERT INTO journal_entries (
+                              entry_date, summary, description, requires_review, cheque_id
+                            )
+                            VALUES (%s, %s, %s, FALSE, %s)
                             RETURNING id
                             """,
                             (
                                 payload.entry_date,
                                 payload.summary.strip(),
                                 payload.description,
+                                payload.cheque_id,
                             ),
                         )
                         entry_id = cur.fetchone()["id"]
@@ -1370,16 +1584,20 @@ class LedgerService:
                         for payload in payloads:
                             self._assert_all_line_accounts_exist(cur, payload.lines)
                             self._assert_all_line_parties_exist(cur, payload.lines)
+                            self._assert_journal_cheque_reference(cur, payload.cheque_id)
                             cur.execute(
                                 """
-                                INSERT INTO journal_entries (entry_date, summary, description, requires_review)
-                                VALUES (%s, %s, %s, FALSE)
+                                INSERT INTO journal_entries (
+                                  entry_date, summary, description, requires_review, cheque_id
+                                )
+                                VALUES (%s, %s, %s, FALSE, %s)
                                 RETURNING id
                                 """,
                                 (
                                     payload.entry_date,
                                     payload.summary.strip(),
                                     payload.description,
+                                    payload.cheque_id,
                                 ),
                             )
                             entry_id = cur.fetchone()["id"]
@@ -1426,20 +1644,33 @@ class LedgerService:
                         self._assert_all_line_accounts_exist(cur, payload.lines)
                         self._assert_all_line_parties_exist(cur, payload.lines)
                         cur.execute(
+                            "SELECT cheque_id FROM journal_entries WHERE id = %s",
+                            (entry_id,),
+                        )
+                        prev_header = cur.fetchone()
+                        if not prev_header:
+                            raise LedgerNotFoundError(f"journal entry {entry_id} not found")
+                        old_cheque_id = prev_header.get("cheque_id")
+
+                        self._assert_journal_cheque_reference(cur, payload.cheque_id)
+                        cur.execute(
                             """
                             UPDATE journal_entries
-                            SET entry_date = %s, summary = %s, description = %s, updated_at = NOW()
+                            SET entry_date = %s,
+                                summary = %s,
+                                description = %s,
+                                cheque_id = %s,
+                                updated_at = NOW()
                             WHERE id = %s
                             """,
                             (
                                 payload.entry_date,
                                 payload.summary.strip(),
                                 payload.description,
+                                payload.cheque_id,
                                 entry_id,
                             ),
                         )
-                        if cur.rowcount == 0:
-                            raise LedgerNotFoundError(f"journal entry {entry_id} not found")
 
                         cur.execute(
                             "DELETE FROM journal_lines WHERE entry_id = %s",
@@ -1457,6 +1688,8 @@ class LedgerService:
                             )
                         self._assert_entry_balanced(cur, entry_id)
                         self._insert_review_messages(cur, entry_id, new_review)
+                        if old_cheque_id != payload.cheque_id and old_cheque_id is not None:
+                            self._reopen_cleared_cheque_if_unreferenced(cur, old_cheque_id)
                     return self.get_entry(entry_id, conn=conn)
         except errors.ForeignKeyViolation as exc:
             raise LedgerValidationError("journal line references unknown account") from exc
@@ -1493,10 +1726,17 @@ class LedgerService:
     def delete_entry(self, entry_id: int) -> None:
         with self._connection_factory() as conn:
             with conn.transaction():
-                with conn.cursor() as cur:
-                    cur.execute("DELETE FROM journal_entries WHERE id = %s", (entry_id,))
-                    if cur.rowcount == 0:
+                with conn.cursor(row_factory=dict_row) as cur:
+                    cur.execute(
+                        "SELECT cheque_id FROM journal_entries WHERE id = %s",
+                        (entry_id,),
+                    )
+                    row = cur.fetchone()
+                    if not row:
                         raise LedgerNotFoundError(f"journal entry {entry_id} not found")
+                    cheque_ref = row.get("cheque_id")
+                    cur.execute("DELETE FROM journal_entries WHERE id = %s", (entry_id,))
+                    self._reopen_cleared_cheque_if_unreferenced(cur, cheque_ref)
 
     def get_entry(self, entry_id: int, conn=None) -> JournalEntryOut:
         owns_connection = conn is None
@@ -1508,7 +1748,8 @@ class LedgerService:
             with conn.cursor(row_factory=dict_row) as cur:
                 cur.execute(
                     """
-                    SELECT id, entry_date, summary, description, requires_review, created_at, updated_at
+                    SELECT id, entry_date, summary, description, requires_review, cheque_id,
+                           created_at, updated_at
                     FROM journal_entries
                     WHERE id = %s
                     """,
