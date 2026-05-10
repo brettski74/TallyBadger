@@ -12,6 +12,7 @@ import { SettlementsSection } from "./components/SettlementsSection";
 import { CelRuleSetsSection } from "./components/CelRuleSetsSection";
 import { CsvImportSection } from "./components/CsvImportSection";
 import { IncomeExpenseReportSection } from "./components/IncomeExpenseReportSection";
+import { BalanceSheetReportSection } from "./components/BalanceSheetReportSection";
 
 type MainTab =
   | "accounts"
@@ -174,7 +175,12 @@ function App() {
         {tab === "csv_import" && (
           <CsvImportSection accounts={accounts} onImportSucceeded={() => setTab("journal")} />
         )}
-        {tab === "reports" && <IncomeExpenseReportSection />}
+        {tab === "reports" && (
+          <>
+            <BalanceSheetReportSection />
+            <IncomeExpenseReportSection />
+          </>
+        )}
       </main>
     </div>
   );
