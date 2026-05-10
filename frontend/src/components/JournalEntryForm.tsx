@@ -336,17 +336,25 @@ export function JournalEntryForm({
 
       {reviewMessages.length > 0 ? (
         <div className="journal-review-messages" role="region" aria-label="Review messages">
-          <h3 className="journal-review-messages-title">Needs review</h3>
           <ul className="journal-review-messages-list">
             {reviewMessages.map((m) => (
-              <li key={m.id} className="journal-review-message-row">
-                <span className="journal-review-message-text">{m.message}</span>
+              <li
+                key={m.id}
+                className={`journal-review-message-card${
+                  mode === "edit" && entryId != null ? " journal-review-message-card--dismissable" : ""
+                }`}
+              >
                 {mode === "edit" && entryId != null ? (
                   <button
                     type="button"
-                    className="button-secondary journal-review-message-clear"
+                    className="journal-review-message-dismiss"
                     disabled={dismissingId === m.id}
-                    aria-label={`Clear review message: ${m.message.slice(0, 80)}`}
+                    title={dismissingId === m.id ? "Clearing…" : "Dismiss this review message"}
+                    aria-label={
+                      dismissingId === m.id
+                        ? "Clearing review message"
+                        : `Clear review message: ${m.message.slice(0, 80)}`
+                    }
                     onClick={() => {
                       void (async () => {
                         setApiError(null);
@@ -362,9 +370,25 @@ export function JournalEntryForm({
                       })();
                     }}
                   >
-                    {dismissingId === m.id ? "Clearing…" : "Clear"}
+                    <svg
+                      className="journal-review-message-dismiss-icon"
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      aria-hidden
+                      focusable="false"
+                    >
+                      <path
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        d="M18 6L6 18M6 6l12 12"
+                      />
+                    </svg>
                   </button>
                 ) : null}
+                <p className="journal-review-message-text">{m.message}</p>
               </li>
             ))}
           </ul>
