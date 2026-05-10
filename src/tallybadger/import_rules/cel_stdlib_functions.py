@@ -63,6 +63,22 @@ def _cel_int_param(
         if not f.is_integer():
             raise ImportRulesCelError(f"{label}: must be a whole number")
         n = int(f)
+    elif isinstance(value, celtypes.StringType):
+        s = str(value).strip()
+        if not s:
+            raise ImportRulesCelError(f"{label}: blank string")
+        try:
+            n = int(s, 10)
+        except ValueError as exc:
+            raise ImportRulesCelError(f"{label}: expected integer, got {s!r}") from exc
+    elif isinstance(value, str):
+        s = value.strip()
+        if not s:
+            raise ImportRulesCelError(f"{label}: blank string")
+        try:
+            n = int(s, 10)
+        except ValueError as exc:
+            raise ImportRulesCelError(f"{label}: expected integer, got {s!r}") from exc
     else:
         raise ImportRulesCelError(f"{label}: expected integer, got {type(value).__name__}")
     if min_value is not None and n < min_value:

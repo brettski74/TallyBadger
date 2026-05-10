@@ -18,10 +18,11 @@ from tallybadger.import_rules.cel_models import (
     CelRuleSet,
     CelTraceEvent,
 )
+from tallybadger.import_rules.cel_cheque_functions import build_cheque_cel_functions
 from tallybadger.import_rules.cel_party_functions import build_party_cel_functions
 from tallybadger.import_rules.cel_stdlib_functions import build_stdlib_cel_functions
 from tallybadger.import_rules.errors import ImportRulesCelError
-from tallybadger.ledger.models import AccountOut, PartyOut
+from tallybadger.ledger.models import AccountOut, ChequeOut, PartyOut
 
 
 class _CelAttributeBagUnset:
@@ -294,19 +295,29 @@ def evaluate_cel(
     *,
     parties: list[PartyOut] | None = None,
     accounts: list[AccountOut] | None = None,
+    cheques: list[ChequeOut] | None = None,
     row_number: int | None = None,
+    default_account_name: str | None = None,
 ) -> CelEvaluationResult:
     bag: dict[str, Any] = {k: copy(v) if isinstance(v, (list, dict)) else v for k, v in attributes.items()}
+    if (
+        default_account_name is not None
+        and str(default_account_name).strip() != ""
+        and "default-account" not in bag
+    ):
+        bag["default-account"] = str(default_account_name).strip()
     trace: list[CelTraceEvent] = []
     debug_records: list[CelDebugEvent] = []
     current_rule_label: list[str] = [""]
     party_functions = build_party_cel_functions(parties or [])
     stdlib_functions = build_stdlib_cel_functions(bag, accounts)
+    cheque_functions = build_cheque_cel_functions(cheques, accounts, parties)
     debug_fn = _build_debug_cel_function(debug_records, current_rule_label, row_number)
     unset_fn = _build_unset_cel_function()
     cel_functions: dict[str, CELFunction] = {
         **party_functions,
         **stdlib_functions,
+        **cheque_functions,
         "debug": debug_fn,
         "unset": unset_fn,
     }

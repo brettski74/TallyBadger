@@ -1,10 +1,14 @@
 # CEL function reference (import rules)
 
-This document is the **authoritative reference** for **custom functions** available in **CEL** expressions used by the import CEL rule path (`evaluate_cel`, CSV execute with a CEL rule set, `POST /import-rules/cel/evaluate`). It is maintained alongside GitHub issues **[#46](https://github.com/brettski74/TallyBadger/issues/46)** (party-aware functions + party data model), **[#50](https://github.com/brettski74/TallyBadger/issues/50)** (generic attribute helpers), **[#57](https://github.com/brettski74/TallyBadger/issues/57)** (`unset()` for removing keys from the `set` map / attribute bag), and **[#59](https://github.com/brettski74/TallyBadger/issues/59)** (`debug()` for rule diagnostics).
+This document is the **authoritative reference** for **custom functions** available in **CEL** expressions used by the import CEL rule path (`evaluate_cel`, CSV execute with a CEL rule set, `POST /import-rules/cel/evaluate`). It is maintained alongside GitHub issues **[#46](https://github.com/brettski74/TallyBadger/issues/46)** (party-aware functions + party data model), **[#50](https://github.com/brettski74/TallyBadger/issues/50)** (generic attribute helpers), **[#57](https://github.com/brettski74/TallyBadger/issues/57)** (`unset()` for removing keys from the `set` map / attribute bag), **[#59](https://github.com/brettski74/TallyBadger/issues/59)** (`debug()` for rule diagnostics), and **[#92](https://github.com/brettski74/TallyBadger/issues/92)** (`cheque()` register lookup).
 
 **Related:** [Import rules engine](import-rules-engine.md) ([#8](https://github.com/brettski74/TallyBadger/issues/8)) — CEL spike contract, `attributes` / `match` activation map, capture gating.
 
 **Convention:** String arguments are trimmed for lookup. For **`party_type`**, **`party_subtype`**, **`revenue_account`**, **`equity_account`**, and **`expense_account`**, a **null** or **blank** argument (after trim) is treated like a non-match and returns **null**—no evaluation error. Other helpers may still error on invalid input where documented. Exact spelling of function names in CEL follows the identifiers registered in code (typically `party`, `party_type`, …).
+
+### `default-account` (CSV execute only)
+
+When **`POST /imports/csv/execute`** includes **`default_import_account_id`**, the engine resolves that ledger account’s **canonical `name`** and, **before the first rule runs**, sets **`default-account`** on the row bag **unless** the bag already has that key (e.g. from a column mapped to attribute **`default-account`**). Rules can pass it to **`cheque(...)`** as the credit account argument (typical bank template: default import account is the chequing account). Stateless **`POST /import-rules/cel/evaluate`** does not seed this key.
 
 ---
 
@@ -16,6 +20,7 @@ This document is the **authoritative reference** for **custom functions** availa
 | **#50** | Shipped in [#50](https://github.com/brettski74/TallyBadger/issues/50); generic helpers below—keep this doc in sync when behaviour changes. |
 | **#57** | Shipped in [#57](https://github.com/brettski74/TallyBadger/issues/57); `unset()` and `set` map removal semantics. |
 | **#59** | Shipped in [#59](https://github.com/brettski74/TallyBadger/issues/59); `debug(x)` and API `debug` arrays. |
+| **#92** | Shipped in [#92](https://github.com/brettski74/TallyBadger/issues/92); `cheque()` open-register lookup and CSV `cheque-id` wiring. |
 
 ---
 
@@ -115,9 +120,64 @@ These functions read **current ledger state** (active parties, accounts) passed 
 
 ---
 
+## `cheque(account, nr, amt, date)` — open cheque register lookup (**#92**)
+
+- **Signature:** **`cheque(account, nr, amt, date)`** — four arguments.
+- **Data source:** **`evaluate_cel`** and CSV execute pass **`list_cheques`** with **`status=open`** only (same snapshot for the whole evaluation). Inactive credit accounts are not used for matching.
+- **Return value:** Always a **CEL map** (never **`null`**). Use it as the whole **`set`** value, e.g. **`{"set": cheque(...)}`**, so keys merge into the row attribute bag like any other **`set`** map.
+
+### Arguments
+
+| Arg | Meaning |
+|-----|--------|
+| **`account`** | **Credit account** **`name`** (trimmed), matching the cheque register’s **credit** side (the “cheque” / bank account). Must be **active** and present in the account snapshot for a successful match. |
+| **`nr`** | **Cheque number** — positive integer as **`int`**, whole **`double`**, or **numeric string** (e.g. regex capture); strings are coerced so rules stay short. |
+| **`amt`** | **Import-side amount** — the value from the CSV row (or derived from it). This is treated as the **authoritative** amount for posting: the function **never** returns **`amount`**, so nothing overwrites that. **`amt`** is used only to **compare** against the register and to emit **review** text when it differs. On a match, the register figure is exposed as **`cheque-amount`** as a **CEL number** (double — same family as other monetary attributes in rules), so **`+`**, **`-`**, and comparisons behave arithmetically, not as string concatenation. |
+| **`date`** | **Journal entry date** for the row. **Preferred:** a real **`date`** / **`datetime`** (or CEL timestamp) after attribute activation — same as other date fields. **Also accepted:** non-blank **ISO** **date** (`YYYY-MM-DD`) or **date-time** strings, using the same rules as **`day`** / **`month`** / **`match_date`** (string parsing is for that case). |
+
+### On match (open cheque found for credit account + number)
+
+The map includes at least:
+
+- **`dr-account`** — debit account **`name`** from the register row.
+- **`cheque-id`** — integer id (also read by CSV import when building **`journal_entries.cheque_id`**).
+- **`summary`** — register **`summary`** for the cheque.
+- **`cheque-amount`** — register **amount** as a **number** (IEEE double in CEL; in the Python bag after evaluation it is a **`float`**). This is **not** named **`amount`** so the CSV / rule **`amount`** used for posting stays the source of truth. Use **`attr["cheque-amount"]`** in later rules for arithmetic; precision matches other import-rule money that round-trips through doubles (see **`abs`** note under generic helpers).
+
+**`dr-party`:** included **only** when the register row has a **`party_id`** and that id resolves to a **party name** in the party snapshot. If there is no party on the cheque, **omit** **`dr-party`** entirely (do not set **`null`** or a placeholder), so earlier rules can still supply **`dr-party`** without being overwritten.
+
+**`review-messages`:** a **list of strings**, included **only when non-empty**. When present, entries are merged into the evaluation’s review list like other **`set.review-messages`** keys. Append messages when:
+
+- **`amt`** (normalized to **`Decimal`**) **magnitude** **≠** register cheque amount — message includes **both** amounts as **USD-style** strings (**`$`**, comma **thousands** separators, **two** decimal places; negatives like **`-$99.00`**). **Sign is ignored** for this check (e.g. import **`-904`** matches register **`904`** when clearing chequing).
+- **`date`** (calendar date) is **strictly before** the cheque **`issue_date`** — message includes **both** dates.
+
+Persisting those messages on the journal entry is **[#89](https://github.com/brettski74/TallyBadger/issues/89)**; the bag still carries them for **`requires_review`** / review payload where implemented.
+
+### On no match
+
+The map **does not** include **`cheque-id`**, **`dr-account`**, **`summary`**, **`cheque-amount`**, or **`dr-party`**. It **must** include **`review-messages`** with **at least one** string (e.g. no open cheque for that account name and number, or unknown/inactive credit account name).
+
+### Example
+
+Activation exposes the row bag as **`attr`** and **`attributes`** (aliases); examples use **`attr`** for less typing.
+
+```cel
+{"set": cheque(attr["cr-account"], match[0]["list"][1], attr["amount"], attr["date"])}
+```
+
+With a template **default import account** (chequing), you can use the pre-seeded credit account name:
+
+```cel
+{"set": cheque(attributes["default-account"], match[0]["list"][1], attributes["amount"], attributes["date"])}
+```
+
+The second argument is often a **string** capture (cheque number); it is coerced to an integer automatically.
+
+---
+
 ## Generic helpers (**#50**)
 
-These functions are registered on the same CEL **`Environment`** as **`party`** / **`debug`** / **`unset`**. They read the **current row attribute bag** where noted (`defined`), and **`account_type`** reads the **account snapshot** passed into `evaluate_cel` (from `list_accounts()` on **`POST /import-rules/cel/evaluate`** and CSV execute—**no per-cell DB calls** inside CEL).
+These functions are registered on the same CEL **`Environment`** as **`party`** / **`cheque`** / **`debug`** / **`unset`**. They read the **current row attribute bag** where noted (`defined`), and **`account_type`** reads the **account snapshot** passed into `evaluate_cel` (from `list_accounts()` on **`POST /import-rules/cel/evaluate`** and CSV execute—**no per-cell DB calls** inside CEL).
 
 ### `abs(v) -> number`
 
@@ -170,5 +230,10 @@ These functions are registered on the same CEL **`Environment`** as **`party`** 
 | *#57 ship* | **`unset()`** — zero-arg marker for **`set`** map key removal; **`null`** still assigns **`None`**; trace **`remove_attribute`**. |
 | *#57 follow-up* | CSV execute **422** **`row_errors[]`** may include **`debug`** (same shape as successful **`entries[]`**) when CEL ran before journal validation failed. |
 | *#50 ship* | **`abs`**, **`day`**, **`month`**, **`decode`**, **`defined`**, **`account_type`**, **`match_date`** — stdlib-style helpers; **`evaluate_cel(..., accounts=)`** wires **`list_accounts()`** for evaluate + CSV. Engine walks CEL results for embedded **`CELEvalError`** values so **`ImportRulesCelError`** from custom functions (including **`party_*`**) surfaces as **`ImportRulesCelError`** / HTTP **422** instead of being left inside the **`set`** map. |
+| *#92 ship* | **`cheque(account, nr, amt, date)`** — open-register map for **`set`**; **`evaluate_cel(..., cheques=)`** / CSV execute use **`list_cheques(status=open)`**; CSV maps **`cheque-id`** from the bag to **`JournalEntryWrite.cheque_id`**. |
+| *#92 follow-up* | **`cheque-amount`** on match (register figure as CEL double / Python **`float`**); **`nr`** accepts numeric strings; **`_cel_int_param`** accepts trimmed integer strings (also used by **`match_date`** day/tolerance). |
+| *#92 follow-up* | CSV execute seeds **`default-account`** from **`default_import_account_id`** before rules run (skips if the bag already defines **`default-account`**). |
+| *#92 follow-up* | **`cheque`** amount mismatch review compares **absolute** magnitudes (signed CSV outflow vs positive register). |
+| *#92 follow-up* | Amount mismatch review text formats both figures as **USD** (**`$`**, comma thousands, two decimals). |
 
 Update this table whenever functions are added or signatures/semantics change.
