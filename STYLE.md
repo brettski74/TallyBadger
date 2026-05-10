@@ -59,23 +59,21 @@ This pairs with schema work so portable paths (clone → migrate → seed) stay 
 
 ## AI-assisted delivery workflows
 
-Repeatable **phase** procedures live under repo-root **[`workflows/`](workflows/)**:
+Repeatable **phase** procedures live under repo-root **[`workflows/`](workflows/)**. Each phase is a single file **`workflows/<name>.md`**. New workflows are added by **adding that file only**—this section is **not** updated with a list of filenames when you do.
 
-| File | Phase |
-|------|--------|
-| [`workflows/refine.md`](workflows/refine.md) | Requirements refinement (feature issues) |
-| [`workflows/implement.md`](workflows/implement.md) | Implementation, verification, and PR |
-| [`workflows/ship.md`](workflows/ship.md) | User acceptance testing and fix loop (ship) |
+### Shortcut `!<word> #N` (normative)
 
-**Shortcut vocabulary (normative):** When the user’s **core instruction** is of the form `!<word> #id`, look for a file named `word.md` in the workflows directory, read that file and apply the instructions therein to the github issue with the corresponding id. For example, if a prompt line contains the text:
+When the user’s message includes a **core instruction** of the form **`!<word> #N`** (same line may have other text before or after):
 
-```
-!implement #12345
-```
+1. **`N`** — Numeric **GitHub issue** number for **this** repository. Resolve **owner** and **repo** from the workspace (e.g. `git remote` URL) or from explicit user context, then load issue **#N** with GitHub tools (e.g. **`user-github`** MCP **`issue_read`**) **before** planning. Use the issue for acceptance criteria, links, and (when appropriate) comments.
+2. **`<word>`** — Must match the stem of **`workflows/<word>.md`** (path is **case-sensitive** on disk; convention is lowercase stems). Read that file **in full** from the workspace and follow it for this ticket. If the file is missing, report that and stop.
+3. **Where the syntax lives:** Only **this file** defines `!<word> #N`. Workflow files describe the phase only; they do **not** define chat triggers, so a workflow is discoverable when this shortcut (or an explicit “read `workflows/…`”) pulls it into context.
 
-Then read the workflows/implement.md file from the current workspace and apply the instructions to the github issue #12345.
+**Not implied by `!<word> #N` alone:** Merging pull requests, closing issues, or releasing—unless the user **also** asks explicitly or the workflow file clearly assigns that step (e.g. implement may say “open a PR”; **ship** still does **not** put merge on the assistant unless the user separately requests it).
 
-This mapping is **agent-agnostic** (not editor-specific). **Do not** duplicate these shortcut definitions under [`.cursor/rules/`](.cursor/rules/); the existing rule there only points agents at **ARCH.md** and **STYLE.md**—that remains the single Cursor-specific hook.
+This convention is **agent-agnostic** (not editor-specific). **Do not** duplicate this subsection under [`.cursor/rules/`](.cursor/rules/); the always-on rule only points at **ARCH.md** and **STYLE.md**.
+
+This is important - Merging PRs is only ever done by the human user!!!! 
 
 ## PR description hygiene
 
