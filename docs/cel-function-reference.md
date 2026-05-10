@@ -6,6 +6,10 @@ This document is the **authoritative reference** for **custom functions** availa
 
 **Convention:** String arguments are trimmed for lookup. For **`party_type`**, **`party_subtype`**, **`revenue_account`**, **`equity_account`**, and **`expense_account`**, a **null** or **blank** argument (after trim) is treated like a non-match and returns **null**—no evaluation error. Other helpers may still error on invalid input where documented. Exact spelling of function names in CEL follows the identifiers registered in code (typically `party`, `party_type`, …).
 
+### `default-account` (CSV execute only)
+
+When **`POST /imports/csv/execute`** includes **`default_import_account_id`**, the engine resolves that ledger account’s **canonical `name`** and, **before the first rule runs**, sets **`default-account`** on the row bag **unless** the bag already has that key (e.g. from a column mapped to attribute **`default-account`**). Rules can pass it to **`cheque(...)`** as the credit account argument (typical bank template: default import account is the chequing account). Stateless **`POST /import-rules/cel/evaluate`** does not seed this key.
+
 ---
 
 ## Status legend
@@ -144,7 +148,7 @@ The map includes at least:
 
 **`review-messages`:** a **list of strings**, included **only when non-empty**. When present, entries are merged into the evaluation’s review list like other **`set.review-messages`** keys. Append messages when:
 
-- **`amt`** (normalized to **`Decimal`**) **≠** the register cheque amount — message includes **both** amounts.
+- **`amt`** (normalized to **`Decimal`**) **magnitude** **≠** register cheque amount — message includes **both** amounts as **USD-style** strings (**`$`**, comma **thousands** separators, **two** decimal places; negatives like **`-$99.00`**). **Sign is ignored** for this check (e.g. import **`-904`** matches register **`904`** when clearing chequing).
 - **`date`** (calendar date) is **strictly before** the cheque **`issue_date`** — message includes **both** dates.
 
 Persisting those messages on the journal entry is **[#89](https://github.com/brettski74/TallyBadger/issues/89)**; the bag still carries them for **`requires_review`** / review payload where implemented.
@@ -159,6 +163,12 @@ Activation exposes the row bag as **`attr`** and **`attributes`** (aliases); exa
 
 ```cel
 {"set": cheque(attr["cr-account"], match[0]["list"][1], attr["amount"], attr["date"])}
+```
+
+With a template **default import account** (chequing), you can use the pre-seeded credit account name:
+
+```cel
+{"set": cheque(attributes["default-account"], match[0]["list"][1], attributes["amount"], attributes["date"])}
 ```
 
 The second argument is often a **string** capture (cheque number); it is coerced to an integer automatically.
@@ -222,5 +232,8 @@ These functions are registered on the same CEL **`Environment`** as **`party`** 
 | *#50 ship* | **`abs`**, **`day`**, **`month`**, **`decode`**, **`defined`**, **`account_type`**, **`match_date`** — stdlib-style helpers; **`evaluate_cel(..., accounts=)`** wires **`list_accounts()`** for evaluate + CSV. Engine walks CEL results for embedded **`CELEvalError`** values so **`ImportRulesCelError`** from custom functions (including **`party_*`**) surfaces as **`ImportRulesCelError`** / HTTP **422** instead of being left inside the **`set`** map. |
 | *#92 ship* | **`cheque(account, nr, amt, date)`** — open-register map for **`set`**; **`evaluate_cel(..., cheques=)`** / CSV execute use **`list_cheques(status=open)`**; CSV maps **`cheque-id`** from the bag to **`JournalEntryWrite.cheque_id`**. |
 | *#92 follow-up* | **`cheque-amount`** on match (register figure as CEL double / Python **`float`**); **`nr`** accepts numeric strings; **`_cel_int_param`** accepts trimmed integer strings (also used by **`match_date`** day/tolerance). |
+| *#92 follow-up* | CSV execute seeds **`default-account`** from **`default_import_account_id`** before rules run (skips if the bag already defines **`default-account`**). |
+| *#92 follow-up* | **`cheque`** amount mismatch review compares **absolute** magnitudes (signed CSV outflow vs positive register). |
+| *#92 follow-up* | Amount mismatch review text formats both figures as **USD** (**`$`**, comma thousands, two decimals). |
 
 Update this table whenever functions are added or signatures/semantics change.

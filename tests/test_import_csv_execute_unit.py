@@ -367,6 +367,91 @@ def test_execute_csv_debug_only_on_entries_that_used_debug() -> None:
         app.dependency_overrides.pop(get_cel_rule_set_service, None)
 
 
+def test_execute_csv_seeds_default_account_for_cel_from_template() -> None:
+    """``default_import_account_id`` resolves to ``default-account`` before rules (#92)."""
+    now = datetime.now(tz=timezone.utc)
+    chequing = AccountOut(
+        id=7,
+        name="Business Chequing",
+        type="asset",
+        is_active=True,
+        created_at=now,
+        updated_at=now,
+    )
+    expense = AccountOut(
+        id=8,
+        name="Repairs",
+        type="expense",
+        is_active=True,
+        created_at=now,
+        updated_at=now,
+    )
+    ledger = MagicMock()
+    ledger.list_accounts.return_value = [chequing, expense]
+    ledger.list_parties.return_value = []
+    ledger.list_cheques.return_value = []
+    ledger.get_ledger_settings.return_value = _blank_ledger_settings()
+    expr = '{"set":{"dr-account":"Repairs", "cr-account":"Business Chequing", "amount": 50, "probe": debug(attributes["default-account"])}}'
+    cel_svc = MagicMock()
+    cel_svc.get_rule_set.return_value = MagicMock(
+        rule_set=CelRuleSet(rules=[CelRule(sort_order=10, expression=expr)]),
+    )
+    je = JournalEntryOut(
+        id=201,
+        entry_date=date(2026, 3, 1),
+        summary="m",
+        description=None,
+        requires_review=False,
+        cheque_id=None,
+        created_at=now,
+        updated_at=now,
+        lines=[
+            JournalLineOut(
+                id=1,
+                account_id=8,
+                account_name="Repairs",
+                party_id=None,
+                party_name=None,
+                amount=Decimal("50"),
+            ),
+            JournalLineOut(
+                id=2,
+                account_id=7,
+                account_name="Business Chequing",
+                party_id=None,
+                party_name=None,
+                amount=Decimal("-50"),
+            ),
+        ],
+    )
+    ledger.create_entries_batch.return_value = [je]
+    from tallybadger.api.routes.import_csv import get_cel_rule_set_service, get_ledger_service
+    from tallybadger.main import app
+
+    app.dependency_overrides[get_ledger_service] = lambda: ledger
+    app.dependency_overrides[get_cel_rule_set_service] = lambda: cel_svc
+    try:
+        client = TestClient(app)
+        payload = {
+            "csv_text": "date,summary\n2026-03-01,m\n",
+            "has_header_row": True,
+            "columns": [
+                {"attribute_name": "date", "data_type": "date", "date_format": "YYYY-MM-DD"},
+                {"attribute_name": "summary", "data_type": "string", "date_format": None},
+            ],
+            "cel_rule_set_id": 1,
+            "default_import_account_id": 7,
+        }
+        r = client.post("/imports/csv/execute", json=payload)
+        assert r.status_code == 200, r.text
+        ent0 = r.json()["entries"][0]
+        assert ent0["debug"][0]["value"] == "Business Chequing"
+        assert ent0["debug"][0]["row_number"] == 2
+    finally:
+        app.dependency_overrides.pop(get_ledger_service, None)
+        app.dependency_overrides.pop(get_cel_rule_set_service, None)
+
+
 def test_execute_csv_cel_error_returns_422_not_500(import_execute_client_cel_invalid: TestClient) -> None:
     payload = {
         "csv_text": "date,summary\n2026-01-01,ok\n",

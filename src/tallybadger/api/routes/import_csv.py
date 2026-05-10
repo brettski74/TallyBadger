@@ -516,6 +516,17 @@ def execute_csv_import(
             row_errors.append(CsvImportRowError(row_number=idx, errors=errors))
             continue
 
+        default_account_for_cel: str | None = None
+        if payload.default_import_account_id is not None and "default-account" not in bag:
+            try:
+                default_account_for_cel = _default_import_account_name(
+                    payload.default_import_account_id,
+                    accounts_by_id,
+                )
+            except ValueError as exc:
+                row_errors.append(CsvImportRowError(row_number=idx, errors=[str(exc)]))
+                continue
+
         row_debug: list[CelDebugEvent] | None = None
         if rule_set is not None:
             try:
@@ -526,6 +537,7 @@ def execute_csv_import(
                     accounts=accounts,
                     cheques=open_cheques,
                     row_number=idx,
+                    default_account_name=default_account_for_cel,
                 )
             except ImportRulesCelError as exc:
                 row_errors.append(CsvImportRowError(row_number=idx, errors=[str(exc)]))

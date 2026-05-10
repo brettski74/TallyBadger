@@ -297,8 +297,15 @@ def evaluate_cel(
     accounts: list[AccountOut] | None = None,
     cheques: list[ChequeOut] | None = None,
     row_number: int | None = None,
+    default_account_name: str | None = None,
 ) -> CelEvaluationResult:
     bag: dict[str, Any] = {k: copy(v) if isinstance(v, (list, dict)) else v for k, v in attributes.items()}
+    if (
+        default_account_name is not None
+        and str(default_account_name).strip() != ""
+        and "default-account" not in bag
+    ):
+        bag["default-account"] = str(default_account_name).strip()
     trace: list[CelTraceEvent] = []
     debug_records: list[CelDebugEvent] = []
     current_rule_label: list[str] = [""]

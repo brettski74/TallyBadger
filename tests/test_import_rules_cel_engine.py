@@ -26,6 +26,45 @@ def test_cel_rule_can_set_attributes_and_keep_types() -> None:
     assert out.attributes["amount"] == 1200
 
 
+def test_cel_default_account_name_seeded_before_rules() -> None:
+    rs = CelRuleSet(
+        rules=[
+            CelRule(
+                sort_order=10,
+                expression='{"set":{"seen": attributes["default-account"]}}',
+            ),
+        ],
+    )
+    out = evaluate_cel(rs, {"marker": 1}, default_account_name="Chequing")
+    assert out.attributes.get("seen") == "Chequing"
+    assert out.attributes.get("default-account") == "Chequing"
+    assert out.attributes.get("marker") == 1
+
+
+def test_cel_default_account_name_skips_when_bag_has_key() -> None:
+    rs = CelRuleSet(
+        rules=[
+            CelRule(
+                sort_order=10,
+                expression='{"set":{"seen": attributes["default-account"]}}',
+            ),
+        ],
+    )
+    out = evaluate_cel(
+        rs,
+        {"default-account": "Override"},
+        default_account_name="Chequing",
+    )
+    assert out.attributes.get("seen") == "Override"
+    assert out.attributes.get("default-account") == "Override"
+
+
+def test_cel_default_account_name_whitespace_only_does_not_seed() -> None:
+    rs = CelRuleSet(rules=[CelRule(expression="null")])
+    out = evaluate_cel(rs, {"k": 1}, default_account_name="   \t")
+    assert "default-account" not in out.attributes
+
+
 def test_cel_unset_removes_key_from_attribute_bag() -> None:
     rs = CelRuleSet(rules=[CelRule(expression='{"set":{"tag": unset()}}')])
     out = evaluate_cel(rs, {"tag": "x", "keep": 1})
@@ -835,7 +874,52 @@ def test_cel_cheque_amount_mismatch_adds_review_message() -> None:
     )
     assert out.attributes["cheque-id"] == 1
     assert len(out.review_messages) == 1
-    assert "99" in out.review_messages[0] and "100.00" in out.review_messages[0]
+    assert "$99.00" in out.review_messages[0] and "$100.00" in out.review_messages[0]
+
+
+def test_cel_cheque_amount_mismatch_message_uses_thousands_separators() -> None:
+    cr = _account_row(id=10, name="Operating", type="asset")
+    dr = _account_row(id=20, name="Rent Expense", type="expense")
+    ch = _cheque_row(credit_account_id=10, debit_account_id=20, amount=Decimal("1234567.89"))
+    rs = CelRuleSet(
+        rules=[
+            CelRule(
+                expression='{"set": cheque("Operating", 42, attr["amt"], attr["entry_date"])}',
+            ),
+        ],
+    )
+    out = evaluate_cel(
+        rs,
+        {"amt": Decimal("1.00"), "entry_date": date(2026, 5, 5)},
+        accounts=[cr, dr],
+        cheques=[ch],
+    )
+    msg = out.review_messages[0]
+    assert "$1.00" in msg
+    assert "$1,234,567.89" in msg
+
+
+def test_cel_cheque_negative_import_amount_matches_positive_register() -> None:
+    """Bank CSV often credits chequing with a negative amount; register stores face value."""
+    cr = _account_row(id=10, name="Operating", type="asset")
+    dr = _account_row(id=20, name="Rent Expense", type="expense")
+    ch = _cheque_row(credit_account_id=10, debit_account_id=20, amount=Decimal("904.00"))
+    rs = CelRuleSet(
+        rules=[
+            CelRule(
+                expression='{"set": cheque("Operating", 42, attr["amt"], attr["entry_date"])}',
+            ),
+        ],
+    )
+    out = evaluate_cel(
+        rs,
+        {"amt": Decimal("-904.00"), "entry_date": date(2026, 5, 5)},
+        accounts=[cr, dr],
+        cheques=[ch],
+    )
+    assert out.attributes["cheque-id"] == 1
+    assert out.review_messages == []
+    assert "review-messages" not in out.attributes
 
 
 def test_cel_cheque_entry_date_before_issue_date_adds_review_message() -> None:

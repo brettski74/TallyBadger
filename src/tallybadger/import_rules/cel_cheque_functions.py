@@ -65,6 +65,24 @@ def _decimal_for_cheque_import_amount(value: Any) -> Decimal:
     raise ImportRulesCelError(f"cheque: unsupported amount type {type(value).__name__}")
 
 
+def _cheque_import_amount_matches_register(import_amt: Decimal, register_amt: Decimal) -> bool:
+    """True when magnitudes match.
+
+    Bank CSV lines often show a cheque as a **negative** credit to chequing; the register
+    stores the cheque face amount as a **positive** ``Decimal``. Only magnitude is compared
+    for the mismatch review (see #92).
+    """
+    return abs(import_amt) == abs(register_amt)
+
+
+def _format_cheque_review_dollars(amount: Decimal) -> str:
+    """Format for amount-mismatch review text: USD ``$``, comma thousands, two fraction digits."""
+    q = amount.quantize(Decimal("0.01"))
+    if q < 0:
+        return f"-${abs(q):,.2f}"
+    return f"${q:,.2f}"
+
+
 def _cel_map_from_python(d: dict[str, Any]) -> celtypes.MapType:
     entries: dict[Any, Any] = {}
     for k, v in d.items():
@@ -150,10 +168,11 @@ def build_cheque_cel_functions(
                 out["dr-party"] = pname
 
         messages: list[str] = []
-        if import_amt != ch.amount:
+        if not _cheque_import_amount_matches_register(import_amt, ch.amount):
+            imp_s = _format_cheque_review_dollars(import_amt)
+            reg_s = _format_cheque_review_dollars(ch.amount)
             messages.append(
-                "Import amount "
-                f"{import_amt} differs from register amount {ch.amount} for cheque "
+                f"Import amount {imp_s} differs from register amount {reg_s} for cheque "
                 f"number {nr_int} on account {credit_acc.name!r}.",
             )
         if entry_date < ch.issue_date:
