@@ -162,7 +162,7 @@ The map **does not** include **`cheque-id`**, **`dr-account`**, **`summary`**, *
 Activation exposes the row bag as **`attr`** and **`attributes`** (aliases); examples use **`attr`** for less typing.
 
 ```cel
-{"set": cheque(attr["cr-account"], match[0]["list"][1], attr["amount"], attr["date"])}
+{"set": cheque(attr["default-account"], match[0].list[1], attr["amount"], attr["date"])}
 ```
 
 With a template **default import account** (chequing), you can use the pre-seeded credit account name:
