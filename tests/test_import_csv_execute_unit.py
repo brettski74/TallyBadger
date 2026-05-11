@@ -23,6 +23,8 @@ def _blank_ledger_settings() -> LedgerSettingsOut:
         unearned_revenue_account_id=None,
         unallocated_debits_account_id=None,
         unallocated_credits_account_id=None,
+        default_cheque_credit_account_id=None,
+        default_cheque_debit_account_id=None,
         max_attachment_upload_bytes=5242880,
         updated_at=datetime.now(tz=timezone.utc),
     )
@@ -268,6 +270,8 @@ def test_execute_csv_debug_only_on_entries_that_used_debug() -> None:
         unearned_revenue_account_id=None,
         unallocated_debits_account_id=None,
         unallocated_credits_account_id=None,
+        default_cheque_credit_account_id=None,
+        default_cheque_debit_account_id=None,
         max_attachment_upload_bytes=5242880,
         updated_at=now,
     )

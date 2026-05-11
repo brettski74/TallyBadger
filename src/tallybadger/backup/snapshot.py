@@ -548,6 +548,8 @@ def _validate_configuration_fks(
         "unearned_revenue_account_id",
         "unallocated_debits_account_id",
         "unallocated_credits_account_id",
+        "default_cheque_credit_account_id",
+        "default_cheque_debit_account_id",
     )
     for i, row in enumerate(payloads["ledger_settings"]):
         for col in account_cols:

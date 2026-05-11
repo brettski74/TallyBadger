@@ -9,6 +9,7 @@ import {
   patchCheque,
 } from "../api/cheques";
 import type { Party } from "../api/parties";
+import { type LedgerSettings, getLedgerSettings } from "../api/settlements";
 
 interface ChequesSectionProps {
   accounts: Account[];
@@ -17,6 +18,53 @@ interface ChequesSectionProps {
 
 function statusLabel(s: Cheque["status"]): string {
   return s;
+}
+
+function isCreditEligible(account: Account): boolean {
+  return account.is_active && account.type === "asset";
+}
+
+function isDebitEligible(account: Account): boolean {
+  return account.is_active && account.type !== "suspense";
+}
+
+function ineligibleLabel(account: Account): string {
+  const tags: string[] = [account.type];
+  if (!account.is_active) {
+    tags.push("inactive");
+  }
+  return `${account.name} (${tags.join(", ")})`;
+}
+
+function eligibleLabel(account: Account): string {
+  return `${account.name} (${account.type})`;
+}
+
+function pickEligibleDefault(defaultId: number | null, eligible: Account[]): string {
+  if (defaultId == null) {
+    return "";
+  }
+  return eligible.some((a) => a.id === defaultId) ? String(defaultId) : "";
+}
+
+interface PickerOption {
+  account: Account;
+  eligible: boolean;
+}
+
+function buildPickerOptions(
+  eligible: Account[],
+  allAccounts: Account[],
+  currentId: number | null,
+): PickerOption[] {
+  const options: PickerOption[] = eligible.map((account) => ({ account, eligible: true }));
+  if (currentId != null && !eligible.some((a) => a.id === currentId)) {
+    const fallback = allAccounts.find((a) => a.id === currentId);
+    if (fallback) {
+      options.push({ account: fallback, eligible: false });
+    }
+  }
+  return options;
 }
 
 export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
@@ -39,8 +87,22 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
   const [formError, setFormError] = useState<string | null>(null);
   const [formBusy, setFormBusy] = useState(false);
 
-  const activeAccounts = useMemo(
-    () => accounts.filter((a) => a.is_active).sort((a, b) => a.name.localeCompare(b.name)),
+  const [defaultCreditId, setDefaultCreditId] = useState<number | null>(null);
+  const [defaultDebitId, setDefaultDebitId] = useState<number | null>(null);
+
+  const eligibleCreditAccounts = useMemo(
+    () =>
+      accounts
+        .filter(isCreditEligible)
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [accounts],
+  );
+
+  const eligibleDebitAccounts = useMemo(
+    () =>
+      accounts
+        .filter(isDebitEligible)
+        .sort((a, b) => a.name.localeCompare(b.name)),
     [accounts],
   );
 
@@ -74,6 +136,22 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
     void reloadList();
   }, [reloadList]);
 
+  const refreshDefaults = useCallback(async () => {
+    try {
+      const settings: LedgerSettings = await getLedgerSettings();
+      setDefaultCreditId(settings.default_cheque_credit_account_id);
+      setDefaultDebitId(settings.default_cheque_debit_account_id);
+    } catch {
+      // Defaults are an enhancement, not a hard dependency for the rest of the form.
+      setDefaultCreditId(null);
+      setDefaultDebitId(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshDefaults();
+  }, [refreshDefaults]);
+
   useEffect(() => {
     if (selected) {
       hydrateForm(selected);
@@ -91,8 +169,8 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
   }
 
   function clearForm() {
-    setCreditId("");
-    setDebitId("");
+    setCreditId(pickEligibleDefault(defaultCreditId, eligibleCreditAccounts));
+    setDebitId(pickEligibleDefault(defaultDebitId, eligibleDebitAccounts));
     setSummary("");
     setChequeNumber("");
     setIssueDate(new Date().toISOString().slice(0, 10));
@@ -151,6 +229,7 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
         setIsCreating(false);
         setSelected(created);
         await reloadList();
+        await refreshDefaults();
       } else {
         const updated = await patchCheque(selected.id, {
           credit_account_id: Number(creditId),
@@ -163,6 +242,7 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
         });
         setSelected(updated);
         await reloadList();
+        await refreshDefaults();
       }
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Save failed");
@@ -377,9 +457,13 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
                 disabled={selected?.status === "cleared"}
               >
                 <option value="">Select account</option>
-                {activeAccounts.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name} ({a.type})
+                {buildPickerOptions(
+                  eligibleCreditAccounts,
+                  accounts,
+                  selected ? selected.credit_account_id : null,
+                ).map(({ account, eligible }) => (
+                  <option key={account.id} value={account.id}>
+                    {eligible ? eligibleLabel(account) : ineligibleLabel(account)}
                   </option>
                 ))}
               </select>
@@ -393,9 +477,13 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
                 disabled={selected?.status === "cleared"}
               >
                 <option value="">Select account</option>
-                {activeAccounts.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name} ({a.type})
+                {buildPickerOptions(
+                  eligibleDebitAccounts,
+                  accounts,
+                  selected ? selected.debit_account_id : null,
+                ).map(({ account, eligible }) => (
+                  <option key={account.id} value={account.id}>
+                    {eligible ? eligibleLabel(account) : ineligibleLabel(account)}
                   </option>
                 ))}
               </select>

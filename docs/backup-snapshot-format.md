@@ -82,7 +82,7 @@ Order for the **full** set (partial archives load only the files present, in thi
 15. `journal_entry_attachments.json` — **1.1.0** `complete` / `financial` only.
 16. `import_templates.json`
 
-`ledger_settings` is exported as an array (typically one row with `id = 1`).
+`ledger_settings` is exported as an array (typically one row with `id = 1`). New nullable columns may be added by later migrations (for example `default_cheque_credit_account_id` / `default_cheque_debit_account_id` at schema `020_*` for cheque last-used defaults, [#105](https://github.com/brettski74/TallyBadger/issues/105)); when present they are emitted as JSON `null` or an `accounts.id` integer and are validated as account foreign keys on import. Older archives that omit them remain importable into newer databases — the columns default to `NULL`.
 
 **Binary paths:** `attachments/<id>.<ext>` where `<ext>` is `jpg` / `png` / `pdf` for common image/PDF MIME types, and `bin` otherwise (matches `tallybadger.attachments.mime_detect.mime_type_to_snapshot_extension`).
 
