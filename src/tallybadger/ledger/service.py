@@ -683,6 +683,7 @@ class LedgerService:
                     SELECT accounts_receivable_account_id, accounts_payable_account_id,
                            unearned_revenue_account_id,
                            unallocated_debits_account_id, unallocated_credits_account_id,
+                           default_cheque_credit_account_id, default_cheque_debit_account_id,
                            max_attachment_upload_bytes,
                            updated_at
                     FROM ledger_settings
@@ -708,6 +709,33 @@ class LedgerService:
                         self._assert_account_type(cur, payload.unallocated_debits_account_id, "suspense")
                     if payload.unallocated_credits_account_id is not None:
                         self._assert_account_type(cur, payload.unallocated_credits_account_id, "suspense")
+                    # Cheque defaults (#105): validate active+eligible only when the value is
+                    # actually changing. Re-affirming a now-ineligible value is intentionally
+                    # accepted, mirroring the cheque save contract.
+                    if (
+                        payload.default_cheque_credit_account_id is not None
+                        or payload.default_cheque_debit_account_id is not None
+                    ):
+                        cur.execute(
+                            """
+                            SELECT default_cheque_credit_account_id,
+                                   default_cheque_debit_account_id
+                            FROM ledger_settings
+                            WHERE id = 1
+                            FOR UPDATE
+                            """
+                        )
+                        existing = cur.fetchone() or {}
+                        new_cr = payload.default_cheque_credit_account_id
+                        new_dr = payload.default_cheque_debit_account_id
+                        if new_cr is not None and new_cr != existing.get(
+                            "default_cheque_credit_account_id",
+                        ):
+                            self._assert_cheque_credit_account(cur, new_cr)
+                        if new_dr is not None and new_dr != existing.get(
+                            "default_cheque_debit_account_id",
+                        ):
+                            self._assert_cheque_debit_account(cur, new_dr)
                     cur.execute(
                         """
                         UPDATE ledger_settings
@@ -720,6 +748,12 @@ class LedgerService:
                             unallocated_credits_account_id = COALESCE(
                                 %s, unallocated_credits_account_id
                             ),
+                            default_cheque_credit_account_id = COALESCE(
+                                %s, default_cheque_credit_account_id
+                            ),
+                            default_cheque_debit_account_id = COALESCE(
+                                %s, default_cheque_debit_account_id
+                            ),
                             max_attachment_upload_bytes = COALESCE(
                                 %s, max_attachment_upload_bytes
                             ),
@@ -728,6 +762,8 @@ class LedgerService:
                         RETURNING accounts_receivable_account_id, accounts_payable_account_id,
                                   unearned_revenue_account_id,
                                   unallocated_debits_account_id, unallocated_credits_account_id,
+                                  default_cheque_credit_account_id,
+                                  default_cheque_debit_account_id,
                                   max_attachment_upload_bytes,
                                   updated_at
                         """,
@@ -737,6 +773,8 @@ class LedgerService:
                             payload.unearned_revenue_account_id,
                             payload.unallocated_debits_account_id,
                             payload.unallocated_credits_account_id,
+                            payload.default_cheque_credit_account_id,
+                            payload.default_cheque_debit_account_id,
                             payload.max_attachment_upload_bytes,
                         ),
                     )
@@ -1433,7 +1471,16 @@ class LedgerService:
             with self._connection_factory() as conn:
                 with conn.transaction():
                     with conn.cursor(row_factory=dict_row) as cur:
-                        self._assert_cheque_accounts_and_party(cur, payload)
+                        # New cheque: both sides are being set, so always validate eligibility.
+                        self._assert_cheque_credit_account(cur, payload.credit_account_id)
+                        self._assert_cheque_debit_account(cur, payload.debit_account_id)
+                        if payload.party_id is not None:
+                            cur.execute(
+                                "SELECT 1 FROM parties WHERE id = %s",
+                                (payload.party_id,),
+                            )
+                            if not cur.fetchone():
+                                raise LedgerValidationError("party_id not found")
                         cur.execute(
                             """
                             INSERT INTO cheques (
@@ -1456,6 +1503,12 @@ class LedgerService:
                             ),
                         )
                         row = cur.fetchone()
+                        # Last-used auto-write (#105): both sides updated for create.
+                        self._write_cheque_default_accounts(
+                            cur,
+                            credit_account_id=payload.credit_account_id,
+                            debit_account_id=payload.debit_account_id,
+                        )
         except errors.UniqueViolation as exc:
             raise LedgerConflictError(
                 "an open cheque with this number already exists for the credit account",
@@ -1502,12 +1555,15 @@ class LedgerService:
                     next_credit = int(merged["credit_account_id"])
                     next_debit = int(merged["debit_account_id"])
                     next_party = merged.get("party_id")
-                    cur.execute("SELECT 1 FROM accounts WHERE id = %s", (next_credit,))
-                    if not cur.fetchone():
-                        raise LedgerValidationError("credit_account_id not found")
-                    cur.execute("SELECT 1 FROM accounts WHERE id = %s", (next_debit,))
-                    if not cur.fetchone():
-                        raise LedgerValidationError("debit_account_id not found")
+                    # #105: validate account eligibility only when the side is actually
+                    # changing. Re-affirming a now-inactive/ineligible stored value is
+                    # allowed so that inactive accounts don't break existing-cheque edits.
+                    credit_changed = next_credit != int(row["credit_account_id"])
+                    debit_changed = next_debit != int(row["debit_account_id"])
+                    if credit_changed:
+                        self._assert_cheque_credit_account(cur, next_credit)
+                    if debit_changed:
+                        self._assert_cheque_debit_account(cur, next_debit)
                     if next_party is not None:
                         cur.execute("SELECT 1 FROM parties WHERE id = %s", (next_party,))
                         if not cur.fetchone():
@@ -1548,6 +1604,12 @@ class LedgerService:
                         raise LedgerConflictError(
                             "an open cheque with this number already exists for the credit account",
                         ) from exc
+                    # Last-used auto-write (#105): per-side, only when that side changed.
+                    self._write_cheque_default_accounts(
+                        cur,
+                        credit_account_id=next_credit if credit_changed else None,
+                        debit_account_id=next_debit if debit_changed else None,
+                    )
         return ChequeOut.model_validate(out)
 
     @staticmethod
@@ -1576,17 +1638,90 @@ class LedgerService:
                 raise LedgerValidationError("cleared_date is required when setting status to cleared")
 
     @staticmethod
-    def _assert_cheque_accounts_and_party(cur, payload: ChequeCreate) -> None:
-        cur.execute("SELECT 1 FROM accounts WHERE id = %s", (payload.credit_account_id,))
-        if not cur.fetchone():
+    def _assert_cheque_credit_account(cur, account_id: int) -> None:
+        """#105: cheque credit account must be an active asset account."""
+        cur.execute(
+            "SELECT type, is_active FROM accounts WHERE id = %s",
+            (account_id,),
+        )
+        row = cur.fetchone()
+        if not row:
             raise LedgerValidationError("credit_account_id not found")
-        cur.execute("SELECT 1 FROM accounts WHERE id = %s", (payload.debit_account_id,))
-        if not cur.fetchone():
+        if not row["is_active"]:
+            raise LedgerValidationError(
+                "credit_account_id must reference an active account",
+            )
+        if row["type"] != "asset":
+            raise LedgerValidationError(
+                "credit_account_id must reference an asset account",
+            )
+
+    @staticmethod
+    def _assert_cheque_debit_account(cur, account_id: int) -> None:
+        """#105: cheque debit account must be active and not a suspense account."""
+        cur.execute(
+            "SELECT type, is_active FROM accounts WHERE id = %s",
+            (account_id,),
+        )
+        row = cur.fetchone()
+        if not row:
             raise LedgerValidationError("debit_account_id not found")
-        if payload.party_id is not None:
-            cur.execute("SELECT 1 FROM parties WHERE id = %s", (payload.party_id,))
-            if not cur.fetchone():
-                raise LedgerValidationError("party_id not found")
+        if not row["is_active"]:
+            raise LedgerValidationError(
+                "debit_account_id must reference an active account",
+            )
+        if row["type"] == "suspense":
+            raise LedgerValidationError(
+                "debit_account_id must not reference a suspense account",
+            )
+
+    @staticmethod
+    def _write_cheque_default_accounts(
+        cur,
+        *,
+        credit_account_id: int | None,
+        debit_account_id: int | None,
+    ) -> None:
+        """Persist last-used cheque defaults (#105).
+
+        Each side is updated independently. ``None`` means *do not touch* (used by
+        ``update_cheque`` when only one side actually changed). The cheque save has
+        already validated whichever side(s) are supplied, so this helper writes the
+        ids directly without re-running eligibility checks.
+        """
+        if credit_account_id is None and debit_account_id is None:
+            return
+        if credit_account_id is not None and debit_account_id is not None:
+            cur.execute(
+                """
+                UPDATE ledger_settings
+                SET default_cheque_credit_account_id = %s,
+                    default_cheque_debit_account_id = %s,
+                    updated_at = NOW()
+                WHERE id = 1
+                """,
+                (credit_account_id, debit_account_id),
+            )
+        elif credit_account_id is not None:
+            cur.execute(
+                """
+                UPDATE ledger_settings
+                SET default_cheque_credit_account_id = %s,
+                    updated_at = NOW()
+                WHERE id = 1
+                """,
+                (credit_account_id,),
+            )
+        else:
+            cur.execute(
+                """
+                UPDATE ledger_settings
+                SET default_cheque_debit_account_id = %s,
+                    updated_at = NOW()
+                WHERE id = 1
+                """,
+                (debit_account_id,),
+            )
 
     def create_entry(self, payload: JournalEntryWrite) -> JournalEntryOut:
         self._validate_summary(payload.summary)

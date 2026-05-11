@@ -7,6 +7,10 @@ export interface LedgerSettings {
   unearned_revenue_account_id: number | null;
   unallocated_debits_account_id: number | null;
   unallocated_credits_account_id: number | null;
+  /** Last credit (cheque/bank register) account saved; pre-fills the next new cheque when still eligible (#105). */
+  default_cheque_credit_account_id: number | null;
+  /** Last debit (counter-account) saved on a cheque; pre-fills the next new cheque when still eligible (#105). */
+  default_cheque_debit_account_id: number | null;
   /** Maximum journal attachment upload size in bytes (default 5 MiB). PATCH may use a string with `k` or `M` suffix. */
   max_attachment_upload_bytes: number;
   updated_at: string;

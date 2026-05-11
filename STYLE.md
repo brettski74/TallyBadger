@@ -17,6 +17,17 @@ This file is the **single human- and agent-visible source of truth** for how we 
 - Treat **published HTTP routes** and **stable JSON response shapes** as contracts: change them together with **tests** and any **user-facing or integration documentation** that promises that shape.
 - **Secrets:** never commit credentials. Use environment variables (prefix **`TALLYBADGER_`** where applicable, see [`Settings`](src/tallybadger/core/config.py)) or your deployment’s secret store.
 
+## Inactive objects (`is_active`)
+
+Domain entities that carry an `is_active` flag (today: accounts and parties; the same rule extends to any future table that adopts the column) treat it as a **soft-archive** marker, not a destructive delete. Default contract:
+
+- **New associations are rejected.** Validations on create or on any field change that **introduces a new reference** to a row (e.g. `POST /cheques`, `PATCH /cheques` swapping `credit_account_id`, `PATCH /ledger-settings` setting a default account id) must verify the target is `is_active = TRUE`.
+- **Existing associations are preserved.** A row already pointing at a now-inactive entity continues to load, display, list, and edit normally. Editing other fields on that row, or re-affirming the same id in a PATCH body, must **not** re-validate the referenced row's `is_active` state — only an actual id change triggers a fresh eligibility check.
+- **UI pickers** filter to active options for new associations, but should keep an already-stored inactive value visible (annotated if helpful) when editing the row so the operator can leave it in place or replace it deliberately.
+- **System defaults** (e.g. last-used defaults persisted by a save flow) follow the same "validate-on-change only" rule: a write that introduces a new id validates eligibility; rewriting the same id or leaving the field untouched does not.
+
+Specific flows are free to impose stricter behaviour where it makes product sense (e.g. final clearing or posting against a now-inactive account may warrant a tighter rule, decided per-ticket), but **the default is "inactive blocks new, not existing"**. Do not invent a stricter rule silently — change this section in the same PR.
+
 ## Database and migrations
 
 - Ship **SQL migrations** in [`sql/`](sql/) (`NNN_descriptive_name.sql`) in the **same pull request** as code that depends on the new schema.
@@ -86,6 +97,7 @@ Use this table when preparing a PR; extend it as the repo evolves.
 | Area | When it applies | What to update in the same PR |
 |------|-----------------|-------------------------------|
 | **Database schema / domain model** | Migrations or persisted shapes change | `make dbclean` (or equivalent); `sql/` migrations; run **`make export-dev-seed`** and commit `sql/dev_seed.sql` when default seed data must reflect the model. Update **STYLE.md** for process changes; **ARCH.md** only if boundaries or lifecycle change. |
+| **Inactive object handling** | Adding or changing validation around `is_active` on accounts, parties, or any future table with the flag | Apply the default contract from **Inactive objects (`is_active`)** above (new associations rejected, existing preserved, validate on change only); add tests for both the "blocked on change" and "allowed on re-affirm / unrelated edit" cases; update that section in **STYLE.md** if the per-ticket flow needs a stricter rule. |
 | **Backup / snapshot / import** | New or changed tables, FKs, or snapshot semantics | Snapshot/import code paths; integration tests; [docs/backup-snapshot-format.md](docs/backup-snapshot-format.md); bump **`format_version`** when required by the format rules. |
 | **Public API or stable JSON** | Routes or response shapes consumed by clients | Contract/API tests; docs that promise the shape; **STYLE.md** if testing or contract expectations change. |
 | **Architecture vs style / delivery** | Boundaries, trust, integrations, lifecycle vs day-to-day conventions | **ARCH.md** for boundaries/lifecycle; **STYLE.md** for conventions, testing bar, or PR hygiene. **`.cursor/rules/`** only for **wiring** (pointers, tool constraints)—not duplicate policy text. |

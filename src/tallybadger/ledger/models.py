@@ -301,6 +301,8 @@ class LedgerSettingsUpdate(BaseModel):
     unearned_revenue_account_id: int | None = Field(default=None, gt=0)
     unallocated_debits_account_id: int | None = Field(default=None, gt=0)
     unallocated_credits_account_id: int | None = Field(default=None, gt=0)
+    default_cheque_credit_account_id: int | None = Field(default=None, gt=0)
+    default_cheque_debit_account_id: int | None = Field(default=None, gt=0)
     max_attachment_upload_bytes: Annotated[int | None, BeforeValidator(_optional_byte_size)] = Field(
         default=None,
         gt=0,
@@ -315,6 +317,8 @@ class LedgerSettingsOut(BaseModel):
     unearned_revenue_account_id: int | None
     unallocated_debits_account_id: int | None
     unallocated_credits_account_id: int | None
+    default_cheque_credit_account_id: int | None
+    default_cheque_debit_account_id: int | None
     max_attachment_upload_bytes: int
     updated_at: datetime
 
