@@ -38,5 +38,4 @@ Use this workflow when starting work on a **bug**, **defect**, **regression**, o
 
 - Diagnosis ends with **documentation on the issue**, not merged code. While inside this workflow, avoid large product changes unless the user explicitly directs otherwise (tiny reproducibility spikes may still be discussed case by case).
 - If investigation shows the report is invalid, duplicate, or not reproducible, say so in the comment and agree with the user whether to close or retarget the issue.
-- The user may initiate this workflow with `**!wk-diagnose #N`** (see **STYLE.md**).
 
