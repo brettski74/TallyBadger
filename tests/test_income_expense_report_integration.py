@@ -129,6 +129,7 @@ def test_income_expense_reconciles_to_sql_and_excludes_balance_sheet_lines(
             summary="fix",
             description=None,
             requires_review=True,
+            review_messages=["Income/expense fixture: flag repairs for review"],
             lines=[
                 JournalLineIn(account_id=cash.id, amount=Decimal("-45.00")),
                 JournalLineIn(account_id=exp_a.id, amount=Decimal("45.00")),
