@@ -56,6 +56,12 @@ function App() {
     setAccounts((prev) => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)));
   }
 
+  function handleAccountUpdated(updated: Account) {
+    setAccounts((prev) =>
+      prev.map((a) => (a.id === updated.id ? updated : a)).sort((a, b) => a.name.localeCompare(b.name)),
+    );
+  }
+
   function handlePartyCreated(created: Party) {
     setParties((prev) => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)));
   }
@@ -157,6 +163,7 @@ function App() {
             loading={loading}
             error={error}
             onAccountCreated={handleAccountCreated}
+            onAccountUpdated={handleAccountUpdated}
           />
         )}
         {tab === "journal" && (

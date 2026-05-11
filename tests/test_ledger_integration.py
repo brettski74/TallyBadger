@@ -20,6 +20,7 @@ from tallybadger.ledger.models import (
     AccountUpdate,
     AccrualPlanCreate,
     AccrualPlanUpdate,
+    ChequeCreate,
     JournalEntryWrite,
     JournalLineIn,
     LedgerSettingsUpdate,
@@ -29,6 +30,7 @@ from tallybadger.ledger.models import (
 )
 from tallybadger.ledger.service import (
     JOURNAL_LIST_SPLIT_LABEL,
+    LedgerConflictError,
     LedgerNotFoundError,
     LedgerService,
     LedgerValidationError,
@@ -183,6 +185,55 @@ def test_deactivated_account_cannot_be_posted_to(ledger_service: LedgerService) 
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute("SELECT COUNT(*) AS count FROM journal_entries")
             assert cur.fetchone()["count"] == 0
+
+
+def test_account_type_change_allowed_when_unreferenced(ledger_service: LedgerService) -> None:
+    acct = ledger_service.create_account(AccountCreate(name="Lonely Expense", type="expense"))
+    out = ledger_service.update_account(acct.id, AccountUpdate(type="liability"))
+    assert out.type == "liability"
+    assert out.name == "Lonely Expense"
+
+
+def test_account_type_change_blocked_by_journal_line(ledger_service: LedgerService) -> None:
+    cash = ledger_service.create_account(AccountCreate(name="Cash", type="asset"))
+    rent = ledger_service.create_account(AccountCreate(name="Rent", type="revenue"))
+    ledger_service.create_entry(
+        JournalEntryWrite(
+            entry_date=date(2026, 5, 2),
+            summary="rent",
+            description="rent",
+            lines=[
+                JournalLineIn(account_id=cash.id, amount=Decimal("50.00")),
+                JournalLineIn(account_id=rent.id, amount=Decimal("-50.00")),
+            ],
+        )
+    )
+    with pytest.raises(LedgerConflictError, match="journal lines"):
+        ledger_service.update_account(rent.id, AccountUpdate(type="expense"))
+
+
+def test_account_type_change_blocked_by_ledger_settings(ledger_service: LedgerService) -> None:
+    ar = ledger_service.create_account(AccountCreate(name="Tenant AR", type="asset"))
+    ledger_service.update_ledger_settings(LedgerSettingsUpdate(accounts_receivable_account_id=ar.id))
+    with pytest.raises(LedgerConflictError, match="ledger settings"):
+        ledger_service.update_account(ar.id, AccountUpdate(type="liability"))
+
+
+def test_account_type_change_blocked_by_cheque(ledger_service: LedgerService) -> None:
+    cash = ledger_service.create_account(AccountCreate(name="Bank", type="asset"))
+    expense = ledger_service.create_account(AccountCreate(name="Gardening", type="expense"))
+    ledger_service.create_cheque(
+        ChequeCreate(
+            credit_account_id=cash.id,
+            debit_account_id=expense.id,
+            summary="Lawn mower",
+            cheque_number=101,
+            issue_date=date(2026, 5, 3),
+            amount=Decimal("80.00"),
+        )
+    )
+    with pytest.raises(LedgerConflictError, match="cheque"):
+        ledger_service.update_account(expense.id, AccountUpdate(type="liability"))
 
 
 def test_list_entries_and_account_lines_with_filters(
