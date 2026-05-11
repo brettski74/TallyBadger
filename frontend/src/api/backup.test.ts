@@ -28,8 +28,9 @@ describe("backup API", () => {
       }),
     );
     const blob = await exportBackup("configuration");
-    expect(blob).toBeInstanceOf(Blob);
+    // jsdom/Vitest can return a Blob from another realm where `instanceof Blob` fails.
     expect(blob.size).toBeGreaterThan(0);
+    expect(typeof blob.arrayBuffer).toBe("function");
     const call = (globalThis.fetch as ReturnType<typeof vi.spyOn>).mock.calls[0];
     expect(call[0]).toContain("/backup/export");
     expect(call[0]).toContain("export_type=configuration");

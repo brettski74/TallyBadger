@@ -23,3 +23,4 @@ Use this workflow when building and shipping work for an agreed GitHub issue: pl
 
 - If scope drifts during implementation, pause and reconcile with the issue or run **refine.md** before piling on unrelated changes.
 - The PR is the review surface; keep the issue updated only when the team wants cross-links, not as a substitute for the PR description.
+- No user guidance provided before presentation of the implementation plan can ever be used as approval to proceed with any implementation. The implementation plan must always be presented and approval for the plan must be explicitly received from the user after presentaton of the plan. Any user guidance provided prior to presentation of the implementation plan can only be used to help inform what the implementation plan should be.
