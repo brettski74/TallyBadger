@@ -66,9 +66,10 @@ describe("App", () => {
     render(<App />);
 
     const user = userEvent.setup();
-    await user.type(await screen.findByLabelText("Account name"), "Repairs Expense");
-    await user.selectOptions(screen.getByLabelText("Account type"), "expense");
-    await user.click(screen.getByRole("button", { name: "Create account" }));
+    await user.click(await screen.findByRole("button", { name: "Create account" }));
+    await user.type(screen.getByLabelText("New account name"), "Repairs Expense");
+    await user.selectOptions(screen.getByLabelText("New account type"), "expense");
+    await user.click(screen.getByRole("button", { name: /Save new account \(Ctrl\+S\)|Save new account \(⌘\+S\)/ }));
 
     expect(await screen.findByText("Repairs Expense")).toBeInTheDocument();
   });
@@ -83,8 +84,9 @@ describe("App", () => {
     render(<App />);
 
     const user = userEvent.setup();
-    await user.type(await screen.findByLabelText("Account name"), "Cash");
-    await user.click(screen.getByRole("button", { name: "Create account" }));
+    await user.click(await screen.findByRole("button", { name: "Create account" }));
+    await user.type(screen.getByLabelText("New account name"), "Cash");
+    await user.click(screen.getByRole("button", { name: /Save new account \(Ctrl\+S\)|Save new account \(⌘\+S\)/ }));
 
     await waitFor(() => {
       expect(screen.getByRole("alert")).toHaveTextContent("account name already exists");

@@ -214,6 +214,30 @@ th {
   grid-column: 1 / -1;
 }
 
+.card-heading-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+
+.card-heading-row h2 {
+  margin: 0;
+}
+
+.card-heading-row > button {
+  width: auto;
+  margin-top: 0;
+  flex-shrink: 0;
+}
+
+.accounts-panel .form-actions-inline button {
+  width: auto;
+  margin-top: 0;
+}
+
 .income-exp-report-table {
   width: 100%;
   table-layout: fixed;
