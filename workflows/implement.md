@@ -16,7 +16,7 @@ Use this workflow when building and shipping work for an agreed GitHub issue: pl
 2. **Explain an implementation plan** to the user **before** editing application code, migrations, docs, or other tracked artefacts. Include what will change, main touchpoints, and how you will verify. Plan must be consistent with **[STYLE.md](../STYLE.md)** and **[ARCH.md](../ARCH.md)**. Do not change anything until the plan is approved. You need to stop here, present the plan and wait for approval!!!!!!! This is important. Do not pass this point in the workflow until you have approval from the user.
 3. After the user **approves the plan**, implement in accordance with the agreed plan. If you encounter issues, discuss how to resolve with the user.
 4. Work on a **feature branch**; do not land substantive work by committing directly to the default branch.
-5. When implementation is ready, provide a **completion narrative**: what changed, any **architecture** impact (see **ARCH.md**), caveats, and which tests or docs moved. Wait for the user to review your completion narrative before proceeding.
+5. When implementation is ready, provide a **completion narrative**: what changed, any **architecture** impact (see **ARCH.md**), caveats, and which tests or docs moved. Wait for the user to review your completion narrative before proceeding beyond this point in the workflow.
 6. **After** the user agrees the narrative is accurate: **commit**, **push**, and **open a pull request** that **links or closes** the issue using GitHub’s linking conventions (for example `Fixes #N` / `Closes #N` in the PR body), consistent with **[STYLE.md](../STYLE.md)**.
 7. Inform the user that this workflow is complete and suggest that they proceed with the ship workflow.
 
