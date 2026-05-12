@@ -18,6 +18,7 @@ Use this workflow when building and shipping work for an agreed GitHub issue: pl
 4. Work on a **feature branch**; do not land substantive work by committing directly to the default branch.
 5. When implementation is ready, provide a **completion narrative**: what changed, any **architecture** impact (see **ARCH.md**), caveats, and which tests or docs moved.
 6. After the user agrees the narrative is accurate: **commit**, **push**, and **open a pull request** that **links or closes** the issue using GitHub’s linking conventions (for example `Fixes #N` / `Closes #N` in the PR body), consistent with **[STYLE.md](../STYLE.md)**.
+7. Inform the user that this workflow is complete and suggest that they proceed with the ship workflow.
 
 ## Notes
 
