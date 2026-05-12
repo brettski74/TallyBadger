@@ -101,7 +101,7 @@ export function PartiesSection({
   useFormSaveDiscardShortcuts({
     createFormRef,
     editFormRef,
-    editingPartyId: editingId,
+    editingId,
     canSubmitCreate: name.trim().length > 0,
     canSubmitEdit: editName.trim().length > 0,
     createSubmitting,
@@ -615,7 +615,7 @@ export function PartiesSection({
                 <th>Subtype</th>
                 <th>Patterns</th>
                 <th>Status</th>
-                <th aria-label="actions" />
+                <th className="table-row-actions-heading" aria-label="actions" />
               </tr>
             </thead>
             <tbody>

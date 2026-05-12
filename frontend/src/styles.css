@@ -214,6 +214,52 @@ th {
   grid-column: 1 / -1;
 }
 
+.card-heading-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+
+.card-heading-row h2 {
+  margin: 0;
+}
+
+.card-heading-row > button {
+  width: auto;
+  margin-top: 0;
+  flex-shrink: 0;
+}
+
+.accounts-panel .form-actions-inline button {
+  width: auto;
+  margin-top: 0;
+}
+
+.accounts-panel .accounts-inline-feedback-row td {
+  padding: 0;
+  vertical-align: top;
+  text-align: left;
+}
+
+.accounts-panel .accounts-inline-feedback-cell {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.35rem 0.4rem 0.55rem;
+}
+
+.accounts-panel .accounts-inline-feedback-cell .error {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.accounts-panel tr.accounts-inline-feedback-row--empty {
+  display: none;
+}
+
 .income-exp-report-table {
   width: 100%;
   table-layout: fixed;
@@ -531,12 +577,19 @@ th {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  flex-shrink: 0;
+  flex: 0 0 auto;
   border: none;
   border-radius: 6px;
   background: transparent;
   color: var(--link);
   cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Let hits land on the <button>; some stacks mishandle pointer targets on nested SVG strokes. */
+.table-row-icon-button svg {
+  pointer-events: none;
 }
 
 .table-row-icon-button:hover:not(:disabled) {
@@ -558,13 +611,29 @@ th {
   display: inline-flex;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
   gap: 2px;
+  width: 100%;
 }
 
 /* Narrow vertical padding so 32px icon targets match pre-icon ~42px row rhythm (global td is 0.55rem). */
 td.table-row-actions-cell {
   padding-block: 5px;
   vertical-align: middle;
+  text-align: right;
+  min-width: 5.5rem;
+  width: 1%;
+}
+
+td.table-row-actions-cell .form-actions-inline {
+  justify-content: flex-end;
+  width: 100%;
+}
+
+th.table-row-actions-heading {
+  text-align: right;
+  min-width: 5.5rem;
+  width: 1%;
 }
 
 .attachments-dialog {

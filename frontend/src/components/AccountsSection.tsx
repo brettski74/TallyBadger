@@ -1,8 +1,28 @@
-import { FormEvent, useState } from "react";
+import type { CSSProperties } from "react";
+import { FormEvent, Fragment, useMemo, useRef, useState } from "react";
+import { Pencil, Save, SquareCheckBig, SquareX, Undo2 } from "lucide-react";
 
-import { Account, AccountType, createAccount, updateAccount, UpdateAccountInput } from "../api/accounts";
+import {
+  Account,
+  AccountType,
+  createAccount,
+  updateAccount,
+  UpdateAccountInput,
+} from "../api/accounts";
+import { useFormSaveDiscardShortcuts } from "../hooks/useFormSaveDiscardShortcuts";
+import {
+  discardActionTooltip,
+  discardAriaKeyShortcuts,
+  saveActionTooltip,
+  saveAriaKeyShortcuts,
+} from "../lib/keyboardHints";
+import { isMacLikeUserAgent } from "../lib/platformKeyboard";
+import { TableRowIconButton } from "./TableRowIconButton";
 
 const ACCOUNT_TYPES: AccountType[] = ["asset", "liability", "equity", "revenue", "expense", "suspense"];
+
+const CREATE_FORM_ID = "accounts-inline-create";
+const EDIT_FORM_ID = "accounts-inline-edit";
 
 const RENAME_CEL_WARNING =
   "Renaming an account can break CEL rules, import templates, or other text that matched the old name. " +
@@ -11,6 +31,18 @@ const RENAME_CEL_WARNING =
 const TYPE_CHANGE_CONFIRM =
   "Changing an account's type is unusual — reports and rules may have filed this under the old label. " +
   "Continue only if the original pick was genuinely wrong. Proceed anyway?";
+
+const draftActiveBtnWrap: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: "0.35rem",
+  flexWrap: "wrap",
+};
+
+/** Row state uses numeric ids; coerce in case JSON ever delivers strings. */
+function rowIdOf(account: Pick<Account, "id">): number {
+  return Number(account.id);
+}
 
 interface AccountsSectionProps {
   accounts: Account[];
@@ -27,12 +59,17 @@ export function AccountsSection({
   onAccountCreated,
   onAccountUpdated,
 }: AccountsSectionProps) {
-  const [submitError, setSubmitError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
+  const createFormRef = useRef<HTMLFormElement>(null);
+  const editFormRef = useRef<HTMLFormElement>(null);
+  /** Ignore Discard clicks for a beat after opening edit (stray completion click can land on Discard). */
+  const suppressDiscardUntilRef = useRef(0);
 
-  const [name, setName] = useState("");
-  const [type, setType] = useState<AccountType>("asset");
-  const [isActive, setIsActive] = useState(true);
+  const [isCreating, setIsCreating] = useState(false);
+  const [createDraftName, setCreateDraftName] = useState("");
+  const [createDraftType, setCreateDraftType] = useState<AccountType>("asset");
+  const [createDraftActive, setCreateDraftActive] = useState(true);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [createSubmitting, setCreateSubmitting] = useState(false);
 
   const [editingId, setEditingId] = useState<number | null>(null);
   const [draftName, setDraftName] = useState("");
@@ -41,33 +78,18 @@ export function AccountsSection({
   const [editError, setEditError] = useState<string | null>(null);
   const [editSubmitting, setEditSubmitting] = useState(false);
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setSubmitError(null);
-    if (!name.trim()) {
-      setSubmitError("Account name is required");
-      return;
-    }
-    setSubmitting(true);
-    try {
-      const created = await createAccount({ name: name.trim(), type, is_active: isActive });
-      onAccountCreated(created);
-      setName("");
-      setType("asset");
-      setIsActive(true);
-    } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : "Failed to create account");
-    } finally {
-      setSubmitting(false);
-    }
-  }
+  const [rowActionError, setRowActionError] = useState<string | null>(null);
+  const [accountRowBusyId, setAccountRowBusyId] = useState<number | null>(null);
 
-  function startEdit(account: Account) {
-    setEditingId(account.id);
-    setDraftName(account.name);
-    setDraftType(account.type);
-    setDraftActive(account.is_active);
-    setEditError(null);
+  const isMac = useMemo(() => isMacLikeUserAgent(), []);
+
+  function discardInlineCreate() {
+    setIsCreating(false);
+    setCreateDraftName("");
+    setCreateDraftType("asset");
+    setCreateDraftActive(true);
+    setCreateError(null);
+    setCreateSubmitting(false);
   }
 
   function cancelEdit() {
@@ -75,7 +97,122 @@ export function AccountsSection({
     setEditError(null);
   }
 
-  async function saveEdit(original: Account) {
+  function startCreate() {
+    if (isCreating) {
+      discardInlineCreate();
+    }
+    if (editingId !== null) {
+      cancelEdit();
+    }
+    setIsCreating(true);
+    setCreateDraftName("");
+    setCreateDraftType("asset");
+    setCreateDraftActive(true);
+    setCreateError(null);
+    setRowActionError(null);
+  }
+
+  function startEdit(account: Account) {
+    const rowId = rowIdOf(account);
+    if (!Number.isFinite(rowId)) {
+      return;
+    }
+    if (isCreating) {
+      discardInlineCreate();
+    }
+    if (editingId !== null && editingId !== rowId) {
+      cancelEdit();
+    }
+    setEditingId(rowId);
+    setDraftName(account.name);
+    setDraftType(account.type);
+    setDraftActive(account.is_active);
+    setEditError(null);
+    setRowActionError(null);
+  }
+
+  useFormSaveDiscardShortcuts({
+    createFormRef,
+    editFormRef,
+    editingId,
+    inlineCreateActive: isCreating,
+    canSubmitCreate: createDraftName.trim().length > 0,
+    canSubmitEdit: draftName.trim().length > 0 && editingId !== null,
+    createSubmitting,
+    editSubmitting,
+    requestCreateSubmit: () => {
+      createFormRef.current?.requestSubmit();
+    },
+    requestEditSubmit: () => {
+      editFormRef.current?.requestSubmit();
+    },
+    requestEditDiscard: () => {
+      cancelEdit();
+    },
+    requestCreateDiscard: () => {
+      discardInlineCreate();
+    },
+  });
+
+  async function patchAccountActive(account: Account, nextActive: boolean) {
+    setRowActionError(null);
+    setAccountRowBusyId(rowIdOf(account));
+    try {
+      const updated = await updateAccount(account.id, { is_active: nextActive });
+      onAccountUpdated(updated);
+    } catch (err) {
+      setRowActionError(err instanceof Error ? err.message : "Failed to update account");
+    } finally {
+      setAccountRowBusyId(null);
+    }
+  }
+
+  function tryDeactivateAccount(account: Account) {
+    const msg = `Deactivate account "${account.name}"? It will stay on existing journal links but won't appear in pickers for new associations.`;
+    if (!window.confirm(msg)) {
+      return;
+    }
+    void patchAccountActive(account, false);
+  }
+
+  function tryReactivateAccount(account: Account) {
+    void patchAccountActive(account, true);
+  }
+
+  function tryDeactivateDraft(setActive: (v: boolean) => void, label: string) {
+    const msg = `Mark "${label}" inactive in this draft? It will be saved as inactive when you save.`;
+    if (!window.confirm(msg)) {
+      return;
+    }
+    setActive(false);
+  }
+
+  async function handleCreateSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setCreateError(null);
+    const trimmed = createDraftName.trim();
+    if (!trimmed) {
+      setCreateError("Account name is required");
+      return;
+    }
+    setCreateSubmitting(true);
+    try {
+      const created = await createAccount({
+        name: trimmed,
+        type: createDraftType,
+        is_active: createDraftActive,
+      });
+      onAccountCreated(created);
+      discardInlineCreate();
+    } catch (err) {
+      setCreateError(err instanceof Error ? err.message : "Failed to create account");
+    } finally {
+      setCreateSubmitting(false);
+    }
+  }
+
+  async function handleEditSubmit(event: FormEvent<HTMLFormElement>, original: Account) {
+    event.preventDefault();
     setEditError(null);
     const trimmed = draftName.trim();
     if (!trimmed) {
@@ -105,7 +242,7 @@ export function AccountsSection({
     }
 
     if (Object.keys(body).length === 0) {
-      setEditingId(null);
+      cancelEdit();
       return;
     }
 
@@ -113,7 +250,7 @@ export function AccountsSection({
     try {
       const updated = await updateAccount(original.id, body);
       onAccountUpdated(updated);
-      setEditingId(null);
+      cancelEdit();
     } catch (err) {
       setEditError(err instanceof Error ? err.message : "Failed to update account");
     } finally {
@@ -121,96 +258,187 @@ export function AccountsSection({
     }
   }
 
-  return (
-    <>
-      <section className="card">
-        <h2>Create account</h2>
-        <form onSubmit={(e) => void handleSubmit(e)}>
-          <label>
-            Name
-            <input
-              aria-label="Account name"
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              placeholder="e.g. Cash"
-            />
-          </label>
-
-          <label>
-            Type
-            <select
-              aria-label="Account type"
-              value={type}
-              onChange={(event) => setType(event.target.value as AccountType)}
-            >
-              {ACCOUNT_TYPES.map((option) => (
-                <option key={option} value={option}>
-                  {option}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="checkbox">
-            <input
-              aria-label="Account active"
-              type="checkbox"
-              checked={isActive}
-              onChange={(event) => setIsActive(event.target.checked)}
-            />
-            Active account
-          </label>
-
-          <button disabled={submitting} type="submit">
-            {submitting ? "Creating..." : "Create account"}
-          </button>
-
-          {submitError && (
-            <p className="error" role="alert">
-              {submitError}
-            </p>
-          )}
-        </form>
-      </section>
-
-      <section className="card">
-        <h2>Accounts</h2>
-
-        {loading && <p>Loading accounts...</p>}
-        {error && (
-          <p className="error" role="alert">
-            {error}
-          </p>
+  function renderDraftActiveCell(
+    active: boolean,
+    setActive: (v: boolean) => void,
+    busy: boolean,
+    contextLabel: string,
+  ) {
+    return (
+      <div style={draftActiveBtnWrap}>
+        {active ? (
+          <TableRowIconButton
+            aria-label={`Mark inactive in draft (${contextLabel})`}
+            title="Mark inactive (confirm)"
+            disabled={busy}
+            onClick={() => tryDeactivateDraft(setActive, contextLabel)}
+          >
+            <SquareX size={18} strokeWidth={2} aria-hidden />
+          </TableRowIconButton>
+        ) : (
+          <TableRowIconButton
+            aria-label={`Mark active in draft (${contextLabel})`}
+            title="Mark active"
+            disabled={busy}
+            onClick={() => setActive(true)}
+          >
+            <SquareCheckBig size={18} strokeWidth={2} aria-hidden />
+          </TableRowIconButton>
         )}
-        {!loading && !error && accounts.length === 0 && <p>No accounts yet.</p>}
+      </div>
+    );
+  }
 
-        {!loading && !error && accounts.length > 0 && (
-          <table>
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Type</th>
-                <th>Status</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {accounts.map((account) => (
-                <tr key={account.id}>
-                  {editingId === account.id ? (
-                    <>
+  return (
+    <section className="card journal-card-wide accounts-panel">
+      <div className="card-heading-row">
+        <h2>Accounts</h2>
+        <button type="button" onClick={startCreate}>
+          Create account
+        </button>
+      </div>
+
+      {loading && <p>Loading accounts...</p>}
+      {error && (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      )}
+      {rowActionError && (
+        <p className="error" role="alert">
+          {rowActionError}
+        </p>
+      )}
+      {!loading && !error && accounts.length === 0 && !isCreating && <p>No accounts yet.</p>}
+
+      {!loading && !error && (accounts.length > 0 || isCreating) && (
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Type</th>
+              <th>Status</th>
+              <th className="table-row-actions-heading" aria-label="actions" />
+            </tr>
+          </thead>
+          <tbody>
+            {isCreating && (
+              <Fragment key="__inline-create-block__">
+                <tr>
+                  <td>
+                    <form
+                      ref={createFormRef}
+                      id={CREATE_FORM_ID}
+                      aria-label="Create new account"
+                      onSubmit={(e) => void handleCreateSubmit(e)}
+                      hidden
+                    />
+                    <input
+                      form={CREATE_FORM_ID}
+                      aria-label="New account name"
+                      value={createDraftName}
+                      onChange={(e) => setCreateDraftName(e.target.value)}
+                      placeholder="e.g. Cash"
+                    />
+                  </td>
+                  <td>
+                    <select
+                      form={CREATE_FORM_ID}
+                      aria-label="New account type"
+                      value={createDraftType}
+                      onChange={(e) => setCreateDraftType(e.target.value as AccountType)}
+                    >
+                      {ACCOUNT_TYPES.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                  <td>
+                    {renderDraftActiveCell(
+                      createDraftActive,
+                      setCreateDraftActive,
+                      createSubmitting,
+                      createDraftName.trim() || "New account",
+                    )}
+                  </td>
+                  <td className="table-row-actions-cell">
+                    <div className="form-actions-inline">
+                      <TableRowIconButton
+                        type="submit"
+                        form={CREATE_FORM_ID}
+                        aria-label={isMac ? "Save new account (⌘+S)" : "Save new account (Ctrl+S)"}
+                        title={saveActionTooltip(isMac)}
+                        aria-keyshortcuts={saveAriaKeyShortcuts(isMac)}
+                        disabled={createSubmitting}
+                      >
+                        <Save size={18} strokeWidth={2} aria-hidden />
+                      </TableRowIconButton>
+                      <TableRowIconButton
+                        type="button"
+                        className="button-secondary"
+                        aria-label={discardActionTooltip(isMac)}
+                        title={discardActionTooltip(isMac)}
+                        aria-keyshortcuts={discardAriaKeyShortcuts(isMac)}
+                        disabled={createSubmitting}
+                        onClick={discardInlineCreate}
+                      >
+                        <Undo2 size={18} strokeWidth={2} aria-hidden />
+                      </TableRowIconButton>
+                    </div>
+                  </td>
+                </tr>
+                <tr
+                  className={
+                    createError
+                      ? "accounts-inline-feedback-row"
+                      : "accounts-inline-feedback-row accounts-inline-feedback-row--empty"
+                  }
+                  aria-hidden={!createError}
+                >
+                  <td colSpan={4}>
+                    <div className="accounts-inline-feedback-cell">
+                      {createError ? (
+                        <p className="error" role="alert">
+                          {createError}
+                        </p>
+                      ) : null}
+                    </div>
+                  </td>
+                </tr>
+              </Fragment>
+            )}
+            {accounts.map((account) => {
+              const rowId = rowIdOf(account);
+              const rowActionsLocked = accountRowBusyId !== null && accountRowBusyId === rowId;
+              const isEditing = editingId !== null && editingId === rowId;
+
+              if (isEditing) {
+                return (
+                  <Fragment key={account.id}>
+                    <tr>
                       <td>
+                        <form
+                          ref={editFormRef}
+                          id={EDIT_FORM_ID}
+                          aria-label={`Edit account ${account.name}`}
+                          onSubmit={(e) => void handleEditSubmit(e, account)}
+                          hidden
+                        />
                         <input
+                          form={EDIT_FORM_ID}
                           aria-label={`Edit name for account ${account.id}`}
                           value={draftName}
-                          onChange={(event) => setDraftName(event.target.value)}
+                          onChange={(e) => setDraftName(e.target.value)}
                         />
                       </td>
                       <td>
                         <select
+                          form={EDIT_FORM_ID}
                           aria-label={`Edit type for account ${account.id}`}
                           value={draftType}
-                          onChange={(event) => setDraftType(event.target.value as AccountType)}
+                          onChange={(e) => setDraftType(e.target.value as AccountType)}
                         >
                           {ACCOUNT_TYPES.map((option) => (
                             <option key={option} value={option}>
@@ -219,53 +447,116 @@ export function AccountsSection({
                           ))}
                         </select>
                       </td>
-                      <td>
-                        <label className="checkbox">
-                          <input
-                            aria-label={`Edit active for account ${account.id}`}
-                            type="checkbox"
-                            checked={draftActive}
-                            onChange={(event) => setDraftActive(event.target.checked)}
-                          />
-                          Active
-                        </label>
+                      <td>{renderDraftActiveCell(draftActive, setDraftActive, editSubmitting, draftName.trim() || account.name)}</td>
+                      <td className="table-row-actions-cell">
+                        <div className="form-actions-inline">
+                          <TableRowIconButton
+                            type="submit"
+                            form={EDIT_FORM_ID}
+                            aria-label={isMac ? "Save changes (⌘+S)" : "Save changes (Ctrl+S)"}
+                            title={saveActionTooltip(isMac)}
+                            aria-keyshortcuts={saveAriaKeyShortcuts(isMac)}
+                            disabled={editSubmitting}
+                          >
+                            <Save size={18} strokeWidth={2} aria-hidden />
+                          </TableRowIconButton>
+                          <TableRowIconButton
+                            type="button"
+                            className="button-secondary"
+                            aria-label={discardActionTooltip(isMac)}
+                            title={discardActionTooltip(isMac)}
+                            aria-keyshortcuts={discardAriaKeyShortcuts(isMac)}
+                            disabled={editSubmitting}
+                            onClick={() => {
+                              if (performance.now() < suppressDiscardUntilRef.current) {
+                                return;
+                              }
+                              cancelEdit();
+                            }}
+                          >
+                            <Undo2 size={18} strokeWidth={2} aria-hidden />
+                          </TableRowIconButton>
+                        </div>
                       </td>
-                      <td>
-                        <button
-                          type="button"
-                          disabled={editSubmitting}
-                          onClick={() => void saveEdit(account)}
+                    </tr>
+                    <tr
+                      className={
+                        editError
+                          ? "accounts-inline-feedback-row"
+                          : "accounts-inline-feedback-row accounts-inline-feedback-row--empty"
+                      }
+                      aria-hidden={!editError}
+                    >
+                      <td colSpan={4}>
+                        <div className="accounts-inline-feedback-cell">
+                          {editError ? (
+                            <p className="error" role="alert">
+                              {editError}
+                            </p>
+                          ) : null}
+                        </div>
+                      </td>
+                    </tr>
+                  </Fragment>
+                );
+              }
+
+              return (
+                <tr key={account.id}>
+                  <td>{account.name}</td>
+                  <td>{account.type}</td>
+                  <td>{account.is_active ? "active" : "inactive"}</td>
+                  <td className="table-row-actions-cell">
+                    <div
+                      className="table-row-actions"
+                      role="group"
+                      aria-label={`Actions for account ${account.name}`}
+                    >
+                      <TableRowIconButton
+                        aria-label={`Edit account ${account.name}`}
+                        title={`Edit account ${account.name}`}
+                        disabled={rowActionsLocked}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (rowActionsLocked) {
+                            return;
+                          }
+                          const row = account;
+                          suppressDiscardUntilRef.current = performance.now() + 150;
+                          window.setTimeout(() => {
+                            startEdit(row);
+                          }, 0);
+                        }}
+                      >
+                        <Pencil size={18} strokeWidth={2} aria-hidden />
+                      </TableRowIconButton>
+                      {account.is_active ? (
+                        <TableRowIconButton
+                          aria-label={`Deactivate account ${account.name}`}
+                          title={`Deactivate account ${account.name}`}
+                          disabled={rowActionsLocked}
+                          onClick={() => tryDeactivateAccount(account)}
                         >
-                          {editSubmitting ? "Saving…" : "Save"}
-                        </button>{" "}
-                        <button type="button" disabled={editSubmitting} onClick={cancelEdit}>
-                          Cancel
-                        </button>
-                        {editError && (
-                          <p className="error" role="alert">
-                            {editError}
-                          </p>
-                        )}
-                      </td>
-                    </>
-                  ) : (
-                    <>
-                      <td>{account.name}</td>
-                      <td>{account.type}</td>
-                      <td>{account.is_active ? "active" : "inactive"}</td>
-                      <td>
-                        <button type="button" onClick={() => startEdit(account)}>
-                          Edit
-                        </button>
-                      </td>
-                    </>
-                  )}
+                          <SquareX size={18} strokeWidth={2} aria-hidden />
+                        </TableRowIconButton>
+                      ) : (
+                        <TableRowIconButton
+                          aria-label={`Reactivate account ${account.name}`}
+                          title={`Reactivate account ${account.name}`}
+                          disabled={rowActionsLocked}
+                          onClick={() => tryReactivateAccount(account)}
+                        >
+                          <SquareCheckBig size={18} strokeWidth={2} aria-hidden />
+                        </TableRowIconButton>
+                      )}
+                    </div>
+                  </td>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </section>
-    </>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+    </section>
   );
 }
