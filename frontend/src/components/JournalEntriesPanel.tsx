@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Paperclip, Pencil } from "lucide-react";
 
 import type { Account } from "../api/accounts";
 import type { Cheque } from "../api/cheques";
@@ -15,6 +16,7 @@ import {
 } from "../api/journalEntries";
 import { JournalEntryAttachmentsDialog } from "./JournalEntryAttachmentsDialog";
 import { JournalEntryForm, type LineDraft } from "./JournalEntryForm";
+import { TableRowIconButton } from "./TableRowIconButton";
 
 const PAGE_SIZE = 50;
 
@@ -362,17 +364,22 @@ export function JournalEntriesPanel({
                 <td className="journal-list-amount">{row.amount}</td>
                 <td>
                   <div className="journal-list-actions">
-                    <button type="button" className="button-link" onClick={() => void openEdit(row.id)}>
-                      Details
-                    </button>
-                    <button
+                    <TableRowIconButton
                       type="button"
-                      className="button-secondary"
+                      onClick={() => void openEdit(row.id)}
+                      title={`Edit journal entry: ${row.summary}`}
+                      aria-label={`Edit journal entry: ${row.summary}`}
+                    >
+                      <Pencil size={18} strokeWidth={2} aria-hidden />
+                    </TableRowIconButton>
+                    <TableRowIconButton
+                      type="button"
                       onClick={() => setAttachmentsEntryId(row.id)}
+                      title={`Attachments for ${row.summary}`}
                       aria-label={`Attachments for ${row.summary}`}
                     >
-                      Attachments
-                    </button>
+                      <Paperclip size={18} strokeWidth={2} aria-hidden />
+                    </TableRowIconButton>
                   </div>
                 </td>
               </tr>

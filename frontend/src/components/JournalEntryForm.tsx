@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { Account } from "../api/accounts";
 import type { Cheque } from "../api/cheques";
@@ -8,7 +8,10 @@ import {
   type JournalEntryReviewMessage,
   type JournalEntryWrite,
 } from "../api/journalEntries";
+import { isTargetAssociatedWithForm } from "../hooks/useFormSaveDiscardShortcuts";
 import { accountsForJournalLinePickers } from "../journal/accountSelect";
+import { saveActionTooltip, saveAriaKeyShortcuts } from "../lib/keyboardHints";
+import { isMacLikeUserAgent } from "../lib/platformKeyboard";
 
 export interface LineDraft {
   key: string;
@@ -199,6 +202,9 @@ export function JournalEntryForm({
   const [apiError, setApiError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [dismissingId, setDismissingId] = useState<number | null>(null);
+  const formRef = useRef<HTMLFormElement | null>(null);
+  const handleSubmitForShortcutRef = useRef<() => Promise<void>>(async () => {});
+  const isMac = isMacLikeUserAgent();
 
   const lineAccountIds = useMemo(
     () =>
@@ -357,6 +363,32 @@ export function JournalEntryForm({
     }
   }
 
+  handleSubmitForShortcutRef.current = handleSubmit;
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target;
+      if (!(target instanceof Node)) {
+        return;
+      }
+      if (!isTargetAssociatedWithForm(target, formRef.current)) {
+        return;
+      }
+      const saveChord =
+        (e.key === "s" || e.key === "S") && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey;
+      if (!saveChord) {
+        return;
+      }
+      if (submitting || !balanced) {
+        return;
+      }
+      e.preventDefault();
+      void handleSubmitForShortcutRef.current();
+    };
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => document.removeEventListener("keydown", onKeyDown, true);
+  }, [submitting, balanced]);
+
   const hasZeroLine =
     amountsComplete &&
     material.some((l) => {
@@ -374,6 +406,7 @@ export function JournalEntryForm({
 
   return (
     <form
+      ref={formRef}
       className="journal-form"
       onSubmit={(e) => {
         e.preventDefault();
@@ -653,7 +686,23 @@ export function JournalEntryForm({
         </p>
       )}
 
-      <button type="submit" disabled={submitting || !balanced}>
+      <button
+        type="submit"
+        disabled={submitting || !balanced}
+        title={saveActionTooltip(isMac)}
+        aria-label={
+          submitting
+            ? undefined
+            : mode === "create"
+              ? isMac
+                ? "Post entry (⌘+S)"
+                : "Post entry (Ctrl+S)"
+              : isMac
+                ? "Save changes (⌘+S)"
+                : "Save changes (Ctrl+S)"
+        }
+        aria-keyshortcuts={saveAriaKeyShortcuts(isMac)}
+      >
         {submitting ? "Saving…" : mode === "create" ? "Post entry" : "Save changes"}
       </button>
     </form>
