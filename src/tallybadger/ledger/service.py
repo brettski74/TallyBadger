@@ -464,36 +464,163 @@ class LedgerService:
         assert out is not None
         return out
 
+    def _assert_account_type_change_allowed(self, cur, account_id: int) -> None:
+        """Raise LedgerConflictError on the first blocking reference (ordered checks)."""
+        cur.execute(
+            "SELECT 1 FROM journal_lines WHERE account_id = %s LIMIT 1",
+            (account_id,),
+        )
+        if cur.fetchone():
+            raise LedgerConflictError(
+                "Cannot change account type: this account already has journal lines "
+                "(the ledger has long memories; open a fresh account if you need a different hat).",
+            )
+        cur.execute(
+            """
+            SELECT 1 FROM cheques
+            WHERE credit_account_id = %s OR debit_account_id = %s
+            LIMIT 1
+            """,
+            (account_id, account_id),
+        )
+        if cur.fetchone():
+            raise LedgerConflictError(
+                "Cannot change account type: a cheque still references this account "
+                "(no backstage costume swaps mid-performance).",
+            )
+        cur.execute(
+            """
+            SELECT 1 FROM ledger_settings
+            WHERE id = 1
+              AND (
+                accounts_receivable_account_id = %s
+                OR accounts_payable_account_id = %s
+                OR unearned_revenue_account_id = %s
+                OR unallocated_debits_account_id = %s
+                OR unallocated_credits_account_id = %s
+                OR default_cheque_credit_account_id = %s
+                OR default_cheque_debit_account_id = %s
+              )
+            LIMIT 1
+            """,
+            (account_id,) * 7,
+        )
+        if cur.fetchone():
+            raise LedgerConflictError(
+                "Cannot change account type: ledger settings still point A/R, A/P, suspense, or cheque defaults here "
+                "(re-point those dials first — no ghost routes).",
+            )
+        cur.execute(
+            """
+            SELECT 1 FROM parties
+            WHERE default_revenue_account_id = %s OR default_expense_account_id = %s
+            LIMIT 1
+            """,
+            (account_id, account_id),
+        )
+        if cur.fetchone():
+            raise LedgerConflictError(
+                "Cannot change account type: a party still defaults revenue or expense to this account "
+                "(they've RSVP'd to this address).",
+            )
+        cur.execute(
+            """
+            SELECT 1 FROM accrual_plans
+            WHERE target_account_id = %s OR bridge_account_id = %s
+            LIMIT 1
+            """,
+            (account_id, account_id),
+        )
+        if cur.fetchone():
+            raise LedgerConflictError(
+                "Cannot change account type: an accrual plan targets or bridges through this account "
+                "(the schedule won't let you swap lanes).",
+            )
+        cur.execute(
+            "SELECT 1 FROM import_templates WHERE default_import_account_id = %s LIMIT 1",
+            (account_id,),
+        )
+        if cur.fetchone():
+            raise LedgerConflictError(
+                "Cannot change account type: an import template still defaults to this account "
+                "(teach the template new tricks first).",
+            )
+        cur.execute(
+            "SELECT 1 FROM settlement_events WHERE cash_account_id = %s LIMIT 1",
+            (account_id,),
+        )
+        if cur.fetchone():
+            raise LedgerConflictError(
+                "Cannot change account type: settlement cash has been booked against this account "
+                "(the till remembers every coin).",
+            )
+
     def update_account(self, account_id: int, payload: AccountUpdate) -> AccountOut:
-        if payload.name is None and payload.is_active is None:
+        if payload.name is None and payload.is_active is None and payload.type is None:
             raise LedgerValidationError("at least one account field must be updated")
 
-        updates: list[str] = []
-        params: list[object] = []
-        if payload.name is not None:
-            updates.append("name = %s")
-            params.append(payload.name.strip())
-        if payload.is_active is not None:
-            updates.append("is_active = %s")
-            params.append(payload.is_active)
-        params.append(account_id)
-
-        query = f"""
-            UPDATE accounts
-            SET {", ".join(updates)}, updated_at = NOW()
-            WHERE id = %s
-            RETURNING id, name, type, is_active, created_at, updated_at
-        """
         with self._connection_factory() as conn:
             try:
                 with conn.transaction():
                     with conn.cursor(row_factory=dict_row) as cur:
-                        cur.execute(query, params)
-                        row = cur.fetchone()
-                        if not row:
+                        cur.execute(
+                            """
+                            SELECT id, name, type, is_active
+                            FROM accounts
+                            WHERE id = %s
+                            FOR UPDATE
+                            """,
+                            (account_id,),
+                        )
+                        current = cur.fetchone()
+                        if not current:
                             raise LedgerNotFoundError(f"account {account_id} not found")
+
+                        current_name = str(current["name"])
+                        current_type = str(current["type"])
+                        current_active = bool(current["is_active"])
+
+                        new_name = current_name if payload.name is None else str(payload.name).strip()
+                        new_active = current_active if payload.is_active is None else bool(payload.is_active)
+                        new_type = current_type if payload.type is None else str(payload.type)
+
+                        name_changing = payload.name is not None and new_name != current_name
+                        active_changing = payload.is_active is not None and new_active != current_active
+                        type_changing = payload.type is not None and new_type != current_type
+
+                        if not name_changing and not active_changing and not type_changing:
+                            raise LedgerValidationError("at least one account field must be updated")
+
+                        if type_changing:
+                            self._assert_account_type_change_allowed(cur, account_id)
+
+                        updates: list[str] = []
+                        params: list[object] = []
+                        if name_changing:
+                            updates.append("name = %s")
+                            params.append(new_name)
+                        if active_changing:
+                            updates.append("is_active = %s")
+                            params.append(new_active)
+                        if type_changing:
+                            updates.append("type = %s")
+                            params.append(new_type)
+                        params.append(account_id)
+
+                        cur.execute(
+                            f"""
+                            UPDATE accounts
+                            SET {", ".join(updates)}, updated_at = NOW()
+                            WHERE id = %s
+                            RETURNING id, name, type, is_active, created_at, updated_at
+                            """,
+                            params,
+                        )
+                        row = cur.fetchone()
+                        assert row is not None
             except errors.UniqueViolation as exc:
                 raise LedgerConflictError("account name already exists") from exc
+
         return AccountOut.model_validate(row)
 
     def list_accrual_plans(self) -> list[AccrualPlanOut]:

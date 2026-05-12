@@ -31,6 +31,7 @@ class AccountCreate(BaseModel):
 class AccountUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
     is_active: bool | None = None
+    type: AccountType | None = None
 
 
 class AccountOut(BaseModel):

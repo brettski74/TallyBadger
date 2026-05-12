@@ -18,6 +18,12 @@ export interface CreateAccountInput {
   is_active: boolean;
 }
 
+export interface UpdateAccountInput {
+  name?: string;
+  is_active?: boolean;
+  type?: AccountType;
+}
+
 export async function listAccounts(): Promise<Account[]> {
   const response = await fetch(`${getApiBase()}/accounts`);
   if (!response.ok) {
@@ -29,6 +35,20 @@ export async function listAccounts(): Promise<Account[]> {
 export async function createAccount(payload: CreateAccountInput): Promise<Account> {
   const response = await fetch(`${getApiBase()}/accounts`, {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    throw new Error(await readApiErrorMessage(response));
+  }
+
+  return response.json();
+}
+
+export async function updateAccount(id: number, payload: UpdateAccountInput): Promise<Account> {
+  const response = await fetch(`${getApiBase()}/accounts/${id}`, {
+    method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
