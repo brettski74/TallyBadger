@@ -520,6 +520,53 @@ th {
   opacity: 0.5;
 }
 
+.table-row-icon-button {
+  box-sizing: border-box;
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  min-height: 32px;
+  margin: 0;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--link);
+  cursor: pointer;
+}
+
+.table-row-icon-button:hover:not(:disabled) {
+  background: rgba(37, 99, 235, 0.08);
+  color: var(--text);
+}
+
+.table-row-icon-button:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.table-row-icon-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.table-row-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+}
+
+/* Narrow vertical padding so 32px icon targets match pre-icon ~42px row rhythm (global td is 0.55rem). */
+td.table-row-actions-cell {
+  padding-block: 5px;
+  vertical-align: middle;
+}
+
 .attachments-dialog {
   max-width: min(42rem, calc(100vw - 2rem));
   width: 100%;
