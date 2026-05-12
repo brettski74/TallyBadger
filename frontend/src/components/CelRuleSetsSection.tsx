@@ -1,4 +1,5 @@
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { MoveDown, MoveUp, SquareCheckBig, SquareX, Trash2 } from "lucide-react";
 
 import {
   createCelRuleSet,
@@ -11,6 +12,15 @@ import {
   type CelRuleSetSummary,
 } from "../api/celRuleSets";
 import { ApiHttpError } from "../api/errors";
+import { useFormSaveDiscardShortcuts } from "../hooks/useFormSaveDiscardShortcuts";
+import {
+  discardActionTooltip,
+  discardAriaKeyShortcuts,
+  saveActionTooltip,
+  saveAriaKeyShortcuts,
+} from "../lib/keyboardHints";
+import { isMacLikeUserAgent } from "../lib/platformKeyboard";
+import { TableRowIconButton } from "./TableRowIconButton";
 
 const FLAG_OPTIONS: { value: string; label: string }[] = [
   { value: "ignorecase", label: "Ignore case" },
@@ -18,12 +28,14 @@ const FLAG_OPTIONS: { value: string; label: string }[] = [
   { value: "dotall", label: "Dot matches newlines" },
 ];
 
-function expressionPreview(expr: string): string {
-  const line = expr.replace(/\r\n/g, "\n").split("\n")[0]?.trim() ?? "";
-  if (line.length <= 80) {
-    return line || "(empty)";
+/** Excerpt for the rules list body (wraps; CSS limits block to ~two lines). */
+function expressionPreviewDisplay(expr: string): string {
+  const normalized = expr.replace(/\r\n/g, "\n").trim();
+  if (!normalized) {
+    return "(empty)";
   }
-  return `${line.slice(0, 77)}…`;
+  const max = 220;
+  return normalized.length <= max ? normalized : `${normalized.slice(0, max - 1)}…`;
 }
 
 function matcherRowTitle(cap: CelRegexCapture): string {
@@ -58,10 +70,6 @@ function serializeState(name: string, rules: CelRule[]): string {
       })),
     },
   });
-}
-
-function cloneRules(rules: CelRule[]): CelRule[] {
-  return JSON.parse(JSON.stringify(rules)) as CelRule[];
 }
 
 function normalizeRulesFromApi(rules: CelRule[]): CelRule[] {
@@ -215,6 +223,38 @@ export function CelRuleSetsSection() {
     [resetToEmptyPicker],
   );
 
+  const formRef = useRef<HTMLFormElement>(null);
+  const isMac = useMemo(() => isMacLikeUserAgent(), []);
+
+  const handleRevert = useCallback(() => {
+    if (!hasSelection) {
+      return;
+    }
+    if (editingId != null) {
+      void applyExisting(editingId);
+    } else if (selectKey === "new") {
+      applyNew();
+    }
+  }, [hasSelection, editingId, selectKey, applyExisting, applyNew]);
+
+  useFormSaveDiscardShortcuts({
+    createFormRef: formRef,
+    editFormRef: formRef,
+    editingId,
+    canSubmitCreate: dirty && draftName.trim().length > 0,
+    canSubmitEdit: dirty && draftName.trim().length > 0,
+    createSubmitting: saving,
+    editSubmitting: saving,
+    requestCreateSubmit: () => {
+      formRef.current?.requestSubmit();
+    },
+    requestEditSubmit: () => {
+      formRef.current?.requestSubmit();
+    },
+    requestEditDiscard: handleRevert,
+    requestCreateDiscard: handleRevert,
+  });
+
   function handleSelectKey(next: string) {
     if (next === selectKey) {
       return;
@@ -232,17 +272,6 @@ export function CelRuleSetsSection() {
       return;
     }
     void applyExisting(Number(next));
-  }
-
-  function handleRevert() {
-    if (!hasSelection) {
-      return;
-    }
-    if (editingId != null) {
-      void applyExisting(editingId);
-    } else if (selectKey === "new") {
-      applyNew();
-    }
   }
 
   async function handleSave(e: FormEvent) {
@@ -479,7 +508,7 @@ export function CelRuleSetsSection() {
       ) : detailLoading ? (
         <p className="muted">Loading…</p>
       ) : (
-        <form className="rule-sets-form" onSubmit={(e) => void handleSave(e)}>
+        <form ref={formRef} className="rule-sets-form" onSubmit={(e) => void handleSave(e)}>
           <div className="rule-sets-header-row">
             <label>
               Rule set name
@@ -493,10 +522,22 @@ export function CelRuleSetsSection() {
               />
             </label>
             <div className="rule-sets-actions">
-              <button type="submit" disabled={saving || !dirty}>
+              <button
+                type="submit"
+                disabled={saving || !dirty}
+                title={dirty && !saving ? saveActionTooltip(isMac) : undefined}
+                aria-keyshortcuts={dirty && !saving ? saveAriaKeyShortcuts(isMac) : undefined}
+              >
                 {saving ? "Saving…" : "Save"}
               </button>
-              <button type="button" onClick={() => handleRevert()} disabled={saving || !dirty}>
+              <button
+                type="button"
+                className="button-secondary"
+                onClick={handleRevert}
+                disabled={saving || !dirty}
+                title={discardActionTooltip(isMac)}
+                aria-keyshortcuts={discardAriaKeyShortcuts(isMac)}
+              >
                 Revert
               </button>
               {editingId != null ? (
@@ -531,31 +572,75 @@ export function CelRuleSetsSection() {
               ) : (
                 <ul className="rule-sets-rule-list">
                   {draftRules.map((rule, index) => (
-                    <li key={`${index}-${rule.sort_order}`}>
-                      <button
-                        type="button"
-                        className={
-                          selectedRuleIndex === index ? "rule-sets-rule-row is-active" : "rule-sets-rule-row"
-                        }
-                        onClick={() => setSelectedRuleIndex(index)}
-                      >
-                        <span className="rule-sets-rule-name">{ruleDisplayName(rule)}</span>
-                        <span className="rule-sets-rule-preview">{expressionPreview(rule.expression)}</span>
-                      </button>
-                      <div className="rule-sets-rule-tools">
-                        <button type="button" onClick={() => moveRule(index, -1)} disabled={index === 0}>
-                          Up
-                        </button>
+                    <li
+                      key={`${index}-${rule.sort_order}`}
+                      className={
+                        selectedRuleIndex === index ? "rule-sets-rule-li is-active" : "rule-sets-rule-li"
+                      }
+                    >
+                      {/*
+                        Issue #121 originally called for immediate API persist when toggling enabled on a rule row.
+                        We keep enabled in the draft until Save instead so Revert applies to the whole rule set form.
+                      */}
+                      <div className="rule-sets-rule-row-layout">
+                        <div className="rule-sets-rule-side-col rule-sets-rule-side-col--left" role="group" aria-label="Reorder rule">
+                          <TableRowIconButton
+                            type="button"
+                            aria-label="Move rule up"
+                            title="Move rule up"
+                            disabled={index === 0}
+                            onClick={() => moveRule(index, -1)}
+                          >
+                            <MoveUp size={18} strokeWidth={2} aria-hidden />
+                          </TableRowIconButton>
+                          <TableRowIconButton
+                            type="button"
+                            aria-label="Move rule down"
+                            title="Move rule down"
+                            disabled={index === draftRules.length - 1}
+                            onClick={() => moveRule(index, 1)}
+                          >
+                            <MoveDown size={18} strokeWidth={2} aria-hidden />
+                          </TableRowIconButton>
+                        </div>
                         <button
                           type="button"
-                          onClick={() => moveRule(index, 1)}
-                          disabled={index === draftRules.length - 1}
+                          className="rule-sets-rule-row-main"
+                          onClick={() => setSelectedRuleIndex(index)}
                         >
-                          Down
+                          <span className="rule-sets-rule-name">{ruleDisplayName(rule)}</span>
+                          <span className="rule-sets-rule-preview">{expressionPreviewDisplay(rule.expression)}</span>
                         </button>
-                        <button type="button" onClick={() => removeRule(index)}>
-                          Remove
-                        </button>
+                        <div className="rule-sets-rule-side-col rule-sets-rule-side-col--right" role="group" aria-label="Rule actions">
+                          <TableRowIconButton
+                            type="button"
+                            aria-label="Delete"
+                            title="Delete"
+                            className="button-danger"
+                            onClick={() => removeRule(index)}
+                          >
+                            <Trash2 size={18} strokeWidth={2} aria-hidden />
+                          </TableRowIconButton>
+                          {rule.enabled ? (
+                            <TableRowIconButton
+                              type="button"
+                              aria-label="Disable rule"
+                              title="Disable rule"
+                              onClick={() => updateRuleAt(index, { enabled: false })}
+                            >
+                              <SquareX size={18} strokeWidth={2} aria-hidden />
+                            </TableRowIconButton>
+                          ) : (
+                            <TableRowIconButton
+                              type="button"
+                              aria-label="Enable rule"
+                              title="Enable rule"
+                              onClick={() => updateRuleAt(index, { enabled: true })}
+                            >
+                              <SquareCheckBig size={18} strokeWidth={2} aria-hidden />
+                            </TableRowIconButton>
+                          )}
+                        </div>
                       </div>
                     </li>
                   ))}
@@ -620,24 +705,34 @@ export function CelRuleSetsSection() {
                       <legend>
                         Matcher {ci + 1}: {matcherRowTitle(cap)}
                       </legend>
-                      <div className="rule-sets-capture-toolbar">
-                        <button
+                      <div className="rule-sets-capture-toolbar" role="group" aria-label="Matcher order and delete">
+                        <TableRowIconButton
                           type="button"
-                          onClick={() => moveCapture(selectedRuleIndex!, ci, -1)}
+                          aria-label="Move matcher up"
+                          title="Move matcher up"
                           disabled={ci === 0}
+                          onClick={() => moveCapture(selectedRuleIndex!, ci, -1)}
                         >
-                          Move up
-                        </button>
-                        <button
+                          <MoveUp size={18} strokeWidth={2} aria-hidden />
+                        </TableRowIconButton>
+                        <TableRowIconButton
                           type="button"
-                          onClick={() => moveCapture(selectedRuleIndex!, ci, 1)}
+                          aria-label="Move matcher down"
+                          title="Move matcher down"
                           disabled={ci === selectedRule.captures.length - 1}
+                          onClick={() => moveCapture(selectedRuleIndex!, ci, 1)}
                         >
-                          Move down
-                        </button>
-                        <button type="button" onClick={() => removeCapture(selectedRuleIndex!, ci)}>
-                          Remove matcher
-                        </button>
+                          <MoveDown size={18} strokeWidth={2} aria-hidden />
+                        </TableRowIconButton>
+                        <TableRowIconButton
+                          type="button"
+                          aria-label="Delete"
+                          title="Delete"
+                          className="button-danger"
+                          onClick={() => removeCapture(selectedRuleIndex!, ci)}
+                        >
+                          <Trash2 size={18} strokeWidth={2} aria-hidden />
+                        </TableRowIconButton>
                       </div>
                       <label>
                         Matcher label
