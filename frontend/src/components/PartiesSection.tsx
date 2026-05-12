@@ -1,5 +1,6 @@
 import type { CSSProperties } from "react";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { Pencil, SquareCheckBig, SquareX } from "lucide-react";
 
 import type { Account } from "../api/accounts";
 import {
@@ -10,7 +11,16 @@ import {
   type PartyCreateInput,
   type PartyRole,
 } from "../api/parties";
+import { useFormSaveDiscardShortcuts } from "../hooks/useFormSaveDiscardShortcuts";
+import {
+  discardActionTooltip,
+  discardAriaKeyShortcuts,
+  saveActionTooltip,
+  saveAriaKeyShortcuts,
+} from "../lib/keyboardHints";
+import { isMacLikeUserAgent } from "../lib/platformKeyboard";
 import { SubtypeCombobox } from "./SubtypeCombobox";
+import { TableRowIconButton } from "./TableRowIconButton";
 
 const PARTY_ROLES: PartyRole[] = ["customer", "vendor", "both", "other"];
 
@@ -80,6 +90,33 @@ export function PartiesSection({
   const [editError, setEditError] = useState<string | null>(null);
   const [editSubmitting, setEditSubmitting] = useState(false);
 
+  const [rowActionError, setRowActionError] = useState<string | null>(null);
+  const [partyRowBusyId, setPartyRowBusyId] = useState<number | null>(null);
+
+  const createFormRef = useRef<HTMLFormElement>(null);
+  const editFormRef = useRef<HTMLFormElement>(null);
+
+  const isMac = useMemo(() => isMacLikeUserAgent(), []);
+
+  useFormSaveDiscardShortcuts({
+    createFormRef,
+    editFormRef,
+    editingPartyId: editingId,
+    canSubmitCreate: name.trim().length > 0,
+    canSubmitEdit: editName.trim().length > 0,
+    createSubmitting,
+    editSubmitting,
+    requestCreateSubmit: () => {
+      createFormRef.current?.requestSubmit();
+    },
+    requestEditSubmit: () => {
+      editFormRef.current?.requestSubmit();
+    },
+    requestEditDiscard: () => {
+      cancelEdit();
+    },
+  });
+
   const revenueEquityAccounts = useMemo(
     () =>
       accounts
@@ -136,11 +173,38 @@ export function PartiesSection({
     setEditDefRev(party.default_revenue_account_id != null ? String(party.default_revenue_account_id) : "");
     setEditDefExp(party.default_expense_account_id != null ? String(party.default_expense_account_id) : "");
     setEditError(null);
+    setRowActionError(null);
   }
 
   function cancelEdit() {
     setEditingId(null);
     setEditError(null);
+    setRowActionError(null);
+  }
+
+  async function patchPartyActive(party: Party, nextActive: boolean) {
+    setRowActionError(null);
+    setPartyRowBusyId(party.id);
+    try {
+      const updated = await updateParty(party.id, { is_active: nextActive });
+      onPartyUpdated(updated);
+    } catch (err) {
+      setRowActionError(err instanceof Error ? err.message : "Failed to update party");
+    } finally {
+      setPartyRowBusyId(null);
+    }
+  }
+
+  function tryDeactivateParty(party: Party) {
+    const msg = `Deactivate party "${party.name}"? It will stay on existing journal links but won't appear in pickers for new associations.`;
+    if (!window.confirm(msg)) {
+      return;
+    }
+    void patchPartyActive(party, false);
+  }
+
+  function tryReactivateParty(party: Party) {
+    void patchPartyActive(party, true);
   }
 
   function setPatternAt(which: "create" | "edit", index: number, value: string) {
@@ -253,7 +317,7 @@ export function PartiesSection({
         <p className="muted">
           Tenants, vendors, or both (e.g. a tenant who also invoices you). Parties can be linked on journal lines.
         </p>
-        <form onSubmit={(e) => void handleCreate(e)}>
+        <form ref={createFormRef} onSubmit={(e) => void handleCreate(e)}>
           <label>
             Name
             <input
@@ -383,7 +447,7 @@ export function PartiesSection({
       {editingId != null && (
         <section className="card">
           <h2>Edit party</h2>
-          <form onSubmit={(e) => void handleEditSave(e)}>
+          <form ref={editFormRef} onSubmit={(e) => void handleEditSave(e)}>
             <label>
               Name
               <input
@@ -496,11 +560,24 @@ export function PartiesSection({
             </label>
 
             <div className="form-actions-inline">
-              <button disabled={editSubmitting} type="submit">
+              <button
+                disabled={editSubmitting}
+                type="submit"
+                title={saveActionTooltip(isMac)}
+                aria-label={isMac ? "Save changes (⌘+S)" : "Save changes (Ctrl+S)"}
+                aria-keyshortcuts={saveAriaKeyShortcuts(isMac)}
+              >
                 {editSubmitting ? "Saving..." : "Save changes"}
               </button>
-              <button type="button" className="button-secondary" onClick={cancelEdit}>
-                Cancel
+              <button
+                type="button"
+                className="button-secondary"
+                onClick={cancelEdit}
+                title={discardActionTooltip(isMac)}
+                aria-label={discardActionTooltip(isMac)}
+                aria-keyshortcuts={discardAriaKeyShortcuts(isMac)}
+              >
+                Discard
               </button>
             </div>
 
@@ -522,6 +599,11 @@ export function PartiesSection({
             {error}
           </p>
         )}
+        {rowActionError && (
+          <p className="error" role="alert">
+            {rowActionError}
+          </p>
+        )}
         {!loading && !error && parties.length === 0 && <p>No parties yet.</p>}
 
         {!loading && !error && parties.length > 0 && (
@@ -537,20 +619,53 @@ export function PartiesSection({
               </tr>
             </thead>
             <tbody>
-              {parties.map((party) => (
-                <tr key={party.id}>
-                  <td>{party.name}</td>
-                  <td>{party.role}</td>
-                  <td>{party.subtype ?? "—"}</td>
-                  <td>{party.match_patterns?.length ? `${party.match_patterns.length} regex` : "—"}</td>
-                  <td>{party.is_active ? "active" : "inactive"}</td>
-                  <td>
-                    <button type="button" className="button-link" onClick={() => startEdit(party)}>
-                      Edit
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {parties.map((party) => {
+                const rowActionsLocked = partyRowBusyId !== null;
+                return (
+                  <tr key={party.id}>
+                    <td>{party.name}</td>
+                    <td>{party.role}</td>
+                    <td>{party.subtype ?? "—"}</td>
+                    <td>{party.match_patterns?.length ? `${party.match_patterns.length} regex` : "—"}</td>
+                    <td>{party.is_active ? "active" : "inactive"}</td>
+                    <td>
+                      <div
+                        className="table-row-actions"
+                        role="group"
+                        aria-label={`Actions for party ${party.name}`}
+                      >
+                        <TableRowIconButton
+                          aria-label={`Edit party ${party.name}`}
+                          title={`Edit party ${party.name}`}
+                          disabled={rowActionsLocked}
+                          onClick={() => startEdit(party)}
+                        >
+                          <Pencil size={18} strokeWidth={2} aria-hidden />
+                        </TableRowIconButton>
+                        {party.is_active ? (
+                          <TableRowIconButton
+                            aria-label={`Deactivate party ${party.name}`}
+                            title={`Deactivate party ${party.name}`}
+                            disabled={rowActionsLocked}
+                            onClick={() => tryDeactivateParty(party)}
+                          >
+                            <SquareX size={18} strokeWidth={2} aria-hidden />
+                          </TableRowIconButton>
+                        ) : (
+                          <TableRowIconButton
+                            aria-label={`Reactivate party ${party.name}`}
+                            title={`Reactivate party ${party.name}`}
+                            disabled={rowActionsLocked}
+                            onClick={() => tryReactivateParty(party)}
+                          >
+                            <SquareCheckBig size={18} strokeWidth={2} aria-hidden />
+                          </TableRowIconButton>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}
