@@ -1,6 +1,6 @@
 import { type RefObject, useEffect, useRef } from "react";
 
-function isTargetAssociatedWithForm(target: Node, form: HTMLFormElement | null): boolean {
+export function isTargetAssociatedWithForm(target: Node, form: HTMLFormElement | null): boolean {
   if (!form) {
     return false;
   }

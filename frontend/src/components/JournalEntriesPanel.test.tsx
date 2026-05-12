@@ -110,14 +110,14 @@ describe("JournalEntriesPanel", () => {
     expect(await screen.findByText("Rent accrual")).toBeInTheDocument();
 
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "Details" }));
+    await user.click(screen.getByRole("button", { name: /Edit journal entry: Rent accrual/ }));
 
     expect(await screen.findByRole("heading", { name: "Journal entry details" })).toBeInTheDocument();
 
     await user.clear(screen.getByLabelText("Entry description"));
     await user.type(screen.getByLabelText("Entry description"), "Updated");
 
-    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await user.click(screen.getByRole("button", { name: /Save changes/ }));
 
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "Journal entries" })).toBeInTheDocument();
@@ -296,7 +296,9 @@ describe("JournalEntriesPanel", () => {
     );
 
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: "Details" }));
+    await user.click(
+      await screen.findByRole("button", { name: /Edit journal entry: Rent accrual/ }),
+    );
     await user.click(await screen.findByRole("button", { name: "Attachments" }));
 
     expect(await screen.findByRole("heading", { name: "Attachments" })).toBeInTheDocument();

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import type { Account } from "../api/accounts";
@@ -139,7 +139,7 @@ describe("JournalEntryForm", () => {
     await user.clear(amountInputs[1]!);
     await user.type(amountInputs[1]!, "-250.00");
 
-    await user.click(screen.getByRole("button", { name: "Post entry" }));
+    await user.click(screen.getByRole("button", { name: /Post entry/ }));
 
     await waitFor(() => {
       expect(onSubmit).toHaveBeenCalledTimes(1);
@@ -187,7 +187,7 @@ describe("JournalEntryForm", () => {
     await user.clear(amountInputs[1]!);
     await user.type(amountInputs[1]!, "-50");
 
-    expect(screen.getByRole("button", { name: "Post entry" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Post entry/ })).toBeDisabled();
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
@@ -220,7 +220,7 @@ describe("JournalEntryForm", () => {
     await user.clear(amountInputs[1]!);
     await user.type(amountInputs[1]!, "-10");
 
-    await user.click(screen.getByRole("button", { name: "Post entry" }));
+    await user.click(screen.getByRole("button", { name: /Post entry/ }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("journal entry is not balanced");
   });
@@ -247,7 +247,7 @@ describe("JournalEntryForm", () => {
     );
 
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await user.click(screen.getByRole("button", { name: /Save changes/ }));
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalled());
     expect(onSubmit).toHaveBeenCalledWith({
@@ -261,6 +261,44 @@ describe("JournalEntryForm", () => {
       requires_review: false,
       review_messages: [],
       cheque_id: null,
+    });
+  });
+
+  it("submits when Ctrl+S is pressed while focus is inside the form", async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    render(
+      <JournalEntryForm
+        mode="create"
+        accounts={accounts}
+        parties={parties}
+        initialEntryDate="2026-04-20"
+        initialSummary="Rent accrual"
+        initialDescription=""
+        reviewMessages={[]}
+        initialLines={null}
+        onSubmit={onSubmit}
+        onCancel={() => {}}
+      />,
+    );
+
+    const user = userEvent.setup();
+    const accountSelects = screen
+      .getAllByRole("combobox")
+      .filter((el) => String(el.getAttribute("aria-label")).startsWith("Account for line"));
+    await user.selectOptions(accountSelects[0]!, "1");
+    await user.selectOptions(accountSelects[1]!, "2");
+    const amountInputs = screen.getAllByPlaceholderText("100.00 or -100.00");
+    await user.clear(amountInputs[0]!);
+    await user.type(amountInputs[0]!, "250.00");
+    await user.clear(amountInputs[1]!);
+    await user.type(amountInputs[1]!, "-250.00");
+
+    const summaryInput = screen.getByLabelText("Entry summary");
+    summaryInput.focus();
+    fireEvent.keyDown(summaryInput, { key: "s", code: "KeyS", ctrlKey: true, bubbles: true });
+
+    await waitFor(() => {
+      expect(onSubmit).toHaveBeenCalledTimes(1);
     });
   });
 
