@@ -628,7 +628,7 @@ export function PartiesSection({
                     <td>{party.subtype ?? "—"}</td>
                     <td>{party.match_patterns?.length ? `${party.match_patterns.length} regex` : "—"}</td>
                     <td>{party.is_active ? "active" : "inactive"}</td>
-                    <td>
+                    <td className="table-row-actions-cell">
                       <div
                         className="table-row-actions"
                         role="group"

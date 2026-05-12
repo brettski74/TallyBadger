@@ -558,7 +558,13 @@ th {
   display: inline-flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.2rem;
+  gap: 2px;
+}
+
+/* Narrow vertical padding so 32px icon targets match pre-icon ~42px row rhythm (global td is 0.55rem). */
+td.table-row-actions-cell {
+  padding-block: 5px;
+  vertical-align: middle;
 }
 
 .attachments-dialog {
