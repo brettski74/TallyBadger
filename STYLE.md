@@ -102,3 +102,5 @@ Use this table when preparing a PR; extend it as the repo evolves.
 | **Public API or stable JSON** | Routes or response shapes consumed by clients | Contract/API tests; docs that promise the shape; **STYLE.md** if testing or contract expectations change. |
 | **Architecture vs style / delivery** | Boundaries, trust, integrations, lifecycle vs day-to-day conventions | **ARCH.md** for boundaries/lifecycle; **STYLE.md** for conventions, testing bar, or PR hygiene. **`.cursor/rules/`** only for **wiring** (pointers, tool constraints)—not duplicate policy text. |
 | **Feature-level domain docs** | Subtle or cross-cutting behaviour | Extend the relevant file under `docs/`; link from **ARCH.md** when it helps navigation. |
+
+Never undo user commits or remove them from a branch using git reset or similar commands unless the user explicitly requests you to do so. Assume that the user knows what he/she is doing and if he/she committed something on a branch it's because that what he/she wanted done.

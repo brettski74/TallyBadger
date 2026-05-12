@@ -18,10 +18,11 @@ Use this workflow when turning a **feature** GitHub issue into a single, agreed 
 3. **Draft** a fully detailed story: user voice, context, explicit **out of scope**, **acceptance criteria**, and risks/limitations/caveats. Ground it in **[ARCH.md](../ARCH.md)** and **[STYLE.md](../STYLE.md)** only by reference—do not paste long policy.
 4. **Discuss gaps** with the user; revise the draft until the user agrees the requirements are complete.
 5. **Update the issue body** on GitHub with the agreed text so the issue remains the **single source of truth** (for example `issue_write` with `method: update` and the new `body`).
-6. When the user agrees that the issue details are complete, label the issue as READY and inform the user that this workflow is complete.
+6. When the user agrees that the issue details are complete and not before, label the issue as READY and inform the user that this workflow is complete.
 
 ## Notes
 
 - Refinement ends with the **issue body** updated; long procedural detail stays in this file and in **STYLE.md** / **ARCH.md**, not duplicated across every comment.
 - If requirements change materially later, either run this workflow again or treat the change as implementation detail per **implement.md**, as the team prefers.
+- The github issue should not be labelled READY unless and until the user has explicitly agreed that the requirements are correct and complete and we're ready to finish off this workflow.
 
