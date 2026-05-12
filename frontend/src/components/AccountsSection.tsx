@@ -1,5 +1,5 @@
 import type { CSSProperties } from "react";
-import { FormEvent, useMemo, useRef, useState } from "react";
+import { FormEvent, Fragment, useMemo, useRef, useState } from "react";
 import { Pencil, Save, SquareCheckBig, SquareX, Undo2 } from "lucide-react";
 
 import {
@@ -39,6 +39,11 @@ const draftActiveBtnWrap: CSSProperties = {
   flexWrap: "wrap",
 };
 
+/** Row state uses numeric ids; coerce in case JSON ever delivers strings. */
+function rowIdOf(account: Pick<Account, "id">): number {
+  return Number(account.id);
+}
+
 interface AccountsSectionProps {
   accounts: Account[];
   loading: boolean;
@@ -56,6 +61,8 @@ export function AccountsSection({
 }: AccountsSectionProps) {
   const createFormRef = useRef<HTMLFormElement>(null);
   const editFormRef = useRef<HTMLFormElement>(null);
+  /** Ignore Discard clicks for a beat after opening edit (stray completion click can land on Discard). */
+  const suppressDiscardUntilRef = useRef(0);
 
   const [isCreating, setIsCreating] = useState(false);
   const [createDraftName, setCreateDraftName] = useState("");
@@ -106,13 +113,17 @@ export function AccountsSection({
   }
 
   function startEdit(account: Account) {
+    const rowId = rowIdOf(account);
+    if (!Number.isFinite(rowId)) {
+      return;
+    }
     if (isCreating) {
       discardInlineCreate();
     }
-    if (editingId !== null && editingId !== account.id) {
+    if (editingId !== null && editingId !== rowId) {
       cancelEdit();
     }
-    setEditingId(account.id);
+    setEditingId(rowId);
     setDraftName(account.name);
     setDraftType(account.type);
     setDraftActive(account.is_active);
@@ -145,7 +156,7 @@ export function AccountsSection({
 
   async function patchAccountActive(account: Account, nextActive: boolean) {
     setRowActionError(null);
-    setAccountRowBusyId(account.id);
+    setAccountRowBusyId(rowIdOf(account));
     try {
       const updated = await updateAccount(account.id, { is_active: nextActive });
       onAccountUpdated(updated);
@@ -307,150 +318,186 @@ export function AccountsSection({
               <th>Name</th>
               <th>Type</th>
               <th>Status</th>
-              <th aria-label="actions" />
+              <th className="table-row-actions-heading" aria-label="actions" />
             </tr>
           </thead>
           <tbody>
             {isCreating && (
-              <tr key="__inline-create__">
-                <td>
-                  <form
-                    ref={createFormRef}
-                    id={CREATE_FORM_ID}
-                    aria-label="Create new account"
-                    onSubmit={(e) => void handleCreateSubmit(e)}
-                    hidden
-                  />
-                  <input
-                    form={CREATE_FORM_ID}
-                    aria-label="New account name"
-                    value={createDraftName}
-                    onChange={(e) => setCreateDraftName(e.target.value)}
-                    placeholder="e.g. Cash"
-                  />
-                </td>
-                <td>
-                  <select
-                    form={CREATE_FORM_ID}
-                    aria-label="New account type"
-                    value={createDraftType}
-                    onChange={(e) => setCreateDraftType(e.target.value as AccountType)}
-                  >
-                    {ACCOUNT_TYPES.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
-                      </option>
-                    ))}
-                  </select>
-                </td>
-                <td>
-                  {renderDraftActiveCell(
-                    createDraftActive,
-                    setCreateDraftActive,
-                    createSubmitting,
-                    createDraftName.trim() || "New account",
-                  )}
-                </td>
-                <td>
-                  <div className="form-actions-inline">
-                    <TableRowIconButton
-                      type="submit"
+              <Fragment key="__inline-create-block__">
+                <tr>
+                  <td>
+                    <form
+                      ref={createFormRef}
+                      id={CREATE_FORM_ID}
+                      aria-label="Create new account"
+                      onSubmit={(e) => void handleCreateSubmit(e)}
+                      hidden
+                    />
+                    <input
                       form={CREATE_FORM_ID}
-                      aria-label={isMac ? "Save new account (⌘+S)" : "Save new account (Ctrl+S)"}
-                      title={saveActionTooltip(isMac)}
-                      aria-keyshortcuts={saveAriaKeyShortcuts(isMac)}
-                      disabled={createSubmitting}
+                      aria-label="New account name"
+                      value={createDraftName}
+                      onChange={(e) => setCreateDraftName(e.target.value)}
+                      placeholder="e.g. Cash"
+                    />
+                  </td>
+                  <td>
+                    <select
+                      form={CREATE_FORM_ID}
+                      aria-label="New account type"
+                      value={createDraftType}
+                      onChange={(e) => setCreateDraftType(e.target.value as AccountType)}
                     >
-                      <Save size={18} strokeWidth={2} aria-hidden />
-                    </TableRowIconButton>
-                    <TableRowIconButton
-                      type="button"
-                      className="button-secondary"
-                      aria-label={discardActionTooltip(isMac)}
-                      title={discardActionTooltip(isMac)}
-                      aria-keyshortcuts={discardAriaKeyShortcuts(isMac)}
-                      disabled={createSubmitting}
-                      onClick={discardInlineCreate}
-                    >
-                      <Undo2 size={18} strokeWidth={2} aria-hidden />
-                    </TableRowIconButton>
-                  </div>
-                  {createError && (
-                    <p className="error" role="alert">
-                      {createError}
-                    </p>
-                  )}
-                </td>
-              </tr>
+                      {ACCOUNT_TYPES.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                  <td>
+                    {renderDraftActiveCell(
+                      createDraftActive,
+                      setCreateDraftActive,
+                      createSubmitting,
+                      createDraftName.trim() || "New account",
+                    )}
+                  </td>
+                  <td className="table-row-actions-cell">
+                    <div className="form-actions-inline">
+                      <TableRowIconButton
+                        type="submit"
+                        form={CREATE_FORM_ID}
+                        aria-label={isMac ? "Save new account (⌘+S)" : "Save new account (Ctrl+S)"}
+                        title={saveActionTooltip(isMac)}
+                        aria-keyshortcuts={saveAriaKeyShortcuts(isMac)}
+                        disabled={createSubmitting}
+                      >
+                        <Save size={18} strokeWidth={2} aria-hidden />
+                      </TableRowIconButton>
+                      <TableRowIconButton
+                        type="button"
+                        className="button-secondary"
+                        aria-label={discardActionTooltip(isMac)}
+                        title={discardActionTooltip(isMac)}
+                        aria-keyshortcuts={discardAriaKeyShortcuts(isMac)}
+                        disabled={createSubmitting}
+                        onClick={discardInlineCreate}
+                      >
+                        <Undo2 size={18} strokeWidth={2} aria-hidden />
+                      </TableRowIconButton>
+                    </div>
+                  </td>
+                </tr>
+                <tr
+                  className={
+                    createError
+                      ? "accounts-inline-feedback-row"
+                      : "accounts-inline-feedback-row accounts-inline-feedback-row--empty"
+                  }
+                  aria-hidden={!createError}
+                >
+                  <td colSpan={4}>
+                    <div className="accounts-inline-feedback-cell">
+                      {createError ? (
+                        <p className="error" role="alert">
+                          {createError}
+                        </p>
+                      ) : null}
+                    </div>
+                  </td>
+                </tr>
+              </Fragment>
             )}
             {accounts.map((account) => {
-              const rowActionsLocked = accountRowBusyId !== null;
-              const isEditing = editingId === account.id;
+              const rowId = rowIdOf(account);
+              const rowActionsLocked = accountRowBusyId !== null && accountRowBusyId === rowId;
+              const isEditing = editingId !== null && editingId === rowId;
 
               if (isEditing) {
                 return (
-                  <tr key={account.id}>
-                    <td>
-                      <form
-                        ref={editFormRef}
-                        id={EDIT_FORM_ID}
-                        aria-label={`Edit account ${account.name}`}
-                        onSubmit={(e) => void handleEditSubmit(e, account)}
-                        hidden
-                      />
-                      <input
-                        form={EDIT_FORM_ID}
-                        aria-label={`Edit name for account ${account.id}`}
-                        value={draftName}
-                        onChange={(e) => setDraftName(e.target.value)}
-                      />
-                    </td>
-                    <td>
-                      <select
-                        form={EDIT_FORM_ID}
-                        aria-label={`Edit type for account ${account.id}`}
-                        value={draftType}
-                        onChange={(e) => setDraftType(e.target.value as AccountType)}
-                      >
-                        {ACCOUNT_TYPES.map((option) => (
-                          <option key={option} value={option}>
-                            {option}
-                          </option>
-                        ))}
-                      </select>
-                    </td>
-                    <td>{renderDraftActiveCell(draftActive, setDraftActive, editSubmitting, draftName.trim() || account.name)}</td>
-                    <td>
-                      <div className="form-actions-inline">
-                        <TableRowIconButton
-                          type="submit"
+                  <Fragment key={account.id}>
+                    <tr>
+                      <td>
+                        <form
+                          ref={editFormRef}
+                          id={EDIT_FORM_ID}
+                          aria-label={`Edit account ${account.name}`}
+                          onSubmit={(e) => void handleEditSubmit(e, account)}
+                          hidden
+                        />
+                        <input
                           form={EDIT_FORM_ID}
-                          aria-label={isMac ? "Save changes (⌘+S)" : "Save changes (Ctrl+S)"}
-                          title={saveActionTooltip(isMac)}
-                          aria-keyshortcuts={saveAriaKeyShortcuts(isMac)}
-                          disabled={editSubmitting}
+                          aria-label={`Edit name for account ${account.id}`}
+                          value={draftName}
+                          onChange={(e) => setDraftName(e.target.value)}
+                        />
+                      </td>
+                      <td>
+                        <select
+                          form={EDIT_FORM_ID}
+                          aria-label={`Edit type for account ${account.id}`}
+                          value={draftType}
+                          onChange={(e) => setDraftType(e.target.value as AccountType)}
                         >
-                          <Save size={18} strokeWidth={2} aria-hidden />
-                        </TableRowIconButton>
-                        <TableRowIconButton
-                          type="button"
-                          className="button-secondary"
-                          aria-label={discardActionTooltip(isMac)}
-                          title={discardActionTooltip(isMac)}
-                          aria-keyshortcuts={discardAriaKeyShortcuts(isMac)}
-                          disabled={editSubmitting}
-                          onClick={cancelEdit}
-                        >
-                          <Undo2 size={18} strokeWidth={2} aria-hidden />
-                        </TableRowIconButton>
-                      </div>
-                      {editError && (
-                        <p className="error" role="alert">
-                          {editError}
-                        </p>
-                      )}
-                    </td>
-                  </tr>
+                          {ACCOUNT_TYPES.map((option) => (
+                            <option key={option} value={option}>
+                              {option}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                      <td>{renderDraftActiveCell(draftActive, setDraftActive, editSubmitting, draftName.trim() || account.name)}</td>
+                      <td className="table-row-actions-cell">
+                        <div className="form-actions-inline">
+                          <TableRowIconButton
+                            type="submit"
+                            form={EDIT_FORM_ID}
+                            aria-label={isMac ? "Save changes (⌘+S)" : "Save changes (Ctrl+S)"}
+                            title={saveActionTooltip(isMac)}
+                            aria-keyshortcuts={saveAriaKeyShortcuts(isMac)}
+                            disabled={editSubmitting}
+                          >
+                            <Save size={18} strokeWidth={2} aria-hidden />
+                          </TableRowIconButton>
+                          <TableRowIconButton
+                            type="button"
+                            className="button-secondary"
+                            aria-label={discardActionTooltip(isMac)}
+                            title={discardActionTooltip(isMac)}
+                            aria-keyshortcuts={discardAriaKeyShortcuts(isMac)}
+                            disabled={editSubmitting}
+                            onClick={() => {
+                              if (performance.now() < suppressDiscardUntilRef.current) {
+                                return;
+                              }
+                              cancelEdit();
+                            }}
+                          >
+                            <Undo2 size={18} strokeWidth={2} aria-hidden />
+                          </TableRowIconButton>
+                        </div>
+                      </td>
+                    </tr>
+                    <tr
+                      className={
+                        editError
+                          ? "accounts-inline-feedback-row"
+                          : "accounts-inline-feedback-row accounts-inline-feedback-row--empty"
+                      }
+                      aria-hidden={!editError}
+                    >
+                      <td colSpan={4}>
+                        <div className="accounts-inline-feedback-cell">
+                          {editError ? (
+                            <p className="error" role="alert">
+                              {editError}
+                            </p>
+                          ) : null}
+                        </div>
+                      </td>
+                    </tr>
+                  </Fragment>
                 );
               }
 
@@ -469,7 +516,17 @@ export function AccountsSection({
                         aria-label={`Edit account ${account.name}`}
                         title={`Edit account ${account.name}`}
                         disabled={rowActionsLocked}
-                        onClick={() => startEdit(account)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (rowActionsLocked) {
+                            return;
+                          }
+                          const row = account;
+                          suppressDiscardUntilRef.current = performance.now() + 150;
+                          window.setTimeout(() => {
+                            startEdit(row);
+                          }, 0);
+                        }}
                       >
                         <Pencil size={18} strokeWidth={2} aria-hidden />
                       </TableRowIconButton>
