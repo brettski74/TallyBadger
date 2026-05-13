@@ -66,7 +66,7 @@ describe("App", () => {
     render(<App />);
 
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: "Create account" }));
+    await user.click(await screen.findByRole("button", { name: /Create account/i }));
     await user.type(screen.getByLabelText("New account name"), "Repairs Expense");
     await user.selectOptions(screen.getByLabelText("New account type"), "expense");
     await user.click(screen.getByRole("button", { name: /Save new account \(Ctrl\+S\)|Save new account \(⌘\+S\)/ }));
@@ -84,7 +84,7 @@ describe("App", () => {
     render(<App />);
 
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: "Create account" }));
+    await user.click(await screen.findByRole("button", { name: /Create account/i }));
     await user.type(screen.getByLabelText("New account name"), "Cash");
     await user.click(screen.getByRole("button", { name: /Save new account \(Ctrl\+S\)|Save new account \(⌘\+S\)/ }));
 

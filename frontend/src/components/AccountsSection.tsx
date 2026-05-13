@@ -1,6 +1,6 @@
 import type { CSSProperties } from "react";
 import { FormEvent, Fragment, useMemo, useRef, useState } from "react";
-import { Pencil, Save, SquareCheckBig, SquareX, Undo2 } from "lucide-react";
+import { FilePlus, Pencil, Save, SquareCheckBig, SquareX, Undo2 } from "lucide-react";
 
 import {
   Account,
@@ -16,10 +16,41 @@ import {
   saveActionTooltip,
   saveAriaKeyShortcuts,
 } from "../lib/keyboardHints";
+import { accountNameMatchesGlob } from "../lib/accountNameGlob";
 import { isMacLikeUserAgent } from "../lib/platformKeyboard";
+import { JournalFilterMultiDropdown } from "./JournalFilterMultiDropdown";
 import { TableRowIconButton } from "./TableRowIconButton";
 
 const ACCOUNT_TYPES: AccountType[] = ["asset", "liability", "equity", "revenue", "expense", "suspense"];
+
+type ActiveVisibility = "active" | "inactive" | "all";
+
+const ACCOUNT_TYPE_FILTER_OPTIONS = ACCOUNT_TYPES.map((name, id) => ({ id, name }));
+
+function accountMatchesListFilters(
+  account: Account,
+  namePattern: string,
+  typeFilterIds: number[],
+  activeVisibility: ActiveVisibility,
+): boolean {
+  if (activeVisibility === "active" && !account.is_active) {
+    return false;
+  }
+  if (activeVisibility === "inactive" && account.is_active) {
+    return false;
+  }
+  if (typeFilterIds.length > 0) {
+    const idx = ACCOUNT_TYPES.indexOf(account.type);
+    if (!typeFilterIds.includes(idx)) {
+      return false;
+    }
+  }
+  const trimmed = namePattern.trim();
+  if (trimmed !== "" && !accountNameMatchesGlob(account.name, trimmed)) {
+    return false;
+  }
+  return true;
+}
 
 const CREATE_FORM_ID = "accounts-inline-create";
 const EDIT_FORM_ID = "accounts-inline-edit";
@@ -81,7 +112,21 @@ export function AccountsSection({
   const [rowActionError, setRowActionError] = useState<string | null>(null);
   const [accountRowBusyId, setAccountRowBusyId] = useState<number | null>(null);
 
+  const [namePattern, setNamePattern] = useState("");
+  const [typeFilterIds, setTypeFilterIds] = useState<number[]>([]);
+  const [activeVisibility, setActiveVisibility] = useState<ActiveVisibility>("active");
+
   const isMac = useMemo(() => isMacLikeUserAgent(), []);
+
+  const displayAccounts = useMemo(
+    () =>
+      accounts.filter(
+        (a) =>
+          accountMatchesListFilters(a, namePattern, typeFilterIds, activeVisibility) ||
+          (editingId !== null && rowIdOf(a) === editingId),
+      ),
+    [accounts, namePattern, typeFilterIds, activeVisibility, editingId],
+  );
 
   function discardInlineCreate() {
     setIsCreating(false);
@@ -291,11 +336,44 @@ export function AccountsSection({
 
   return (
     <section className="card journal-card-wide accounts-panel">
-      <div className="card-heading-row">
+      <div className="journal-list-toolbar journal-list-toolbar-with-filters">
         <h2>Accounts</h2>
-        <button type="button" onClick={startCreate}>
-          Create account
-        </button>
+        <div className="journal-filters-line">
+          <label className="journal-filter-slot journal-filter-slot-select">
+            <span className="journal-filter-inline-label">Name</span>
+            <input
+              type="text"
+              className="journal-filter-control"
+              aria-label="Filter accounts by name (glob: use * and ? as wildcards)"
+              value={namePattern}
+              onChange={(e) => setNamePattern(e.target.value)}
+              placeholder="e.g. Cash*"
+            />
+          </label>
+          <JournalFilterMultiDropdown
+            label="Type"
+            ariaFilterLabel="Filter accounts by type"
+            options={ACCOUNT_TYPE_FILTER_OPTIONS}
+            selectedIds={typeFilterIds}
+            onIdsChange={setTypeFilterIds}
+          />
+          <label className="journal-filter-slot journal-filter-slot-select">
+            <span className="journal-filter-inline-label">Active</span>
+            <select
+              className="journal-filter-control"
+              aria-label="Filter accounts by active status"
+              value={activeVisibility}
+              onChange={(e) => setActiveVisibility(e.target.value as ActiveVisibility)}
+            >
+              <option value="active">Active only</option>
+              <option value="inactive">Inactive only</option>
+              <option value="all">All</option>
+            </select>
+          </label>
+        </div>
+        <TableRowIconButton type="button" onClick={startCreate} title="Create Account" aria-label="Create account">
+          <FilePlus size={18} strokeWidth={2} aria-hidden />
+        </TableRowIconButton>
       </div>
 
       {loading && <p>Loading accounts...</p>}
@@ -409,7 +487,16 @@ export function AccountsSection({
                 </tr>
               </Fragment>
             )}
-            {accounts.map((account) => {
+            {displayAccounts.length === 0 && !isCreating && (
+              <tr>
+                <td colSpan={4}>
+                  <p className="muted" role="status">
+                    No accounts match these filters.
+                  </p>
+                </td>
+              </tr>
+            )}
+            {displayAccounts.map((account) => {
               const rowId = rowIdOf(account);
               const rowActionsLocked = accountRowBusyId !== null && accountRowBusyId === rowId;
               const isEditing = editingId !== null && editingId === rowId;
