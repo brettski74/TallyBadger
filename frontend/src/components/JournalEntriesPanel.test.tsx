@@ -64,6 +64,12 @@ describe("JournalEntriesPanel", () => {
       if (url.includes("/cheques")) {
         return new Response(JSON.stringify([]), { status: 200 });
       }
+      if (url.includes("/accrual-plans")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      if (url.includes("/journal-entry-filter-presets")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
       if (url.includes("/journal-entries")) {
         return new Response(JSON.stringify(listPayload), { status: 200 });
       }
@@ -149,6 +155,12 @@ describe("JournalEntriesPanel", () => {
       if (url.includes("/cheques")) {
         return new Response(JSON.stringify([]), { status: 200 });
       }
+      if (url.includes("/accrual-plans")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      if (url.includes("/journal-entry-filter-presets")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
       if (url.includes("/journal-entries/7/attachments")) {
         return new Response(JSON.stringify([]), { status: 200 });
       }
@@ -206,28 +218,36 @@ describe("JournalEntriesPanel", () => {
     );
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
-    const firstListCall = fetchMock.mock.calls.find(
-      ([u]) => String(u).includes("/journal-entries") && !/\/journal-entries\/\d/.test(String(u)),
-    );
+    const isPlainJournalEntriesListUrl = (u: unknown) => {
+      const s = String(u);
+      return (
+        s.includes("/journal-entries")
+        && !s.includes("/journal-entry-filter-presets")
+        && !/\/journal-entries\/\d/.test(s)
+      );
+    };
+    const firstListCall = fetchMock.mock.calls.find(([u]) => isPlainJournalEntriesListUrl(u));
     expect(firstListCall).toBeTruthy();
     expect(String(firstListCall![0])).not.toContain("needs_review");
 
     const user = userEvent.setup();
-    await user.click(screen.getByLabelText("Show entries needing review only"));
+    await user.click(screen.getByLabelText("Requires review"));
 
     await waitFor(() => {
-      const listCalls = fetchMock.mock.calls.filter(
-        ([u]) => String(u).includes("/journal-entries") && !/\/journal-entries\/\d/.test(String(u)),
-      );
+      const listCalls = fetchMock.mock.calls.filter(([u]) => isPlainJournalEntriesListUrl(u));
       const lastUrl = String(listCalls[listCalls.length - 1]![0]);
       expect(lastUrl).toContain("needs_review=true");
     });
   });
 
   it("shows journal API error text from list failure", async () => {
-    vi.spyOn(global, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({ detail: "service unavailable" }), { status: 503 }),
-    );
+    vi.spyOn(global, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes("/journal-entry-filter-presets") || url.includes("/accrual-plans")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      return new Response(JSON.stringify({ detail: "service unavailable" }), { status: 503 });
+    });
 
     render(
       <JournalEntriesPanel
@@ -262,6 +282,12 @@ describe("JournalEntriesPanel", () => {
     vi.spyOn(global, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url.includes("/cheques")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      if (url.includes("/accrual-plans")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      if (url.includes("/journal-entry-filter-presets")) {
         return new Response(JSON.stringify([]), { status: 200 });
       }
       if (url.includes("/journal-entries/7/attachments")) {
@@ -343,6 +369,12 @@ describe("JournalEntriesPanel", () => {
       if (url.includes("/cheques")) {
         return new Response(JSON.stringify([]), { status: 200 });
       }
+      if (url.includes("/accrual-plans")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      if (url.includes("/journal-entry-filter-presets")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
       if (url.includes("/journal-entries/7/attachments")) {
         return new Response(JSON.stringify([]), { status: 200 });
       }
@@ -410,6 +442,12 @@ describe("JournalEntriesPanel", () => {
       if (url.includes("/cheques")) {
         return new Response(JSON.stringify([]), { status: 200 });
       }
+      if (url.includes("/accrual-plans")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      if (url.includes("/journal-entry-filter-presets")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
       if (url.includes("/journal-entries/7/attachments/44") && method === "DELETE") {
         attachmentList = [];
         return new Response(null, { status: 204 });
@@ -446,5 +484,249 @@ describe("JournalEntriesPanel", () => {
       ([u, i]) => String(u).includes("/attachments/44") && (i?.method ?? "GET") === "DELETE",
     );
     expect(deleteCalls.length).toBe(1);
+  });
+
+  it("forwards new filter dimensions as repeated query params", async () => {
+    const fetchMock = vi.spyOn(global, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes("/journal-entry-filter-presets") || url.includes("/accrual-plans")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      return new Response(JSON.stringify([]), { status: 200 });
+    });
+
+    render(
+      <JournalEntriesPanel
+        accounts={accounts}
+        parties={parties}
+        accountsLoading={false}
+        accountsError={null}
+      />,
+    );
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Filter by accounts" }));
+    await user.click(screen.getByRole("checkbox", { name: "Cash" }));
+    await user.click(screen.getByRole("checkbox", { name: "Income" }));
+    await user.selectOptions(screen.getByLabelText("Filter by cheque association"), ["with_cheque"]);
+    await user.type(screen.getByLabelText("Filter amount low"), "10");
+    await user.type(screen.getByLabelText("Filter amount high"), "99");
+
+    await waitFor(() => {
+      const listCalls = fetchMock.mock.calls.filter(([u]) => {
+        const s = String(u);
+        return (
+          s.includes("/journal-entries")
+          && !s.includes("/journal-entry-filter-presets")
+          && !/\/journal-entries\/\d/.test(s)
+        );
+      });
+      const last = String(listCalls[listCalls.length - 1]![0]);
+      expect(last).toContain("account_ids=1");
+      expect(last).toContain("account_ids=2");
+      expect(last).toContain("cheque_association=with_cheque");
+      expect(last).toContain("amount_low=10");
+      expect(last).toContain("amount_high=99");
+    });
+  });
+
+  it("saves the current filter as a preset via the save dialog", async () => {
+    const createdPreset = {
+      id: 11,
+      name: "Needs review",
+      definition: { needs_review: true },
+      created_at: "2026-04-01T00:00:00Z",
+      updated_at: "2026-04-01T00:00:00Z",
+    };
+    let presets: typeof createdPreset[] = [];
+
+    const fetchMock = vi.spyOn(global, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.includes("/accrual-plans")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      if (url.includes("/journal-entry-filter-presets")) {
+        if (method === "POST") {
+          presets = [createdPreset];
+          return new Response(JSON.stringify(createdPreset), { status: 201 });
+        }
+        return new Response(JSON.stringify(presets), { status: 200 });
+      }
+      if (url.includes("/cheques")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      if (url.includes("/journal-entries")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      return new Response("not mocked", { status: 500 });
+    });
+
+    // jsdom doesn't implement HTMLDialogElement.showModal/close.
+    HTMLDialogElement.prototype.showModal = function () {
+      this.setAttribute("open", "");
+    };
+    HTMLDialogElement.prototype.close = function () {
+      this.removeAttribute("open");
+    };
+
+    render(
+      <JournalEntriesPanel
+        accounts={accounts}
+        parties={parties}
+        accountsLoading={false}
+        accountsError={null}
+      />,
+    );
+
+    const user = userEvent.setup();
+    await user.click(await screen.findByLabelText("Requires review"));
+    await user.click(screen.getByRole("button", { name: /Save current filter as preset/ }));
+    await user.type(await screen.findByLabelText("Preset name"), "Needs review");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      const postCalls = fetchMock.mock.calls.filter(([u, i]) => {
+        return (
+          String(u).includes("/journal-entry-filter-presets") && (i?.method ?? "GET") === "POST"
+        );
+      });
+      expect(postCalls.length).toBe(1);
+      const body = JSON.parse(String(postCalls[0]![1]!.body));
+      expect(body.name).toBe("Needs review");
+      expect(body.definition.needs_review).toBe(true);
+    });
+  });
+
+  it("confirms before overwriting an existing preset name and uses PUT", async () => {
+    const existingPreset = {
+      id: 22,
+      name: "Cash band",
+      definition: { amount_low: 0, amount_high: 100 },
+      created_at: "2026-04-01T00:00:00Z",
+      updated_at: "2026-04-01T00:00:00Z",
+    };
+
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    const fetchMock = vi.spyOn(global, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.includes("/accrual-plans")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      if (
+        url.includes("/journal-entry-filter-presets/22")
+        && method === "PUT"
+      ) {
+        return new Response(
+          JSON.stringify({ ...existingPreset, name: "Cash band" }),
+          { status: 200 },
+        );
+      }
+      if (url.includes("/journal-entry-filter-presets")) {
+        return new Response(JSON.stringify([existingPreset]), { status: 200 });
+      }
+      if (url.includes("/cheques")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      if (url.includes("/journal-entries")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      return new Response("not mocked", { status: 500 });
+    });
+
+    HTMLDialogElement.prototype.showModal = function () {
+      this.setAttribute("open", "");
+    };
+    HTMLDialogElement.prototype.close = function () {
+      this.removeAttribute("open");
+    };
+
+    render(
+      <JournalEntriesPanel
+        accounts={accounts}
+        parties={parties}
+        accountsLoading={false}
+        accountsError={null}
+      />,
+    );
+
+    const user = userEvent.setup();
+    await waitFor(() =>
+      expect(screen.getByRole("option", { name: "Cash band" })).toBeInTheDocument(),
+    );
+    await user.click(screen.getByRole("button", { name: /Save current filter as preset/ }));
+    const nameInput = await screen.findByLabelText("Preset name");
+    await user.clear(nameInput);
+    await user.type(nameInput, "Cash band");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      const putCalls = fetchMock.mock.calls.filter(([u, i]) => {
+        return (
+          String(u).includes("/journal-entry-filter-presets/22")
+          && (i?.method ?? "GET") === "PUT"
+        );
+      });
+      expect(putCalls.length).toBe(1);
+    });
+    expect(window.confirm).toHaveBeenCalled();
+  });
+
+  it("applying a preset fills filters and clears selection when filters edit manually", async () => {
+    const preset = {
+      id: 33,
+      name: "Needs review only",
+      definition: { needs_review: true },
+      created_at: "2026-04-01T00:00:00Z",
+      updated_at: "2026-04-01T00:00:00Z",
+    };
+
+    const fetchMock = vi.spyOn(global, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes("/accrual-plans")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      if (url.includes("/journal-entry-filter-presets")) {
+        return new Response(JSON.stringify([preset]), { status: 200 });
+      }
+      if (url.includes("/cheques")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      return new Response(JSON.stringify([]), { status: 200 });
+    });
+
+    render(
+      <JournalEntriesPanel
+        accounts={accounts}
+        parties={parties}
+        accountsLoading={false}
+        accountsError={null}
+      />,
+    );
+
+    const user = userEvent.setup();
+    const presetSelect = await screen.findByLabelText("Filter preset");
+    await user.selectOptions(presetSelect, ["33"]);
+
+    expect(screen.getByLabelText("Requires review")).toBeChecked();
+    expect((presetSelect as HTMLSelectElement).value).toBe("33");
+
+    await waitFor(() => {
+      const listCalls = fetchMock.mock.calls.filter(([u]) => {
+        const s = String(u);
+        return (
+          s.includes("/journal-entries")
+          && !s.includes("/journal-entry-filter-presets")
+          && !/\/journal-entries\/\d/.test(s)
+        );
+      });
+      const last = String(listCalls[listCalls.length - 1]![0]);
+      expect(last).toContain("needs_review=true");
+    });
+
+    await user.click(screen.getByLabelText("Requires review"));
+    expect((presetSelect as HTMLSelectElement).value).toBe("");
   });
 });

@@ -56,6 +56,7 @@ def _truncate_all_data(integration_db_url: str) -> None:
                 cur.execute(
                     """
                     TRUNCATE TABLE
+                      journal_entry_filter_presets,
                       import_templates,
                       settlement_allocations,
                       settlement_events,
@@ -853,5 +854,103 @@ def test_snapshot_rejects_cheque_default_pointing_at_missing_account(
     with connect(integration_db_url, row_factory=dict_row) as conn, pytest.raises(
         SnapshotValidationError,
         match="default_cheque_credit_account_id",
+    ):
+        import_snapshot(conn, tampered)
+
+
+def test_filter_presets_round_trip_through_configuration_snapshot(
+    ledger_service: LedgerService,
+    integration_db_url: str,
+) -> None:
+    """#107: named filter presets survive a configuration export/import."""
+    from tallybadger.ledger.journal_entry_filter_preset_service import (
+        JournalEntryFilterPresetService,
+    )
+    from tallybadger.ledger.models import JournalEntryFilterPresetDefinition
+
+    cash = ledger_service.create_account(AccountCreate(name="Cash", type="asset"))
+    revenue = ledger_service.create_account(AccountCreate(name="Rent", type="revenue"))
+    _ = revenue
+
+    @contextmanager
+    def connection_factory():
+        with connect(integration_db_url, row_factory=dict_row) as conn:
+            yield conn
+
+    preset_service = JournalEntryFilterPresetService(
+        connection_factory=connection_factory,
+    )
+    preset_service.create_preset(
+        name="Cash only",
+        definition=JournalEntryFilterPresetDefinition(
+            account_ids=[cash.id],
+            amount_low=0,
+            amount_high=1000,
+        ),
+    )
+
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        archive = export_snapshot(conn, "configuration")
+
+    _truncate_all_data(integration_db_url)
+
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        import_snapshot(conn, archive)
+
+    restored = preset_service.list_presets()
+    assert [p.name for p in restored] == ["Cash only"]
+    assert restored[0].definition.account_ids == [cash.id]
+    assert restored[0].definition.amount_high == 1000
+
+
+def test_filter_preset_with_missing_account_id_rejected_by_import(
+    ledger_service: LedgerService,
+    integration_db_url: str,
+) -> None:
+    """#107: embedded ids in preset definitions are validated against the archive."""
+    from tallybadger.ledger.journal_entry_filter_preset_service import (
+        JournalEntryFilterPresetService,
+    )
+    from tallybadger.ledger.models import JournalEntryFilterPresetDefinition
+
+    cash = ledger_service.create_account(AccountCreate(name="Cash", type="asset"))
+
+    @contextmanager
+    def connection_factory():
+        with connect(integration_db_url, row_factory=dict_row) as conn:
+            yield conn
+
+    preset_service = JournalEntryFilterPresetService(connection_factory=connection_factory)
+    preset_service.create_preset(
+        name="Refs cash",
+        definition=JournalEntryFilterPresetDefinition(account_ids=[cash.id]),
+    )
+
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        archive = export_snapshot(conn, "configuration")
+
+    zin = zipfile.ZipFile(io.BytesIO(archive))
+    try:
+        names = [n for n in zin.namelist() if not n.endswith("/")]
+        table_members: dict[str, bytes] = {
+            n: zin.read(n) for n in names if n != "metadata.json"
+        }
+        metadata = json.loads(zin.read("metadata.json").decode("utf-8"))
+    finally:
+        zin.close()
+    accounts_rows = json.loads(table_members["accounts.json"].decode("utf-8"))
+    accounts_rows = [r for r in accounts_rows if int(r["id"]) != cash.id]
+    table_members["accounts.json"] = json.dumps(
+        accounts_rows,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    tampered = _rezip_table_members_with_metadata(table_members, metadata)
+
+    _truncate_all_data(integration_db_url)
+    with connect(integration_db_url, row_factory=dict_row) as conn, pytest.raises(
+        SnapshotValidationError,
+        match="account_ids",
     ):
         import_snapshot(conn, tampered)

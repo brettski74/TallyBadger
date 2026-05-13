@@ -16,6 +16,7 @@ from tallybadger.api.routes import (
     import_rules,
     import_rules_cel,
     import_templates,
+    journal_entry_filter_presets,
     ledger,
     reports,
 )
@@ -44,6 +45,7 @@ app.include_router(import_rules_cel.router)
 app.include_router(cel_rule_sets.router)
 app.include_router(import_templates.router)
 app.include_router(import_csv.router)
+app.include_router(journal_entry_filter_presets.router)
 app.include_router(ledger.router)
 app.include_router(reports.router)
 

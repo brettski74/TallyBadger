@@ -1,28 +1,13 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
+import { DEV_SERVER_API_PROXY_PREFIXES } from "./src/devServerApiProxyPrefixes";
+
 /** FastAPI (tbad / uvicorn) — proxied in dev so the browser only talks to the Vite origin (no loopback/CORS issues). */
 const API_DEV_TARGET = "http://127.0.0.1:8080";
 
-const apiProxyPrefixes = [
-  "reports",
-  "backup",
-  "cheques",
-  "accounts",
-  "parties",
-  "journal-entries",
-  "ledger-settings",
-  "obligations",
-  "settlements",
-  "accrual-plans",
-  "import-templates",
-  "import-rules",
-  "imports",
-  "health",
-] as const;
-
 const devProxy = Object.fromEntries(
-  apiProxyPrefixes.map((prefix) => [
+  DEV_SERVER_API_PROXY_PREFIXES.map((prefix) => [
     `/${prefix}`,
     { target: API_DEV_TARGET, changeOrigin: true },
   ]),

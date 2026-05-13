@@ -18,7 +18,7 @@ export function resolveApiHostname(): string {
  * Base URL for API requests (no trailing slash).
  *
  * - **Vite dev** (`import.meta.env.DEV`): returns `""` so fetches use paths like `/accounts`, which the
- *   dev server proxies to FastAPI (see ``vite.config.ts``). Avoids browser issues with
+ *   dev server proxies to FastAPI (see ``vite.config.ts`` and ``src/devServerApiProxyPrefixes.ts``). Avoids browser issues with
  *   `localhost` vs `127.0.0.1` / IPv6 loopback.
  * - **``VITE_API_BASE_URL``** set: always use that (any mode).
  * - **Production build**: same document origin (set ``VITE_API_BASE_URL`` if the API is elsewhere).
