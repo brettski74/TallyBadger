@@ -116,7 +116,7 @@ describe("AccountsSection", () => {
       />,
     );
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "Create account" }));
+    await user.click(screen.getByRole("button", { name: /Create account/i }));
     await user.type(screen.getByLabelText("New account name"), "Repairs");
     await user.selectOptions(screen.getByLabelText("New account type"), "expense");
     await user.click(screen.getByRole("button", { name: /Save new account \(Ctrl\+S\)|Save new account \(⌘\+S\)/ }));
@@ -137,7 +137,7 @@ describe("AccountsSection", () => {
       />,
     );
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "Create account" }));
+    await user.click(screen.getByRole("button", { name: /Create account/i }));
     await user.type(screen.getByLabelText("New account name"), "Draft");
     await user.click(screen.getByRole("button", { name: /Discard \(Ctrl\+Shift\+D\)|Discard \(⌘\+Shift\+D\)/ }));
 
@@ -202,10 +202,167 @@ describe("AccountsSection", () => {
       />,
     );
     const user = userEvent.setup();
+    await user.selectOptions(screen.getByLabelText("Filter accounts by active status"), "inactive");
     await user.click(screen.getByRole("button", { name: /Reactivate account Petty Cash/ }));
 
     expect(confirmSpy).not.toHaveBeenCalled();
     expect(patched).toBe(true);
     expect(onAccountUpdated).toHaveBeenCalledWith(updated);
+  });
+
+  const inactiveAccount = {
+    ...baseAccount,
+    id: 6,
+    name: "Old Vault",
+    type: "asset" as const,
+    is_active: false,
+    updated_at: "2026-04-02T00:00:00Z",
+  };
+
+  it("by default lists only active accounts", () => {
+    render(
+      <AccountsSection
+        accounts={[baseAccount, inactiveAccount]}
+        loading={false}
+        error={null}
+        onAccountCreated={vi.fn()}
+        onAccountUpdated={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("Petty Cash")).toBeInTheDocument();
+    expect(screen.queryByText("Old Vault")).not.toBeInTheDocument();
+  });
+
+  it("lists inactive accounts when Active filter is All", async () => {
+    const user = userEvent.setup();
+    render(
+      <AccountsSection
+        accounts={[baseAccount, inactiveAccount]}
+        loading={false}
+        error={null}
+        onAccountCreated={vi.fn()}
+        onAccountUpdated={vi.fn()}
+      />,
+    );
+    await user.selectOptions(screen.getByLabelText("Filter accounts by active status"), "all");
+    expect(screen.getByText("Old Vault")).toBeInTheDocument();
+  });
+
+  it("lists only inactive accounts when filter is Inactive only", async () => {
+    const user = userEvent.setup();
+    render(
+      <AccountsSection
+        accounts={[baseAccount, inactiveAccount]}
+        loading={false}
+        error={null}
+        onAccountCreated={vi.fn()}
+        onAccountUpdated={vi.fn()}
+      />,
+    );
+    await user.selectOptions(screen.getByLabelText("Filter accounts by active status"), "inactive");
+    expect(screen.queryByText("Petty Cash")).not.toBeInTheDocument();
+    expect(screen.getByText("Old Vault")).toBeInTheDocument();
+  });
+
+  it("filters by name glob and clears when name is cleared", async () => {
+    const expenseAcc = {
+      ...baseAccount,
+      id: 7,
+      name: "Repairs Expense",
+      type: "expense" as const,
+    };
+    const user = userEvent.setup();
+    render(
+      <AccountsSection
+        accounts={[baseAccount, expenseAcc]}
+        loading={false}
+        error={null}
+        onAccountCreated={vi.fn()}
+        onAccountUpdated={vi.fn()}
+      />,
+    );
+    const nameInput = screen.getByLabelText(/Filter accounts by name/);
+    await user.type(nameInput, "*Cash");
+    expect(screen.getByText("Petty Cash")).toBeInTheDocument();
+    expect(screen.queryByText("Repairs Expense")).not.toBeInTheDocument();
+    await user.clear(nameInput);
+    expect(screen.getByText("Repairs Expense")).toBeInTheDocument();
+  });
+
+  it("restricts rows by type selection; clear shows all again", async () => {
+    const expenseAcc = {
+      ...baseAccount,
+      id: 7,
+      name: "Repairs",
+      type: "expense" as const,
+    };
+    const user = userEvent.setup();
+    render(
+      <AccountsSection
+        accounts={[baseAccount, expenseAcc]}
+        loading={false}
+        error={null}
+        onAccountCreated={vi.fn()}
+        onAccountUpdated={vi.fn()}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Filter accounts by type" }));
+    await user.click(screen.getByRole("checkbox", { name: "expense" }));
+    expect(screen.queryByText("Petty Cash")).not.toBeInTheDocument();
+    expect(screen.getByText("Repairs")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Clear selection" }));
+    expect(screen.getByText("Petty Cash")).toBeInTheDocument();
+    expect(screen.getByText("Repairs")).toBeInTheDocument();
+  });
+
+  it("combines filters with AND semantics", async () => {
+    const expenseInactive = {
+      ...inactiveAccount,
+      id: 8,
+      name: "Dead Expense",
+      type: "expense" as const,
+    };
+    const expenseActive = {
+      ...baseAccount,
+      id: 9,
+      name: "Live Expense",
+      type: "expense" as const,
+    };
+    const user = userEvent.setup();
+    render(
+      <AccountsSection
+        accounts={[baseAccount, expenseActive, expenseInactive]}
+        loading={false}
+        error={null}
+        onAccountCreated={vi.fn()}
+        onAccountUpdated={vi.fn()}
+      />,
+    );
+    await user.selectOptions(screen.getByLabelText("Filter accounts by active status"), "all");
+    await user.type(screen.getByLabelText(/Filter accounts by name/), "*Expense");
+    await user.click(screen.getByRole("button", { name: "Filter accounts by type" }));
+    await user.click(screen.getByRole("checkbox", { name: "expense" }));
+    expect(screen.getByText("Live Expense")).toBeInTheDocument();
+    expect(screen.getByText("Dead Expense")).toBeInTheDocument();
+    expect(screen.queryByText("Petty Cash")).not.toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText("Filter accounts by active status"), "active");
+    expect(screen.getByText("Live Expense")).toBeInTheDocument();
+    expect(screen.queryByText("Dead Expense")).not.toBeInTheDocument();
+  });
+
+  it("shows no-match message when filters exclude all accounts", async () => {
+    const user = userEvent.setup();
+    render(
+      <AccountsSection
+        accounts={[baseAccount]}
+        loading={false}
+        error={null}
+        onAccountCreated={vi.fn()}
+        onAccountUpdated={vi.fn()}
+      />,
+    );
+    await user.type(screen.getByLabelText(/Filter accounts by name/), "zzznomatch");
+    expect(screen.getByText("No accounts match these filters.")).toBeInTheDocument();
+    expect(screen.queryByText("Petty Cash")).not.toBeInTheDocument();
   });
 });

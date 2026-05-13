@@ -1,0 +1,110 @@
+import { useEffect, useRef, useState } from "react";
+
+export interface JournalFilterMultiOption {
+  id: number;
+  name: string;
+}
+
+export function JournalFilterMultiDropdown({
+  label,
+  ariaFilterLabel,
+  options,
+  selectedIds,
+  onIdsChange,
+}: {
+  label: string;
+  ariaFilterLabel: string;
+  options: JournalFilterMultiOption[];
+  selectedIds: number[];
+  onIdsChange: (ids: number[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  const summaryText =
+    selectedIds.length === 0 ? "All" : `${selectedIds.length} selected`;
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    function handlePointerDown(event: PointerEvent) {
+      const root = rootRef.current;
+      if (root && !root.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  function toggle(id: number) {
+    const set = new Set(selectedIds);
+    if (set.has(id)) {
+      set.delete(id);
+    } else {
+      set.add(id);
+    }
+    onIdsChange([...set].sort((a, b) => a - b));
+  }
+
+  return (
+    <div ref={rootRef} className="journal-filter-slot journal-filter-slot-multi">
+      <button
+        type="button"
+        className="journal-filter-multi-trigger"
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        aria-label={ariaFilterLabel}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span className="journal-filter-inline-label">{label}</span>
+        <span className="journal-filter-multi-value">{summaryText}</span>
+      </button>
+      {open && (
+        <div className="journal-filter-details-menu" role="listbox" aria-label={ariaFilterLabel}>
+          {selectedIds.length > 0 && (
+            <button
+              type="button"
+              className="journal-filter-clear"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onIdsChange([]);
+              }}
+            >
+              Clear selection
+            </button>
+          )}
+          {options.map((o) => (
+            <label key={o.id} className="journal-filter-menu-option">
+              <input
+                type="checkbox"
+                checked={selectedIds.includes(o.id)}
+                onChange={() => toggle(o.id)}
+              />
+              <span>{o.name}</span>
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
