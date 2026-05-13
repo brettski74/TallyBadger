@@ -154,6 +154,75 @@ class JournalEntryListItem(BaseModel):
     amount: Decimal
 
 
+ChequeAssociation = Literal["any", "with_cheque", "without_cheque"]
+
+
+class JournalEntryFilterPresetDefinition(BaseModel):
+    """Serialised form of the journal entry list filter dimensions (#107).
+
+    All fields are optional; ``None`` / empty list means "no restriction" on that
+    dimension, identical to the API default.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    from_date: date | None = None
+    to_date: date | None = None
+    needs_review: bool | None = None
+    account_ids: list[int] = Field(default_factory=list)
+    party_ids: list[int] = Field(default_factory=list)
+    accrual_plan_ids: list[int] = Field(default_factory=list)
+    amount_low: int | None = Field(default=None, ge=0)
+    amount_high: int | None = Field(default=None, ge=0)
+    cheque_association: ChequeAssociation = "any"
+
+    @model_validator(mode="after")
+    def _validate(self) -> "JournalEntryFilterPresetDefinition":
+        if (
+            self.amount_low is not None
+            and self.amount_high is not None
+            and self.amount_low > self.amount_high
+        ):
+            raise ValueError("amount_low must be less than or equal to amount_high")
+        if (
+            self.from_date is not None
+            and self.to_date is not None
+            and self.from_date > self.to_date
+        ):
+            raise ValueError("from_date must be on or before to_date")
+        for field_name in ("account_ids", "party_ids", "accrual_plan_ids"):
+            for v in getattr(self, field_name):
+                if v <= 0:
+                    raise ValueError(f"{field_name} entries must be positive integers")
+        return self
+
+
+class JournalEntryFilterPresetWrite(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    definition: JournalEntryFilterPresetDefinition
+
+
+class JournalEntryFilterPresetPatch(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    definition: JournalEntryFilterPresetDefinition | None = None
+
+    @model_validator(mode="after")
+    def _at_least_one(self) -> "JournalEntryFilterPresetPatch":
+        if self.name is None and self.definition is None:
+            raise ValueError("at least one of name or definition must be provided")
+        return self
+
+
+class JournalEntryFilterPresetOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    definition: JournalEntryFilterPresetDefinition
+    created_at: datetime
+    updated_at: datetime
+
+
 class ChequeCreate(BaseModel):
     credit_account_id: int = Field(gt=0)
     debit_account_id: int = Field(gt=0)

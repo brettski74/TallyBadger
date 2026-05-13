@@ -1135,9 +1135,32 @@ class LedgerService:
         from_date=None,
         to_date=None,
         needs_review: bool | None = None,
+        account_ids: list[int] | None = None,
+        party_ids: list[int] | None = None,
+        accrual_plan_ids: list[int] | None = None,
+        amount_low: int | None = None,
+        amount_high: int | None = None,
+        cheque_association: str = "any",
         limit: int = 50,
         offset: int = 0,
     ) -> list[JournalEntryListItem]:
+        if cheque_association not in ("any", "with_cheque", "without_cheque"):
+            raise LedgerValidationError(
+                "cheque_association must be one of 'any', 'with_cheque', 'without_cheque'"
+            )
+        if amount_low is not None and amount_low < 0:
+            raise LedgerValidationError("amount_low must be a non-negative integer")
+        if amount_high is not None and amount_high < 0:
+            raise LedgerValidationError("amount_high must be a non-negative integer")
+        if (
+            amount_low is not None
+            and amount_high is not None
+            and amount_low > amount_high
+        ):
+            raise LedgerValidationError(
+                "amount_low must be less than or equal to amount_high"
+            )
+
         conditions: list[str] = []
         params: list[object] = []
         if from_date is not None:
@@ -1148,8 +1171,43 @@ class LedgerService:
             params.append(to_date)
         if needs_review is True:
             conditions.append("je.requires_review IS TRUE")
+        if account_ids:
+            conditions.append(
+                "EXISTS (SELECT 1 FROM journal_lines jl_a "
+                "WHERE jl_a.entry_id = je.id AND jl_a.account_id = ANY(%s))"
+            )
+            params.append(list(account_ids))
+        if party_ids:
+            conditions.append(
+                "EXISTS (SELECT 1 FROM journal_lines jl_p "
+                "WHERE jl_p.entry_id = je.id AND jl_p.party_id = ANY(%s))"
+            )
+            params.append(list(party_ids))
+        if accrual_plan_ids:
+            conditions.append("je.accrual_plan_id = ANY(%s)")
+            params.append(list(accrual_plan_ids))
+        if cheque_association == "with_cheque":
+            conditions.append("je.cheque_id IS NOT NULL")
+        elif cheque_association == "without_cheque":
+            conditions.append("je.cheque_id IS NULL")
+        if amount_low is not None or amount_high is not None:
+            # Per-entry "list amount" mirrors labels_and_amount_for_journal_list_lines:
+            # debits when there are positive lines; otherwise the magnitude of credit lines.
+            amount_expr = (
+                "(SELECT CASE "
+                "WHEN COALESCE(SUM(amount) FILTER (WHERE amount > 0), 0) > 0 "
+                "THEN COALESCE(SUM(amount) FILTER (WHERE amount > 0), 0) "
+                "ELSE COALESCE(-SUM(amount) FILTER (WHERE amount < 0), 0) "
+                "END FROM journal_lines WHERE entry_id = je.id)"
+            )
+            if amount_low is not None:
+                conditions.append(f"{amount_expr} >= %s")
+                params.append(Decimal(amount_low))
+            if amount_high is not None:
+                conditions.append(f"{amount_expr} <= %s")
+                params.append(Decimal(amount_high))
 
-        where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        and_clause = f"AND {' AND '.join(conditions)}" if conditions else ""
         list_params = [*params, limit, offset]
         with self._connection_factory() as conn:
             with conn.cursor(row_factory=dict_row) as cur:
@@ -1159,7 +1217,7 @@ class LedgerService:
                            je.cheque_id, je.created_at, je.updated_at
                     FROM journal_entries je
                     WHERE EXISTS (SELECT 1 FROM journal_lines jl WHERE jl.entry_id = je.id)
-                    {where_clause.replace("WHERE", "AND") if where_clause else ""}
+                    {and_clause}
                     ORDER BY je.entry_date DESC, je.id DESC
                     LIMIT %s OFFSET %s
                     """,

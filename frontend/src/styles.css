@@ -370,6 +370,23 @@ th {
   min-width: 140px;
 }
 
+.journal-presets-row {
+  align-items: flex-end;
+}
+
+.journal-presets-row button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
 .journal-form-header {
   display: flex;
   align-items: center;

@@ -60,10 +60,18 @@ export interface JournalEntryWrite {
   cheque_id?: number | null;
 }
 
+export type ChequeAssociation = "any" | "with_cheque" | "without_cheque";
+
 export interface ListJournalEntriesParams {
   from_date?: string;
   to_date?: string;
   needs_review?: boolean;
+  account_ids?: number[];
+  party_ids?: number[];
+  accrual_plan_ids?: number[];
+  amount_low?: number;
+  amount_high?: number;
+  cheque_association?: ChequeAssociation;
   limit?: number;
   offset?: number;
 }
@@ -81,6 +89,24 @@ export async function listJournalEntries(
   }
   if (params.needs_review === true) {
     search.set("needs_review", "true");
+  }
+  for (const id of params.account_ids ?? []) {
+    search.append("account_ids", String(id));
+  }
+  for (const id of params.party_ids ?? []) {
+    search.append("party_ids", String(id));
+  }
+  for (const id of params.accrual_plan_ids ?? []) {
+    search.append("accrual_plan_ids", String(id));
+  }
+  if (params.amount_low != null) {
+    search.set("amount_low", String(params.amount_low));
+  }
+  if (params.amount_high != null) {
+    search.set("amount_high", String(params.amount_high));
+  }
+  if (params.cheque_association && params.cheque_association !== "any") {
+    search.set("cheque_association", params.cheque_association);
   }
   if (params.limit != null) {
     search.set("limit", String(params.limit));

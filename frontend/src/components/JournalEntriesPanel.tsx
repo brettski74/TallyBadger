@@ -1,24 +1,123 @@
-import { useCallback, useEffect, useState } from "react";
-import { Paperclip, Pencil } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Paperclip, Pencil, Save } from "lucide-react";
 
 import type { Account } from "../api/accounts";
 import type { Cheque } from "../api/cheques";
 import { getCheque, listCheques } from "../api/cheques";
 import type { Party } from "../api/parties";
+import { listAccrualPlans, type AccrualPlan } from "../api/accrualPlans";
 import {
   createJournalEntry,
   getJournalEntry,
   listJournalEntries,
   updateJournalEntry,
+  type ChequeAssociation,
   type JournalEntryListItem,
   type JournalEntryReviewMessage,
   type JournalEntryWrite,
 } from "../api/journalEntries";
+import {
+  createJournalEntryFilterPreset,
+  listJournalEntryFilterPresets,
+  updateJournalEntryFilterPreset,
+  type JournalEntryFilterPreset,
+  type JournalEntryFilterPresetDefinition,
+} from "../api/journalEntryFilterPresets";
 import { JournalEntryAttachmentsDialog } from "./JournalEntryAttachmentsDialog";
 import { JournalEntryForm, type LineDraft } from "./JournalEntryForm";
 import { TableRowIconButton } from "./TableRowIconButton";
 
 const PAGE_SIZE = 50;
+
+function sortedIds(ids: number[]): number[] {
+  return [...ids].sort((a, b) => a - b);
+}
+
+function sameIdList(a: number[] | undefined, b: number[] | undefined): boolean {
+  const aa = sortedIds(a ?? []);
+  const bb = sortedIds(b ?? []);
+  if (aa.length !== bb.length) return false;
+  for (let i = 0; i < aa.length; i += 1) {
+    if (aa[i] !== bb[i]) return false;
+  }
+  return true;
+}
+
+interface FilterState {
+  fromDate: string;
+  toDate: string;
+  needsReviewOnly: boolean;
+  accountIds: number[];
+  partyIds: number[];
+  accrualPlanIds: number[];
+  amountLow: string;
+  amountHigh: string;
+  chequeAssociation: ChequeAssociation;
+}
+
+const EMPTY_FILTER: FilterState = {
+  fromDate: "",
+  toDate: "",
+  needsReviewOnly: false,
+  accountIds: [],
+  partyIds: [],
+  accrualPlanIds: [],
+  amountLow: "",
+  amountHigh: "",
+  chequeAssociation: "any",
+};
+
+function definitionFromFilter(state: FilterState): JournalEntryFilterPresetDefinition {
+  const def: JournalEntryFilterPresetDefinition = {};
+  if (state.fromDate) def.from_date = state.fromDate;
+  if (state.toDate) def.to_date = state.toDate;
+  if (state.needsReviewOnly) def.needs_review = true;
+  if (state.accountIds.length > 0) def.account_ids = sortedIds(state.accountIds);
+  if (state.partyIds.length > 0) def.party_ids = sortedIds(state.partyIds);
+  if (state.accrualPlanIds.length > 0) def.accrual_plan_ids = sortedIds(state.accrualPlanIds);
+  if (state.amountLow !== "") def.amount_low = Number(state.amountLow);
+  if (state.amountHigh !== "") def.amount_high = Number(state.amountHigh);
+  if (state.chequeAssociation !== "any") def.cheque_association = state.chequeAssociation;
+  return def;
+}
+
+function filterFromDefinition(def: JournalEntryFilterPresetDefinition): FilterState {
+  return {
+    fromDate: def.from_date ?? "",
+    toDate: def.to_date ?? "",
+    needsReviewOnly: def.needs_review === true,
+    accountIds: sortedIds(def.account_ids ?? []),
+    partyIds: sortedIds(def.party_ids ?? []),
+    accrualPlanIds: sortedIds(def.accrual_plan_ids ?? []),
+    amountLow: def.amount_low != null ? String(def.amount_low) : "",
+    amountHigh: def.amount_high != null ? String(def.amount_high) : "",
+    chequeAssociation: def.cheque_association ?? "any",
+  };
+}
+
+function filterMatchesDefinition(
+  state: FilterState,
+  def: JournalEntryFilterPresetDefinition,
+): boolean {
+  const normalized = filterFromDefinition(def);
+  return (
+    state.fromDate === normalized.fromDate &&
+    state.toDate === normalized.toDate &&
+    state.needsReviewOnly === normalized.needsReviewOnly &&
+    state.amountLow === normalized.amountLow &&
+    state.amountHigh === normalized.amountHigh &&
+    state.chequeAssociation === normalized.chequeAssociation &&
+    sameIdList(state.accountIds, normalized.accountIds) &&
+    sameIdList(state.partyIds, normalized.partyIds) &&
+    sameIdList(state.accrualPlanIds, normalized.accrualPlanIds)
+  );
+}
+
+function readSelectedIds(select: HTMLSelectElement): number[] {
+  return Array.from(select.selectedOptions)
+    .map((o) => Number(o.value))
+    .filter((n) => Number.isFinite(n));
+}
 
 function linesFromEntry(
   lines: {
@@ -58,10 +157,19 @@ export function JournalEntriesPanel({
   const [entries, setEntries] = useState<JournalEntryListItem[]>([]);
   const [listLoading, setListLoading] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
-  const [fromDate, setFromDate] = useState("");
-  const [toDate, setToDate] = useState("");
+  const [filter, setFilter] = useState<FilterState>(EMPTY_FILTER);
   const [hasMore, setHasMore] = useState(false);
-  const [needsReviewOnly, setNeedsReviewOnly] = useState(false);
+
+  const [accrualPlans, setAccrualPlans] = useState<AccrualPlan[]>([]);
+  const [presets, setPresets] = useState<JournalEntryFilterPreset[]>([]);
+  const [appliedPresetId, setAppliedPresetId] = useState<number | null>(null);
+  const [presetsError, setPresetsError] = useState<string | null>(null);
+
+  const [saveDialogOpen, setSaveDialogOpen] = useState(false);
+  const [saveName, setSaveName] = useState("");
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [savePending, setSavePending] = useState(false);
+  const saveDialogRef = useRef<HTMLDialogElement>(null);
 
   const [formEntryDate, setFormEntryDate] = useState("");
   const [formSummary, setFormSummary] = useState("");
@@ -74,14 +182,37 @@ export function JournalEntriesPanel({
   const [formInitialChequeId, setFormInitialChequeId] = useState<number | null>(null);
   const [attachmentsEntryId, setAttachmentsEntryId] = useState<number | null>(null);
 
+  const listParams = useMemo(
+    () => ({
+      from_date: filter.fromDate || undefined,
+      to_date: filter.toDate || undefined,
+      needs_review: filter.needsReviewOnly || undefined,
+      account_ids: filter.accountIds.length > 0 ? filter.accountIds : undefined,
+      party_ids: filter.partyIds.length > 0 ? filter.partyIds : undefined,
+      accrual_plan_ids:
+        filter.accrualPlanIds.length > 0 ? filter.accrualPlanIds : undefined,
+      amount_low: filter.amountLow !== "" ? Number(filter.amountLow) : undefined,
+      amount_high: filter.amountHigh !== "" ? Number(filter.amountHigh) : undefined,
+      cheque_association:
+        filter.chequeAssociation !== "any" ? filter.chequeAssociation : undefined,
+    }),
+    [filter],
+  );
+
+  const updateFilter = useCallback(
+    (patch: Partial<FilterState>) => {
+      setFilter((prev) => ({ ...prev, ...patch }));
+      setAppliedPresetId(null);
+    },
+    [],
+  );
+
   const refreshList = useCallback(async () => {
     setListLoading(true);
     setListError(null);
     try {
       const batch = await listJournalEntries({
-        from_date: fromDate || undefined,
-        to_date: toDate || undefined,
-        needs_review: needsReviewOnly || undefined,
+        ...listParams,
         limit: PAGE_SIZE,
         offset: 0,
       });
@@ -92,7 +223,7 @@ export function JournalEntriesPanel({
     } finally {
       setListLoading(false);
     }
-  }, [fromDate, toDate, needsReviewOnly]);
+  }, [listParams]);
 
   useEffect(() => {
     if (view !== "list") {
@@ -101,14 +232,29 @@ export function JournalEntriesPanel({
     void refreshList();
   }, [view, refreshList]);
 
+  useEffect(() => {
+    void (async () => {
+      try {
+        const [plans, loadedPresets] = await Promise.all([
+          listAccrualPlans(),
+          listJournalEntryFilterPresets(),
+        ]);
+        setAccrualPlans(plans);
+        setPresets(loadedPresets);
+      } catch (err) {
+        setPresetsError(
+          err instanceof Error ? err.message : "Failed to load filter presets",
+        );
+      }
+    })();
+  }, []);
+
   async function loadMore() {
     setListLoading(true);
     setListError(null);
     try {
       const batch = await listJournalEntries({
-        from_date: fromDate || undefined,
-        to_date: toDate || undefined,
-        needs_review: needsReviewOnly || undefined,
+        ...listParams,
         limit: PAGE_SIZE,
         offset: entries.length,
       });
@@ -118,6 +264,90 @@ export function JournalEntriesPanel({
       setListError(err instanceof Error ? err.message : "Failed to load journal entries");
     } finally {
       setListLoading(false);
+    }
+  }
+
+  const appliedPreset = useMemo(
+    () => presets.find((p) => p.id === appliedPresetId) ?? null,
+    [presets, appliedPresetId],
+  );
+
+  const displayedPresetId = useMemo(() => {
+    if (appliedPreset && filterMatchesDefinition(filter, appliedPreset.definition)) {
+      return appliedPreset.id;
+    }
+    return null;
+  }, [appliedPreset, filter]);
+
+  function applyPreset(presetId: number) {
+    const preset = presets.find((p) => p.id === presetId);
+    if (!preset) {
+      return;
+    }
+    setFilter(filterFromDefinition(preset.definition));
+    setAppliedPresetId(preset.id);
+  }
+
+  function openSaveDialog() {
+    setSaveError(null);
+    setSaveName(appliedPreset?.name ?? "");
+    setSaveDialogOpen(true);
+  }
+
+  useEffect(() => {
+    const el = saveDialogRef.current;
+    if (!el) return;
+    if (saveDialogOpen && !el.open) {
+      el.showModal();
+    } else if (!saveDialogOpen && el.open) {
+      el.close();
+    }
+  }, [saveDialogOpen]);
+
+  async function handleSavePreset(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const name = saveName.trim();
+    if (!name) {
+      setSaveError("Name must not be empty.");
+      return;
+    }
+    setSavePending(true);
+    setSaveError(null);
+    try {
+      const definition = definitionFromFilter(filter);
+      const existing = presets.find(
+        (p) => p.name.toLowerCase() === name.toLowerCase(),
+      );
+      if (existing) {
+        const confirmed = window.confirm(
+          `A preset named "${existing.name}" already exists. Overwrite it?`,
+        );
+        if (!confirmed) {
+          setSavePending(false);
+          return;
+        }
+        const updated = await updateJournalEntryFilterPreset(existing.id, {
+          name,
+          definition,
+        });
+        setPresets((prev) =>
+          prev.map((p) => (p.id === updated.id ? updated : p)).sort((a, b) =>
+            a.name.localeCompare(b.name),
+          ),
+        );
+        setAppliedPresetId(updated.id);
+      } else {
+        const created = await createJournalEntryFilterPreset({ name, definition });
+        setPresets((prev) =>
+          [...prev, created].sort((a, b) => a.name.localeCompare(b.name)),
+        );
+        setAppliedPresetId(created.id);
+      }
+      setSaveDialogOpen(false);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Failed to save preset");
+    } finally {
+      setSavePending(false);
     }
   }
 
@@ -306,8 +536,8 @@ export function JournalEntriesPanel({
           <input
             aria-label="Filter from date"
             type="date"
-            value={fromDate}
-            onChange={(e) => setFromDate(e.target.value)}
+            value={filter.fromDate}
+            onChange={(e) => updateFilter({ fromDate: e.target.value })}
           />
         </label>
         <label>
@@ -315,20 +545,190 @@ export function JournalEntriesPanel({
           <input
             aria-label="Filter to date"
             type="date"
-            value={toDate}
-            onChange={(e) => setToDate(e.target.value)}
+            value={filter.toDate}
+            onChange={(e) => updateFilter({ toDate: e.target.value })}
           />
         </label>
         <label className="checkbox">
           <input
             aria-label="Show entries needing review only"
             type="checkbox"
-            checked={needsReviewOnly}
-            onChange={(e) => setNeedsReviewOnly(e.target.checked)}
+            checked={filter.needsReviewOnly}
+            onChange={(e) => updateFilter({ needsReviewOnly: e.target.checked })}
           />
           Needs review only
         </label>
+        <label>
+          Cheque
+          <select
+            aria-label="Filter by cheque association"
+            value={filter.chequeAssociation}
+            onChange={(e) =>
+              updateFilter({ chequeAssociation: e.target.value as ChequeAssociation })
+            }
+          >
+            <option value="any">Any</option>
+            <option value="with_cheque">Has cheque</option>
+            <option value="without_cheque">No cheque</option>
+          </select>
+        </label>
+        <label>
+          Amount low
+          <input
+            aria-label="Filter amount low"
+            type="number"
+            min={0}
+            step={1}
+            inputMode="numeric"
+            value={filter.amountLow}
+            onChange={(e) => updateFilter({ amountLow: e.target.value })}
+          />
+        </label>
+        <label>
+          Amount high
+          <input
+            aria-label="Filter amount high"
+            type="number"
+            min={0}
+            step={1}
+            inputMode="numeric"
+            value={filter.amountHigh}
+            onChange={(e) => updateFilter({ amountHigh: e.target.value })}
+          />
+        </label>
       </div>
+
+      <div className="journal-filters">
+        <label>
+          Accounts
+          <select
+            aria-label="Filter by accounts"
+            multiple
+            size={Math.min(6, Math.max(3, accounts.length))}
+            value={filter.accountIds.map(String)}
+            onChange={(e) =>
+              updateFilter({ accountIds: readSelectedIds(e.currentTarget) })
+            }
+          >
+            {accounts.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Parties
+          <select
+            aria-label="Filter by parties"
+            multiple
+            size={Math.min(6, Math.max(3, parties.length))}
+            value={filter.partyIds.map(String)}
+            onChange={(e) =>
+              updateFilter({ partyIds: readSelectedIds(e.currentTarget) })
+            }
+          >
+            {parties.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Accrual plans
+          <select
+            aria-label="Filter by accrual plans"
+            multiple
+            size={Math.min(6, Math.max(3, accrualPlans.length || 3))}
+            value={filter.accrualPlanIds.map(String)}
+            onChange={(e) =>
+              updateFilter({ accrualPlanIds: readSelectedIds(e.currentTarget) })
+            }
+          >
+            {accrualPlans.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      <div className="journal-filters journal-presets-row">
+        <label>
+          Apply preset
+          <select
+            aria-label="Apply filter preset"
+            value={displayedPresetId != null ? String(displayedPresetId) : ""}
+            onChange={(e) => {
+              const v = e.target.value;
+              if (v === "") {
+                setAppliedPresetId(null);
+                return;
+              }
+              applyPreset(Number(v));
+            }}
+          >
+            <option value="">— None —</option>
+            {presets.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button
+          type="button"
+          className="button-secondary"
+          aria-label="Save current filter as preset"
+          title="Save current filter as preset"
+          onClick={openSaveDialog}
+        >
+          <Save size={16} strokeWidth={2} aria-hidden /> Save preset
+        </button>
+        {presetsError && (
+          <p className="error" role="alert">
+            {presetsError}
+          </p>
+        )}
+      </div>
+
+      <dialog ref={saveDialogRef} aria-label="Save filter preset">
+        <form method="dialog" onSubmit={(e) => void handleSavePreset(e)}>
+          <h3>Save filter preset</h3>
+          <label>
+            Preset name
+            <input
+              aria-label="Preset name"
+              type="text"
+              value={saveName}
+              autoFocus
+              onChange={(e) => setSaveName(e.target.value)}
+              required
+              maxLength={200}
+            />
+          </label>
+          {saveError && (
+            <p className="error" role="alert">
+              {saveError}
+            </p>
+          )}
+          <div className="dialog-actions">
+            <button
+              type="button"
+              className="button-secondary"
+              onClick={() => setSaveDialogOpen(false)}
+              disabled={savePending}
+            >
+              Cancel
+            </button>
+            <button type="submit" disabled={savePending}>
+              {savePending ? "Saving…" : "Save"}
+            </button>
+          </div>
+        </form>
+      </dialog>
 
       {listLoading && entries.length === 0 && <p>Loading…</p>}
       {listError && (

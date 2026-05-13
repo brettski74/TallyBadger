@@ -71,7 +71,8 @@ def clean_database(integration_db_url: str) -> Iterator[None]:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    TRUNCATE TABLE import_templates, journal_lines, journal_entry_attachments,
+                    TRUNCATE TABLE journal_entry_filter_presets, import_templates,
+                      journal_lines, journal_entry_attachments,
                       attachments, journal_entries,
                       accrual_plans, party_match_patterns, parties, accounts, cel_rule_sets
                     RESTART IDENTITY CASCADE
@@ -335,6 +336,113 @@ def test_list_entries_shows_split_label_when_multiple_lines_on_one_side(
     assert newer.debit_side_label == "Bank"
     assert newer.credit_side_label == JOURNAL_LIST_SPLIT_LABEL
     assert newer.amount == Decimal("200.00")
+
+
+def test_list_entries_filters_by_new_dimensions(ledger_service: LedgerService) -> None:
+    cash = ledger_service.create_account(AccountCreate(name="Cash", type="asset"))
+    revenue = ledger_service.create_account(AccountCreate(name="Rent Revenue", type="revenue"))
+    expense = ledger_service.create_account(AccountCreate(name="Repairs Expense", type="expense"))
+    payable = ledger_service.create_account(AccountCreate(name="Trade Payable", type="liability"))
+    party_a = ledger_service.create_party(PartyCreate(name="Alpha Tenant", role="customer"))
+    party_b = ledger_service.create_party(PartyCreate(name="Bravo Vendor", role="vendor"))
+
+    small = ledger_service.create_entry(
+        JournalEntryWrite(
+            entry_date=date(2026, 6, 1),
+            summary="alpha rent",
+            description="alpha rent",
+            lines=[
+                JournalLineIn(account_id=cash.id, party_id=party_a.id, amount=Decimal("50.00")),
+                JournalLineIn(account_id=revenue.id, party_id=party_a.id, amount=Decimal("-50.00")),
+            ],
+        )
+    )
+    medium = ledger_service.create_entry(
+        JournalEntryWrite(
+            entry_date=date(2026, 6, 2),
+            summary="bravo expense",
+            description="bravo expense",
+            lines=[
+                JournalLineIn(account_id=expense.id, party_id=party_b.id, amount=Decimal("150.00")),
+                JournalLineIn(account_id=payable.id, party_id=party_b.id, amount=Decimal("-150.00")),
+            ],
+        )
+    )
+    large = ledger_service.create_entry(
+        JournalEntryWrite(
+            entry_date=date(2026, 6, 3),
+            summary="alpha big rent",
+            description="alpha big rent",
+            lines=[
+                JournalLineIn(account_id=cash.id, party_id=party_a.id, amount=Decimal("500.00")),
+                JournalLineIn(account_id=revenue.id, party_id=party_a.id, amount=Decimal("-500.00")),
+            ],
+        )
+    )
+
+    by_account = ledger_service.list_entries(account_ids=[expense.id], limit=10, offset=0)
+    assert [e.id for e in by_account] == [medium.id]
+
+    by_party = ledger_service.list_entries(party_ids=[party_a.id], limit=10, offset=0)
+    assert sorted(e.id for e in by_party) == sorted([small.id, large.id])
+
+    in_band = ledger_service.list_entries(amount_low=100, amount_high=200, limit=10, offset=0)
+    assert [e.id for e in in_band] == [medium.id]
+
+    no_cheque = ledger_service.list_entries(cheque_association="with_cheque", limit=10, offset=0)
+    assert no_cheque == []
+
+    has_no_cheque = ledger_service.list_entries(
+        cheque_association="without_cheque", limit=10, offset=0
+    )
+    assert sorted(e.id for e in has_no_cheque) == sorted([small.id, medium.id, large.id])
+
+    with pytest.raises(LedgerValidationError, match="amount_low"):
+        ledger_service.list_entries(amount_low=300, amount_high=100, limit=10, offset=0)
+
+
+def test_list_entries_amount_band_uses_credit_magnitude_fallback(
+    ledger_service: LedgerService,
+) -> None:
+    """When an entry has no positive lines the list amount falls back to the credit magnitude."""
+
+    # Use raw SQL to construct an "unbalanced" credit-only entry (the service forbids this
+    # via posting validation, so we bypass it to exercise the list-amount fallback rule).
+    with connect(os.environ["TALLYBADGER_TEST_DATABASE_URL"], row_factory=dict_row) as conn:
+        cash = ledger_service.create_account(AccountCreate(name="Cash", type="asset"))
+        rent = ledger_service.create_account(AccountCreate(name="Rent", type="revenue"))
+        # First post a normal entry so the table isn't empty.
+        normal = ledger_service.create_entry(
+            JournalEntryWrite(
+                entry_date=date(2026, 7, 1),
+                summary="normal",
+                description="normal",
+                lines=[
+                    JournalLineIn(account_id=cash.id, amount=Decimal("100.00")),
+                    JournalLineIn(account_id=rent.id, amount=Decimal("-100.00")),
+                ],
+            )
+        )
+        with conn.transaction():
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO journal_entries (entry_date, summary, description)
+                    VALUES (%s, %s, %s) RETURNING id
+                    """,
+                    (date(2026, 7, 2), "credits only", "credits only"),
+                )
+                row = cur.fetchone()
+                credits_only_id = int(row["id"])
+                cur.execute(
+                    "INSERT INTO journal_lines (entry_id, account_id, amount) VALUES (%s, %s, %s)",
+                    (credits_only_id, rent.id, Decimal("-25.00")),
+                )
+
+    # The credit-only entry has list amount 25.00; only it should fall in [10, 50].
+    in_band = ledger_service.list_entries(amount_low=10, amount_high=50, limit=10, offset=0)
+    assert any(e.id == credits_only_id for e in in_band)
+    assert all(e.id != normal.id for e in in_band)
 
 
 def test_get_entry_includes_account_name_on_each_line(ledger_service: LedgerService) -> None:

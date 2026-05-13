@@ -31,6 +31,7 @@ FORMAT_VERSION_HISTORY: tuple[str, ...] = (
     "1.1.0",
     "1.2.0",
     "1.3.0",
+    "1.4.0",
 )
 
 
@@ -48,7 +49,11 @@ CURRENCY_ASSUMPTION = "single_currency_numeric_18_2"
 ExportType = Literal["complete", "configuration", "financial"]
 
 # FK-safe order (#16): configuration tables, then financial tables.
-CONFIGURATION_TABLES: tuple[str, ...] = (
+# ``journal_entry_filter_presets`` (format_version ≥ 1.4.0) appended last; its JSONB
+# definition references account/party/accrual_plan ids that are validated separately
+# against the rest of the configuration scope, but the table has no FK constraints
+# so its load position is otherwise free.
+CONFIGURATION_TABLES_BASE: tuple[str, ...] = (
     "accounts",
     "parties",
     "party_match_patterns",
@@ -57,6 +62,8 @@ CONFIGURATION_TABLES: tuple[str, ...] = (
     "cel_rule_sets",
     "import_templates",
 )
+
+JOURNAL_ENTRY_FILTER_PRESET_TABLE = "journal_entry_filter_presets"
 
 # Journal entry attachment metadata + links (``format_version`` ≥ 1.1.0, complete/financial only).
 ATTACHMENT_SNAPSHOT_TABLES: tuple[str, ...] = ("attachments", "journal_entry_attachments")
@@ -85,6 +92,27 @@ def _format_version_tuple(version: str) -> tuple[int, ...]:
 def snapshot_includes_attachment_tables(format_version: str) -> bool:
     """Attachment JSON + ``attachments/*`` blobs apply for ``format_version`` ≥ 1.1.0."""
     return _format_version_tuple(format_version) >= (1, 1, 0)
+
+
+def snapshot_includes_filter_presets(format_version: str) -> bool:
+    """``journal_entry_filter_presets.json`` applies for ``format_version`` ≥ 1.4.0."""
+    return _format_version_tuple(format_version) >= (1, 4, 0)
+
+
+def configuration_tables_for_format(format_version: str) -> tuple[str, ...]:
+    """Configuration snapshot members for ``format_version`` (base ± preset sidecars)."""
+    parts: list[str] = list(CONFIGURATION_TABLES_BASE)
+    if snapshot_includes_filter_presets(format_version):
+        parts.append(JOURNAL_ENTRY_FILTER_PRESET_TABLE)
+    return tuple(parts)
+
+
+# Configuration tables for the **newest** export (always includes the preset sidecar
+# once ``format_version`` ≥ 1.4.0). Callers that need a format-aware list should
+# prefer :func:`configuration_tables_for_format`.
+CONFIGURATION_TABLES: tuple[str, ...] = configuration_tables_for_format(
+    FORMAT_VERSION_HISTORY[-1],
+)
 
 
 def financial_tables_core(format_version: str) -> tuple[str, ...]:
@@ -121,13 +149,14 @@ COMPLETE_TABLES: tuple[str, ...] = CONFIGURATION_TABLES + financial_tables_for_f
 
 def tables_for_import(export_type: str, format_version: str) -> tuple[str, ...]:
     """Table JSON members expected for this ``export_type`` and archive ``format_version``."""
+    cfg = configuration_tables_for_format(format_version)
     if export_type == "configuration":
-        return CONFIGURATION_TABLES
+        return cfg
     fin = financial_tables_for_format(format_version)
     if export_type == "financial":
         return fin
     if export_type == "complete":
-        return CONFIGURATION_TABLES + fin
+        return cfg + fin
     raise IncompleteSnapshotError(
         f"export_type must be one of {sorted(SUPPORTED_EXPORT_TYPES)}, not {export_type!r}"
     )
@@ -274,6 +303,7 @@ def _truncate_complete_scope(conn: Connection) -> None:
         cur.execute(
             """
             TRUNCATE TABLE
+              journal_entry_filter_presets,
               import_templates,
               settlement_allocations,
               settlement_events,
@@ -503,6 +533,33 @@ def _validate_payloads_for_tables(
         _validate_journal(payloads["journal_lines"])
 
 
+def _validate_filter_preset_definitions_against_config(
+    presets: list[dict[str, Any]],
+    *,
+    accounts: set[int],
+    parties: set[int],
+    accrual_plans: set[int],
+) -> None:
+    """Embedded ids in a preset ``definition`` must match the archive's configuration set."""
+    for i, row in enumerate(presets):
+        defn = row.get("definition")
+        if not isinstance(defn, dict):
+            raise SnapshotValidationError(
+                f"journal_entry_filter_presets[{i}] definition must be a JSON object"
+            )
+        for field_name, allowed in (
+            ("account_ids", accounts),
+            ("party_ids", parties),
+            ("accrual_plan_ids", accrual_plans),
+        ):
+            for v in defn.get(field_name, []) or []:
+                if int(v) not in allowed:
+                    raise SnapshotValidationError(
+                        f"journal_entry_filter_presets[{i}] definition.{field_name} "
+                        f"contains id={v} that has no matching row in the archive"
+                    )
+
+
 def _validate_configuration_fks(
     payloads: dict[str, list[dict[str, Any]]],
 ) -> None:
@@ -571,6 +628,15 @@ def _validate_configuration_fks(
                 f"import_templates[{i}] default_import_account_id={dia} "
                 "has no matching row in accounts.json"
             )
+
+    presets = payloads.get(JOURNAL_ENTRY_FILTER_PRESET_TABLE)
+    if presets is not None:
+        _validate_filter_preset_definitions_against_config(
+            presets,
+            accounts=acct,
+            parties=party,
+            accrual_plans=plans,
+        )
 
 
 def _validate_complete_fk_graph(payloads: dict[str, list[dict[str, Any]]]) -> None:
@@ -1029,6 +1095,7 @@ def _resync_serials(conn: Connection) -> None:
         "attachments",
         "journal_entry_attachments",
         "import_templates",
+        "journal_entry_filter_presets",
     ):
         stmt = sql.SQL(
             "SELECT setval(pg_get_serial_sequence({tbl}, 'id'), "

@@ -185,6 +185,70 @@ def test_list_journal_entries_uses_query_params() -> None:
 
     assert response.status_code == 200
     assert response.json() == []
+
+
+def test_list_journal_entries_forwards_new_filter_dimensions() -> None:
+    captured: dict[str, object] = {}
+
+    class StubForwarding(StubLedgerService):
+        def list_entries(self, **kwargs):
+            captured.update(kwargs)
+            return []
+
+    app.dependency_overrides[get_ledger_service] = StubForwarding
+    client = TestClient(app)
+
+    response = client.get(
+        "/journal-entries",
+        params=[
+            ("account_ids", "1"),
+            ("account_ids", "2"),
+            ("party_ids", "5"),
+            ("accrual_plan_ids", "9"),
+            ("amount_low", "10"),
+            ("amount_high", "20"),
+            ("cheque_association", "with_cheque"),
+        ],
+    )
+
+    assert response.status_code == 200
+    assert captured["account_ids"] == [1, 2]
+    assert captured["party_ids"] == [5]
+    assert captured["accrual_plan_ids"] == [9]
+    assert captured["amount_low"] == 10
+    assert captured["amount_high"] == 20
+    assert captured["cheque_association"] == "with_cheque"
+    app.dependency_overrides.clear()
+
+
+def test_list_journal_entries_invalid_amount_band_maps_to_422() -> None:
+    class StubAmountBand(StubLedgerService):
+        def list_entries(self, **_kwargs):
+            raise LedgerValidationError("amount_low must be less than or equal to amount_high")
+
+    app.dependency_overrides[get_ledger_service] = StubAmountBand
+    client = TestClient(app)
+
+    response = client.get(
+        "/journal-entries",
+        params={"amount_low": 50, "amount_high": 10},
+    )
+
+    assert response.status_code == 422
+    assert "amount_low" in response.json()["detail"]
+    app.dependency_overrides.clear()
+
+
+def test_list_journal_entries_rejects_invalid_cheque_association_value() -> None:
+    app.dependency_overrides[get_ledger_service] = StubLedgerService
+    client = TestClient(app)
+
+    response = client.get(
+        "/journal-entries",
+        params={"cheque_association": "bogus"},
+    )
+
+    assert response.status_code == 422
     app.dependency_overrides.clear()
 
 
