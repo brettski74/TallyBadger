@@ -345,6 +345,7 @@ export function JournalEntriesPanel({
             <tr>
               <th>Date</th>
               <th>Summary</th>
+              <th>Needs review</th>
               <th>Parties</th>
               <th>Debit account</th>
               <th>Credit account</th>

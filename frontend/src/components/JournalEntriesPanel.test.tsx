@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import type { Account } from "../api/accounts";
@@ -41,6 +41,75 @@ const parties = [
 ];
 
 describe("JournalEntriesPanel", () => {
+  it("renders header columns in the order that matches body cells", async () => {
+    const listPayload = [
+      {
+        id: 7,
+        entry_date: "2026-04-10",
+        summary: "Rent accrual",
+        description: "Test",
+        requires_review: true,
+        cheque_id: null,
+        created_at: "2026-04-01T00:00:00Z",
+        updated_at: "2026-04-01T00:00:00Z",
+        debit_side_label: "Cash",
+        credit_side_label: "Income",
+        party_labels: "Acme Yard Maintenance",
+        amount: "25.00",
+      },
+    ];
+
+    vi.spyOn(global, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes("/cheques")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      if (url.includes("/journal-entries")) {
+        return new Response(JSON.stringify(listPayload), { status: 200 });
+      }
+      return new Response("not mocked", { status: 500 });
+    });
+
+    render(
+      <JournalEntriesPanel
+        accounts={accounts}
+        parties={parties}
+        accountsLoading={false}
+        accountsError={null}
+      />,
+    );
+
+    await screen.findByText("Rent accrual");
+
+    const table = screen.getByRole("table");
+    const headerRow = within(table).getAllByRole("row")[0];
+    const headerLabels = within(headerRow)
+      .getAllByRole("columnheader")
+      .map((th) => th.textContent?.trim() ?? "");
+    expect(headerLabels).toEqual([
+      "Date",
+      "Summary",
+      "Needs review",
+      "Parties",
+      "Debit account",
+      "Credit account",
+      "Amount",
+      "",
+    ]);
+
+    const bodyRows = within(table).getAllByRole("row").slice(1);
+    const bodyCells = within(bodyRows[0]).getAllByRole("cell").map((td) => td.textContent?.trim() ?? "");
+    expect(bodyCells.slice(0, 7)).toEqual([
+      "2026-04-10",
+      "Rent accrual",
+      "Yes",
+      "Acme Yard Maintenance",
+      "Cash",
+      "Income",
+      "25.00",
+    ]);
+  });
+
   it("loads list and completes edit save path", async () => {
     const listPayload = [
       {
