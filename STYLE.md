@@ -64,6 +64,9 @@ This pairs with schema work so portable paths (clone → migrate → seed) stay 
 
 - Build **features and fixes on a branch**; do not land substantive work by committing directly to **`main`** / **`master`**.
 - If you are on the default branch, **create and switch to a feature branch** before making changes or commits.
+- Branches for new features should be named feature/<issue id>-kebab-case-description
+- Branches for bug fixes should be named bugfix/<issue id>-kebab-case-description
+- Branches for anything else should be named other/<issue id>-kebab-case-description
 - Merge to the default branch **only through a pull request** that has gone through **human-in-the-loop review** before merge: another person reads and approves (or requests changes) on GitHub when the team has more than one contributor; on a **solo** maintainer repo, use the PR as the deliberate review surface and still avoid merging unreviewed local commits straight to `main`. Prefer **squash merge** so history stays easy to read unless the team agrees otherwise.
 - **Link GitHub issues** in the **PR body** with closing keywords when appropriate (`Fixes #42`, `Closes #42`, `Refs #42`) so links survive squash; see [GitHub linking](https://docs.github.com/en/issues/tracking-your-work-with-issues/linking-a-pull-request-to-an-issue).
 - **Features and bugs** are tracked in **GitHub Issues**; PRs should reference them for traceability.
