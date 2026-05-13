@@ -40,7 +40,8 @@ export interface FormSaveDiscardShortcutOptions {
 
 /**
  * Save: Ctrl/Cmd+S when focus is inside the owning form (inline create, edit, or create card when not editing).
- * Discard: Ctrl/Cmd+Shift+D — edit discard while editing; optional create discard while inline create is active.
+ * Discard: Ctrl/Cmd+Shift+D — edit discard while editing; optional create discard while inline create is active;
+ * or optional `requestCreateDiscard` while focus is in `createFormRef` and `editingId` is null (single-form create flows such as CEL rule sets).
  */
 export function useFormSaveDiscardShortcuts(opts: FormSaveDiscardShortcutOptions): void {
   const optsRef = useRef(opts);
@@ -87,6 +88,15 @@ export function useFormSaveDiscardShortcuts(opts: FormSaveDiscardShortcutOptions
         } else if (o.editingId != null && inEdit && !o.editSubmitting) {
           e.preventDefault();
           o.requestEditDiscard();
+        } else if (
+          !inlineCreate &&
+          o.editingId == null &&
+          inCreate &&
+          !o.createSubmitting &&
+          o.requestCreateDiscard
+        ) {
+          e.preventDefault();
+          o.requestCreateDiscard();
         }
       }
     };

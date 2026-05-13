@@ -1,4 +1,14 @@
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  CaseSensitive,
+  CornerDownLeft,
+  FileText,
+  MoveDown,
+  MoveUp,
+  SquareCheckBig,
+  SquareX,
+  Trash2,
+} from "lucide-react";
 
 import {
   createCelRuleSet,
@@ -11,27 +21,24 @@ import {
   type CelRuleSetSummary,
 } from "../api/celRuleSets";
 import { ApiHttpError } from "../api/errors";
+import { useFormSaveDiscardShortcuts } from "../hooks/useFormSaveDiscardShortcuts";
+import {
+  discardActionTooltip,
+  discardAriaKeyShortcuts,
+  saveActionTooltip,
+  saveAriaKeyShortcuts,
+} from "../lib/keyboardHints";
+import { isMacLikeUserAgent } from "../lib/platformKeyboard";
+import { TableRowIconButton } from "./TableRowIconButton";
 
-const FLAG_OPTIONS: { value: string; label: string }[] = [
-  { value: "ignorecase", label: "Ignore case" },
-  { value: "multiline", label: "Multiline" },
-  { value: "dotall", label: "Dot matches newlines" },
-];
-
-function expressionPreview(expr: string): string {
-  const line = expr.replace(/\r\n/g, "\n").split("\n")[0]?.trim() ?? "";
-  if (line.length <= 80) {
-    return line || "(empty)";
+/** Excerpt for the rules list body (wraps; CSS limits block to ~two lines). */
+function expressionPreviewDisplay(expr: string): string {
+  const normalized = expr.replace(/\r\n/g, "\n").trim();
+  if (!normalized) {
+    return "(empty)";
   }
-  return `${line.slice(0, 77)}…`;
-}
-
-function matcherRowTitle(cap: CelRegexCapture): string {
-  const t = cap.label?.trim();
-  if (t) {
-    return t;
-  }
-  return cap.attribute;
+  const max = 220;
+  return normalized.length <= max ? normalized : `${normalized.slice(0, max - 1)}…`;
 }
 
 /** Assign sort_order from current array position (display order is authoritative). */
@@ -58,10 +65,6 @@ function serializeState(name: string, rules: CelRule[]): string {
       })),
     },
   });
-}
-
-function cloneRules(rules: CelRule[]): CelRule[] {
-  return JSON.parse(JSON.stringify(rules)) as CelRule[];
 }
 
 function normalizeRulesFromApi(rules: CelRule[]): CelRule[] {
@@ -215,6 +218,38 @@ export function CelRuleSetsSection() {
     [resetToEmptyPicker],
   );
 
+  const formRef = useRef<HTMLFormElement>(null);
+  const isMac = useMemo(() => isMacLikeUserAgent(), []);
+
+  const handleRevert = useCallback(() => {
+    if (!hasSelection) {
+      return;
+    }
+    if (editingId != null) {
+      void applyExisting(editingId);
+    } else if (selectKey === "new") {
+      applyNew();
+    }
+  }, [hasSelection, editingId, selectKey, applyExisting, applyNew]);
+
+  useFormSaveDiscardShortcuts({
+    createFormRef: formRef,
+    editFormRef: formRef,
+    editingId,
+    canSubmitCreate: dirty && draftName.trim().length > 0,
+    canSubmitEdit: dirty && draftName.trim().length > 0,
+    createSubmitting: saving,
+    editSubmitting: saving,
+    requestCreateSubmit: () => {
+      formRef.current?.requestSubmit();
+    },
+    requestEditSubmit: () => {
+      formRef.current?.requestSubmit();
+    },
+    requestEditDiscard: handleRevert,
+    requestCreateDiscard: handleRevert,
+  });
+
   function handleSelectKey(next: string) {
     if (next === selectKey) {
       return;
@@ -232,17 +267,6 @@ export function CelRuleSetsSection() {
       return;
     }
     void applyExisting(Number(next));
-  }
-
-  function handleRevert() {
-    if (!hasSelection) {
-      return;
-    }
-    if (editingId != null) {
-      void applyExisting(editingId);
-    } else if (selectKey === "new") {
-      applyNew();
-    }
   }
 
   async function handleSave(e: FormEvent) {
@@ -479,7 +503,7 @@ export function CelRuleSetsSection() {
       ) : detailLoading ? (
         <p className="muted">Loading…</p>
       ) : (
-        <form className="rule-sets-form" onSubmit={(e) => void handleSave(e)}>
+        <form ref={formRef} className="rule-sets-form" onSubmit={(e) => void handleSave(e)}>
           <div className="rule-sets-header-row">
             <label>
               Rule set name
@@ -493,10 +517,22 @@ export function CelRuleSetsSection() {
               />
             </label>
             <div className="rule-sets-actions">
-              <button type="submit" disabled={saving || !dirty}>
+              <button
+                type="submit"
+                disabled={saving || !dirty}
+                title={dirty && !saving ? saveActionTooltip(isMac) : undefined}
+                aria-keyshortcuts={dirty && !saving ? saveAriaKeyShortcuts(isMac) : undefined}
+              >
                 {saving ? "Saving…" : "Save"}
               </button>
-              <button type="button" onClick={() => handleRevert()} disabled={saving || !dirty}>
+              <button
+                type="button"
+                className="button-secondary"
+                onClick={handleRevert}
+                disabled={saving || !dirty}
+                title={discardActionTooltip(isMac)}
+                aria-keyshortcuts={discardAriaKeyShortcuts(isMac)}
+              >
                 Revert
               </button>
               {editingId != null ? (
@@ -531,31 +567,74 @@ export function CelRuleSetsSection() {
               ) : (
                 <ul className="rule-sets-rule-list">
                   {draftRules.map((rule, index) => (
-                    <li key={`${index}-${rule.sort_order}`}>
-                      <button
-                        type="button"
-                        className={
-                          selectedRuleIndex === index ? "rule-sets-rule-row is-active" : "rule-sets-rule-row"
-                        }
-                        onClick={() => setSelectedRuleIndex(index)}
-                      >
-                        <span className="rule-sets-rule-name">{ruleDisplayName(rule)}</span>
-                        <span className="rule-sets-rule-preview">{expressionPreview(rule.expression)}</span>
-                      </button>
-                      <div className="rule-sets-rule-tools">
-                        <button type="button" onClick={() => moveRule(index, -1)} disabled={index === 0}>
-                          Up
-                        </button>
+                    <li
+                      key={`${index}-${rule.sort_order}`}
+                      className={
+                        selectedRuleIndex === index ? "rule-sets-rule-li is-active" : "rule-sets-rule-li"
+                      }
+                    >
+                      {/*
+                        Issue #121 originally called for immediate API persist when toggling enabled on a rule row.
+                        We keep enabled in the draft until Save instead so Revert applies to the whole rule set form.
+                      */}
+                      <div className="rule-sets-rule-row-layout">
+                        <div className="rule-sets-rule-side-col rule-sets-rule-side-col--left" role="group" aria-label="Reorder rule">
+                          <TableRowIconButton
+                            type="button"
+                            aria-label="Move rule up"
+                            title="Move rule up"
+                            disabled={index === 0}
+                            onClick={() => moveRule(index, -1)}
+                          >
+                            <MoveUp size={18} strokeWidth={2} aria-hidden />
+                          </TableRowIconButton>
+                          <TableRowIconButton
+                            type="button"
+                            aria-label="Move rule down"
+                            title="Move rule down"
+                            disabled={index === draftRules.length - 1}
+                            onClick={() => moveRule(index, 1)}
+                          >
+                            <MoveDown size={18} strokeWidth={2} aria-hidden />
+                          </TableRowIconButton>
+                        </div>
                         <button
                           type="button"
-                          onClick={() => moveRule(index, 1)}
-                          disabled={index === draftRules.length - 1}
+                          className="rule-sets-rule-row-main"
+                          onClick={() => setSelectedRuleIndex(index)}
                         >
-                          Down
+                          <span className="rule-sets-rule-name">{ruleDisplayName(rule)}</span>
+                          <span className="rule-sets-rule-preview">{expressionPreviewDisplay(rule.expression)}</span>
                         </button>
-                        <button type="button" onClick={() => removeRule(index)}>
-                          Remove
-                        </button>
+                        <div className="rule-sets-rule-side-col rule-sets-rule-side-col--right" role="group" aria-label="Rule actions">
+                          <TableRowIconButton
+                            type="button"
+                            aria-label="Delete"
+                            title="Delete"
+                            onClick={() => removeRule(index)}
+                          >
+                            <Trash2 size={18} strokeWidth={2} aria-hidden />
+                          </TableRowIconButton>
+                          {rule.enabled ? (
+                            <TableRowIconButton
+                              type="button"
+                              aria-label="Disable rule"
+                              title="Disable rule"
+                              onClick={() => updateRuleAt(index, { enabled: false })}
+                            >
+                              <SquareX size={18} strokeWidth={2} aria-hidden />
+                            </TableRowIconButton>
+                          ) : (
+                            <TableRowIconButton
+                              type="button"
+                              aria-label="Enable rule"
+                              title="Enable rule"
+                              onClick={() => updateRuleAt(index, { enabled: true })}
+                            >
+                              <SquareCheckBig size={18} strokeWidth={2} aria-hidden />
+                            </TableRowIconButton>
+                          )}
+                        </div>
                       </div>
                     </li>
                   ))}
@@ -595,19 +674,11 @@ export function CelRuleSetsSection() {
                   <h4>Regex matchers</h4>
                   <p className="muted rule-sets-hint">
                     Matchers run in order; all must match before the CEL expression evaluates. Use a label so
-                    you can recognize each matcher in the list.
+                    you can tell matchers apart in traces and when editing.
                   </p>
                   {selectedRule.captures.length === 0 ? (
                     <p className="muted">No matchers (expression always runs).</p>
-                  ) : (
-                    <ul className="rule-sets-capture-summary">
-                      {selectedRule.captures.map((cap, ci) => (
-                        <li key={`cap-${ci}`}>
-                          <span className="rule-sets-capture-chip">{matcherRowTitle(cap)}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
+                  ) : null}
 
                   <div className="rule-sets-capture-actions">
                     <button type="button" onClick={() => addCapture(selectedRuleIndex!)}>
@@ -617,75 +688,127 @@ export function CelRuleSetsSection() {
 
                   {selectedRule.captures.map((cap, ci) => (
                     <fieldset key={`cap-edit-${ci}`} className="rule-sets-capture-fieldset">
-                      <legend>
-                        Matcher {ci + 1}: {matcherRowTitle(cap)}
-                      </legend>
-                      <div className="rule-sets-capture-toolbar">
-                        <button
-                          type="button"
-                          onClick={() => moveCapture(selectedRuleIndex!, ci, -1)}
-                          disabled={ci === 0}
-                        >
-                          Move up
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => moveCapture(selectedRuleIndex!, ci, 1)}
-                          disabled={ci === selectedRule.captures.length - 1}
-                        >
-                          Move down
-                        </button>
-                        <button type="button" onClick={() => removeCapture(selectedRuleIndex!, ci)}>
-                          Remove matcher
-                        </button>
-                      </div>
-                      <label>
-                        Matcher label
-                        <input
-                          type="text"
-                          value={cap.label ?? ""}
-                          onChange={(e) =>
-                            updateCaptureAt(selectedRuleIndex!, ci, {
-                              label: e.target.value === "" ? null : e.target.value,
-                            })
-                          }
-                          placeholder="e.g. Interac description line"
-                          autoComplete="off"
-                        />
-                      </label>
-                      <label>
-                        Attribute
-                        <input
-                          type="text"
-                          value={cap.attribute}
-                          onChange={(e) => updateCaptureAt(selectedRuleIndex!, ci, { attribute: e.target.value })}
-                          required
-                          autoComplete="off"
-                        />
-                      </label>
-                      <label>
-                        Pattern
-                        <input
-                          type="text"
-                          value={cap.pattern}
-                          onChange={(e) => updateCaptureAt(selectedRuleIndex!, ci, { pattern: e.target.value })}
-                          required
-                          autoComplete="off"
-                        />
-                      </label>
-                      <div className="rule-sets-flags">
-                        {FLAG_OPTIONS.map((f) => (
-                          <label key={f.value} className="rule-sets-checkbox">
+                      <legend className="sr-only">Matcher {ci + 1}</legend>
+                      <div className="rule-sets-matcher-layout">
+                        <div className="rule-sets-matcher-reorder" role="group" aria-label="Reorder matcher">
+                          <TableRowIconButton
+                            type="button"
+                            aria-label="Move matcher up"
+                            title="Move matcher up"
+                            disabled={ci === 0}
+                            onClick={() => moveCapture(selectedRuleIndex!, ci, -1)}
+                          >
+                            <MoveUp size={18} strokeWidth={2} aria-hidden />
+                          </TableRowIconButton>
+                          <TableRowIconButton
+                            type="button"
+                            aria-label="Move matcher down"
+                            title="Move matcher down"
+                            disabled={ci === selectedRule.captures.length - 1}
+                            onClick={() => moveCapture(selectedRuleIndex!, ci, 1)}
+                          >
+                            <MoveDown size={18} strokeWidth={2} aria-hidden />
+                          </TableRowIconButton>
+                        </div>
+                        <div className="rule-sets-matcher-fields">
+                          <div className="rule-sets-matcher-label-row">
+                            <label className="rule-sets-matcher-field">
+                              <span className="rule-sets-matcher-field-caption">Matcher label:</span>
+                              <input
+                                type="text"
+                                value={cap.label ?? ""}
+                                onChange={(e) =>
+                                  updateCaptureAt(selectedRuleIndex!, ci, {
+                                    label: e.target.value === "" ? null : e.target.value,
+                                  })
+                                }
+                                placeholder="e.g. Interac description line"
+                                autoComplete="off"
+                              />
+                            </label>
+                            <label className="rule-sets-matcher-field">
+                              <span className="rule-sets-matcher-field-caption">Attribute:</span>
+                              <input
+                                type="text"
+                                value={cap.attribute}
+                                onChange={(e) =>
+                                  updateCaptureAt(selectedRuleIndex!, ci, { attribute: e.target.value })
+                                }
+                                required
+                                autoComplete="off"
+                              />
+                            </label>
+                          </div>
+                          <label className="rule-sets-matcher-field rule-sets-matcher-field--pattern">
+                            <span className="rule-sets-matcher-field-caption">Pattern:</span>
                             <input
-                              type="checkbox"
-                              checked={cap.flags.includes(f.value)}
+                              type="text"
+                              value={cap.pattern}
                               onChange={(e) =>
-                                toggleFlag(selectedRuleIndex!, ci, f.value, e.target.checked)
+                                updateCaptureAt(selectedRuleIndex!, ci, { pattern: e.target.value })
                               }
+                              required
+                              autoComplete="off"
                             />
-                            {f.label}
                           </label>
-                        ))}
+                        </div>
+                        <div
+                          className="rule-sets-matcher-flag-grid"
+                          role="group"
+                          aria-label="Matcher flags and delete"
+                        >
+                          <TableRowIconButton
+                            type="button"
+                            aria-label="Ignore case"
+                            title="Ignore case"
+                            aria-pressed={cap.flags.includes("ignorecase")}
+                            onClick={() =>
+                              toggleFlag(
+                                selectedRuleIndex!,
+                                ci,
+                                "ignorecase",
+                                !cap.flags.includes("ignorecase"),
+                              )
+                            }
+                          >
+                            <CaseSensitive size={18} strokeWidth={2} aria-hidden />
+                          </TableRowIconButton>
+                          <TableRowIconButton
+                            type="button"
+                            aria-label="Delete"
+                            title="Delete"
+                            onClick={() => removeCapture(selectedRuleIndex!, ci)}
+                          >
+                            <Trash2 size={18} strokeWidth={2} aria-hidden />
+                          </TableRowIconButton>
+                          <TableRowIconButton
+                            type="button"
+                            aria-label="Multiline"
+                            title="Multiline"
+                            aria-pressed={cap.flags.includes("multiline")}
+                            onClick={() =>
+                              toggleFlag(
+                                selectedRuleIndex!,
+                                ci,
+                                "multiline",
+                                !cap.flags.includes("multiline"),
+                              )
+                            }
+                          >
+                            <FileText size={18} strokeWidth={2} aria-hidden />
+                          </TableRowIconButton>
+                          <TableRowIconButton
+                            type="button"
+                            aria-label="Dot matches newlines"
+                            title="Dot matches newlines"
+                            aria-pressed={cap.flags.includes("dotall")}
+                            onClick={() =>
+                              toggleFlag(selectedRuleIndex!, ci, "dotall", !cap.flags.includes("dotall"))
+                            }
+                          >
+                            <CornerDownLeft size={18} strokeWidth={2} aria-hidden />
+                          </TableRowIconButton>
+                        </div>
                       </div>
                     </fieldset>
                   ))}

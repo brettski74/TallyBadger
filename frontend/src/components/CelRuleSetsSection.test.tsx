@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { CelRuleSetsSection } from "./CelRuleSetsSection";
@@ -121,7 +121,7 @@ describe("CelRuleSetsSection", () => {
     });
   });
 
-  it("moves a rule up when Up is clicked (order not undone by renumber)", async () => {
+  it("moves a rule up when Move rule up is clicked (order not undone by renumber)", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input.toString();
       if (url.includes("/import-rules/cel/rule-sets/1") && !init?.method) {
@@ -162,13 +162,38 @@ describe("CelRuleSetsSection", () => {
     expect(within(items[0]!).getByText("Alpha")).toBeInTheDocument();
     expect(within(items[1]!).getByText("Beta")).toBeInTheDocument();
 
-    await userEvent.click(within(items[1]!).getAllByRole("button")[0]!);
-
-    const upBeta = within(items[1]!).getByRole("button", { name: "Up" });
+    const upBeta = within(items[1]!).getByRole("button", { name: "Move rule up" });
     await userEvent.click(upBeta);
 
     items = screen.getAllByRole("listitem");
     expect(within(items[0]!).getByText("Beta")).toBeInTheDocument();
     expect(within(items[1]!).getByText("Alpha")).toBeInTheDocument();
+  });
+
+  it("exposes Save keyboard hint on the Save button when dirty", async () => {
+    mockFetchListAndCreate();
+    render(<CelRuleSetsSection />);
+
+    await userEvent.selectOptions(await screen.findByRole("combobox"), "New rule set…");
+    await userEvent.type(screen.getByRole("textbox", { name: /^Rule set name$/i }), "x");
+
+    const saveBtn = screen.getByRole("button", { name: "Save" });
+    expect(saveBtn).toHaveAttribute("title", expect.stringMatching(/Save \(Ctrl\+S\)|Save \(⌘\+S\)/));
+    expect(saveBtn).toHaveAttribute("aria-keyshortcuts", expect.stringMatching(/Control|Meta/));
+  });
+
+  it("submits when Ctrl+S is pressed while focus is inside the form", async () => {
+    const fetchMock = mockFetchListAndCreate();
+    render(<CelRuleSetsSection />);
+
+    await userEvent.selectOptions(await screen.findByRole("combobox"), "New rule set…");
+    const nameField = screen.getByRole("textbox", { name: /^Rule set name$/i });
+    await userEvent.type(nameField, "Hotkey rules");
+    fireEvent.keyDown(nameField, { key: "s", ctrlKey: true, bubbles: true });
+
+    await waitFor(() => {
+      const posts = fetchMock.mock.calls.filter(([, init]) => init?.method === "POST");
+      expect(posts.length).toBeGreaterThanOrEqual(1);
+    });
   });
 });
