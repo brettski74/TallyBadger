@@ -358,6 +358,177 @@ th {
   margin: 0;
 }
 
+/* Title | filter criteria | add entry — wide gap before filters reads as “presets ≠ page title”. */
+.journal-list-toolbar.journal-list-toolbar-with-filters {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 2rem;
+  row-gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.journal-list-toolbar-with-filters .journal-filters-line {
+  margin-bottom: 0;
+  justify-content: flex-start;
+  min-width: 0;
+}
+
+.journal-list-toolbar-with-filters > .table-row-icon-button:last-child {
+  justify-self: end;
+}
+
+.journal-filters-line {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  /* Do not use overflow: auto here — it clips absolutely positioned filter menus. */
+  overflow: visible;
+  min-height: 2.25rem;
+}
+
+.journal-filters-line label.journal-filter-slot,
+.journal-filters-line label.journal-filter-inline-checkbox {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  margin-bottom: 0;
+}
+
+.journal-filter-slot {
+  gap: 0.35rem;
+  flex-shrink: 0;
+}
+
+.journal-filter-inline-label {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.journal-filter-inline-checkbox {
+  gap: 0.35rem;
+  flex-shrink: 0;
+  white-space: nowrap;
+  font-size: 0.875rem;
+}
+
+.journal-filter-inline-checkbox input {
+  margin: 0;
+}
+
+.journal-filter-control {
+  height: 2rem;
+  min-height: 2rem;
+  padding: 0.15rem 0.4rem;
+  box-sizing: border-box;
+  font-size: 0.875rem;
+}
+
+.journal-filter-slot-select .journal-filter-control,
+.journal-filter-slot-number .journal-filter-control {
+  max-width: 9rem;
+}
+
+.journal-filter-slot-number .journal-filter-control {
+  width: 5.5rem;
+}
+
+.journal-filter-slot-date .journal-filter-control {
+  min-width: 9.5rem;
+}
+
+.journal-filter-slot-multi {
+  position: relative;
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.journal-filter-multi-trigger {
+  width: auto;
+  min-width: 4.5rem;
+  min-height: 2rem;
+  margin-top: 0;
+  padding: 0.2rem 0.5rem;
+  box-sizing: border-box;
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.35rem;
+  background: var(--bg-card);
+  color: var(--text);
+  border: 1px solid var(--border-input);
+  border-radius: 6px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.journal-filter-multi-value {
+  font-size: 0.875rem;
+  white-space: nowrap;
+}
+
+.journal-filter-details-menu {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 2px);
+  z-index: 30;
+  min-width: 12rem;
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid var(--border-input);
+  border-radius: 6px;
+  background: var(--bg-card);
+  padding: 0.35rem 0.5rem;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.12);
+}
+
+.journal-filter-menu-option {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.15rem 0;
+  cursor: pointer;
+  font-size: 0.875rem;
+  margin-bottom: 0;
+}
+
+.journal-filter-menu-option input[type="checkbox"] {
+  width: auto;
+  min-width: 0;
+  margin-top: 0;
+}
+
+.journal-filter-clear {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: none;
+  color: var(--link);
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 500;
+  padding: 0.2rem 0 0.35rem;
+  margin: 0 0 0.2rem;
+  min-height: 0;
+  box-sizing: border-box;
+}
+
+.journal-filter-clear:hover {
+  text-decoration: underline;
+}
+
+.journal-presets-fetch-error {
+  margin: 0 0 0.5rem;
+  font-size: 0.875rem;
+}
+
 .journal-filters {
   display: flex;
   flex-wrap: wrap;
@@ -368,16 +539,6 @@ th {
 .journal-filters label {
   margin: 0;
   min-width: 140px;
-}
-
-.journal-presets-row {
-  align-items: flex-end;
-}
-
-.journal-presets-row button {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
 }
 
 .dialog-actions {

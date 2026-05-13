@@ -231,7 +231,7 @@ describe("JournalEntriesPanel", () => {
     expect(String(firstListCall![0])).not.toContain("needs_review");
 
     const user = userEvent.setup();
-    await user.click(screen.getByLabelText("Show entries needing review only"));
+    await user.click(screen.getByLabelText("Requires review"));
 
     await waitFor(() => {
       const listCalls = fetchMock.mock.calls.filter(([u]) => isPlainJournalEntriesListUrl(u));
@@ -505,7 +505,9 @@ describe("JournalEntriesPanel", () => {
     );
 
     const user = userEvent.setup();
-    await user.selectOptions(screen.getByLabelText("Filter by accounts"), ["1", "2"]);
+    await user.click(screen.getByRole("button", { name: "Filter by accounts" }));
+    await user.click(screen.getByRole("checkbox", { name: "Cash" }));
+    await user.click(screen.getByRole("checkbox", { name: "Income" }));
     await user.selectOptions(screen.getByLabelText("Filter by cheque association"), ["with_cheque"]);
     await user.type(screen.getByLabelText("Filter amount low"), "10");
     await user.type(screen.getByLabelText("Filter amount high"), "99");
@@ -578,7 +580,7 @@ describe("JournalEntriesPanel", () => {
     );
 
     const user = userEvent.setup();
-    await user.click(await screen.findByLabelText("Show entries needing review only"));
+    await user.click(await screen.findByLabelText("Requires review"));
     await user.click(screen.getByRole("button", { name: /Save current filter as preset/ }));
     await user.type(await screen.findByLabelText("Preset name"), "Needs review");
     await user.click(screen.getByRole("button", { name: "Save" }));
@@ -705,10 +707,10 @@ describe("JournalEntriesPanel", () => {
     );
 
     const user = userEvent.setup();
-    const presetSelect = await screen.findByLabelText("Apply filter preset");
+    const presetSelect = await screen.findByLabelText("Filter preset");
     await user.selectOptions(presetSelect, ["33"]);
 
-    expect(screen.getByLabelText("Show entries needing review only")).toBeChecked();
+    expect(screen.getByLabelText("Requires review")).toBeChecked();
     expect((presetSelect as HTMLSelectElement).value).toBe("33");
 
     await waitFor(() => {
@@ -724,7 +726,7 @@ describe("JournalEntriesPanel", () => {
       expect(last).toContain("needs_review=true");
     });
 
-    await user.click(screen.getByLabelText("Show entries needing review only"));
+    await user.click(screen.getByLabelText("Requires review"));
     expect((presetSelect as HTMLSelectElement).value).toBe("");
   });
 });

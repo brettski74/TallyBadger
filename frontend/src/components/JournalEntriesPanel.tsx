@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Paperclip, Pencil, Save } from "lucide-react";
+import { NotebookPen, Paperclip, Pencil, Save } from "lucide-react";
 
 import type { Account } from "../api/accounts";
 import type { Cheque } from "../api/cheques";
@@ -113,12 +113,6 @@ function filterMatchesDefinition(
   );
 }
 
-function readSelectedIds(select: HTMLSelectElement): number[] {
-  return Array.from(select.selectedOptions)
-    .map((o) => Number(o.value))
-    .filter((n) => Number.isFinite(n));
-}
-
 function linesFromEntry(
   lines: {
     id: number;
@@ -137,6 +131,115 @@ function linesFromEntry(
     account_name: l.account_name,
     party_name: l.party_name ?? undefined,
   }));
+}
+
+interface FilterMultiOption {
+  id: number;
+  name: string;
+}
+
+function JournalFilterMultiDropdown({
+  label,
+  ariaFilterLabel,
+  options,
+  selectedIds,
+  onIdsChange,
+}: {
+  label: string;
+  ariaFilterLabel: string;
+  options: FilterMultiOption[];
+  selectedIds: number[];
+  onIdsChange: (ids: number[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  const summaryText =
+    selectedIds.length === 0 ? "All" : `${selectedIds.length} selected`;
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    function handlePointerDown(event: PointerEvent) {
+      const root = rootRef.current;
+      if (root && !root.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  function toggle(id: number) {
+    const set = new Set(selectedIds);
+    if (set.has(id)) {
+      set.delete(id);
+    } else {
+      set.add(id);
+    }
+    onIdsChange([...set].sort((a, b) => a - b));
+  }
+
+  return (
+    <div ref={rootRef} className="journal-filter-slot journal-filter-slot-multi">
+      <button
+        type="button"
+        className="journal-filter-multi-trigger"
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        aria-label={ariaFilterLabel}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span className="journal-filter-inline-label">{label}</span>
+        <span className="journal-filter-multi-value">{summaryText}</span>
+      </button>
+      {open && (
+        <div className="journal-filter-details-menu" role="listbox" aria-label={ariaFilterLabel}>
+          {selectedIds.length > 0 && (
+            <button
+              type="button"
+              className="journal-filter-clear"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onIdsChange([]);
+              }}
+            >
+              Clear selection
+            </button>
+          )}
+          {options.map((o) => (
+            <label key={o.id} className="journal-filter-menu-option">
+              <input
+                type="checkbox"
+                checked={selectedIds.includes(o.id)}
+                onChange={() => toggle(o.id)}
+              />
+              <span>{o.name}</span>
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 interface JournalEntriesPanelProps {
@@ -523,143 +626,22 @@ export function JournalEntriesPanel({
           Add at least two accounts under <strong>Accounts</strong> before posting journal lines.
         </p>
       )}
-      <div className="journal-list-toolbar">
+      <div className="journal-list-toolbar journal-list-toolbar-with-filters">
         <h2>Journal entries</h2>
-        <button type="button" onClick={() => void openCreate()} disabled={accounts.length < 2}>
-          New entry
-        </button>
-      </div>
-
-      <div className="journal-filters">
-        <label>
-          From date
-          <input
-            aria-label="Filter from date"
-            type="date"
-            value={filter.fromDate}
-            onChange={(e) => updateFilter({ fromDate: e.target.value })}
-          />
-        </label>
-        <label>
-          To date
-          <input
-            aria-label="Filter to date"
-            type="date"
-            value={filter.toDate}
-            onChange={(e) => updateFilter({ toDate: e.target.value })}
-          />
-        </label>
-        <label className="checkbox">
-          <input
-            aria-label="Show entries needing review only"
-            type="checkbox"
-            checked={filter.needsReviewOnly}
-            onChange={(e) => updateFilter({ needsReviewOnly: e.target.checked })}
-          />
-          Needs review only
-        </label>
-        <label>
-          Cheque
-          <select
-            aria-label="Filter by cheque association"
-            value={filter.chequeAssociation}
-            onChange={(e) =>
-              updateFilter({ chequeAssociation: e.target.value as ChequeAssociation })
-            }
+        <div className="journal-filters-line">
+          <TableRowIconButton
+            type="button"
+            aria-label="Save current filter as preset"
+            title="Save current filter as preset"
+            onClick={openSaveDialog}
           >
-            <option value="any">Any</option>
-            <option value="with_cheque">Has cheque</option>
-            <option value="without_cheque">No cheque</option>
-          </select>
-        </label>
-        <label>
-          Amount low
-          <input
-            aria-label="Filter amount low"
-            type="number"
-            min={0}
-            step={1}
-            inputMode="numeric"
-            value={filter.amountLow}
-            onChange={(e) => updateFilter({ amountLow: e.target.value })}
-          />
-        </label>
-        <label>
-          Amount high
-          <input
-            aria-label="Filter amount high"
-            type="number"
-            min={0}
-            step={1}
-            inputMode="numeric"
-            value={filter.amountHigh}
-            onChange={(e) => updateFilter({ amountHigh: e.target.value })}
-          />
-        </label>
-      </div>
-
-      <div className="journal-filters">
-        <label>
-          Accounts
+            <Save size={18} strokeWidth={2} aria-hidden />
+          </TableRowIconButton>
+          <label className="journal-filter-slot journal-filter-slot-select">
+          <span className="journal-filter-inline-label">Filter Preset</span>
           <select
-            aria-label="Filter by accounts"
-            multiple
-            size={Math.min(6, Math.max(3, accounts.length))}
-            value={filter.accountIds.map(String)}
-            onChange={(e) =>
-              updateFilter({ accountIds: readSelectedIds(e.currentTarget) })
-            }
-          >
-            {accounts.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Parties
-          <select
-            aria-label="Filter by parties"
-            multiple
-            size={Math.min(6, Math.max(3, parties.length))}
-            value={filter.partyIds.map(String)}
-            onChange={(e) =>
-              updateFilter({ partyIds: readSelectedIds(e.currentTarget) })
-            }
-          >
-            {parties.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Accrual plans
-          <select
-            aria-label="Filter by accrual plans"
-            multiple
-            size={Math.min(6, Math.max(3, accrualPlans.length || 3))}
-            value={filter.accrualPlanIds.map(String)}
-            onChange={(e) =>
-              updateFilter({ accrualPlanIds: readSelectedIds(e.currentTarget) })
-            }
-          >
-            {accrualPlans.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-
-      <div className="journal-filters journal-presets-row">
-        <label>
-          Apply preset
-          <select
-            aria-label="Apply filter preset"
+            className="journal-filter-control"
+            aria-label="Filter preset"
             value={displayedPresetId != null ? String(displayedPresetId) : ""}
             onChange={(e) => {
               const v = e.target.value;
@@ -678,21 +660,113 @@ export function JournalEntriesPanel({
             ))}
           </select>
         </label>
-        <button
+        <JournalFilterMultiDropdown
+          label="Accounts"
+          ariaFilterLabel="Filter by accounts"
+          options={accounts.map((a) => ({ id: a.id, name: a.name }))}
+          selectedIds={filter.accountIds}
+          onIdsChange={(ids) => updateFilter({ accountIds: ids })}
+        />
+        <JournalFilterMultiDropdown
+          label="Parties"
+          ariaFilterLabel="Filter by parties"
+          options={parties.map((p) => ({ id: p.id, name: p.name }))}
+          selectedIds={filter.partyIds}
+          onIdsChange={(ids) => updateFilter({ partyIds: ids })}
+        />
+        <JournalFilterMultiDropdown
+          label="Accrual Plans"
+          ariaFilterLabel="Filter by accrual plans"
+          options={accrualPlans.map((p) => ({ id: p.id, name: p.name }))}
+          selectedIds={filter.accrualPlanIds}
+          onIdsChange={(ids) => updateFilter({ accrualPlanIds: ids })}
+        />
+        <label className="journal-filter-slot journal-filter-slot-select">
+          <span className="journal-filter-inline-label">Cheque</span>
+          <select
+            className="journal-filter-control"
+            aria-label="Filter by cheque association"
+            value={filter.chequeAssociation}
+            onChange={(e) =>
+              updateFilter({ chequeAssociation: e.target.value as ChequeAssociation })
+            }
+          >
+            <option value="any">Any</option>
+            <option value="with_cheque">Has cheque</option>
+            <option value="without_cheque">No cheque</option>
+          </select>
+        </label>
+        <label className="journal-filter-slot journal-filter-inline-checkbox">
+          <input
+            type="checkbox"
+            checked={filter.needsReviewOnly}
+            onChange={(e) => updateFilter({ needsReviewOnly: e.target.checked })}
+          />
+          <span>Requires review</span>
+        </label>
+        <label className="journal-filter-slot journal-filter-slot-number">
+          <span className="journal-filter-inline-label">Amount Low</span>
+          <input
+            className="journal-filter-control"
+            aria-label="Filter amount low"
+            type="number"
+            min={0}
+            step={1}
+            inputMode="numeric"
+            value={filter.amountLow}
+            onChange={(e) => updateFilter({ amountLow: e.target.value })}
+          />
+        </label>
+        <label className="journal-filter-slot journal-filter-slot-number">
+          <span className="journal-filter-inline-label">Amount High</span>
+          <input
+            className="journal-filter-control"
+            aria-label="Filter amount high"
+            type="number"
+            min={0}
+            step={1}
+            inputMode="numeric"
+            value={filter.amountHigh}
+            onChange={(e) => updateFilter({ amountHigh: e.target.value })}
+          />
+        </label>
+        <label className="journal-filter-slot journal-filter-slot-date">
+          <span className="journal-filter-inline-label">From Date</span>
+          <input
+            className="journal-filter-control"
+            aria-label="Filter from date"
+            type="date"
+            value={filter.fromDate}
+            onChange={(e) => updateFilter({ fromDate: e.target.value })}
+          />
+        </label>
+        <label className="journal-filter-slot journal-filter-slot-date">
+          <span className="journal-filter-inline-label">To Date</span>
+          <input
+            className="journal-filter-control"
+            aria-label="Filter to date"
+            type="date"
+            value={filter.toDate}
+            onChange={(e) => updateFilter({ toDate: e.target.value })}
+          />
+        </label>
+        </div>
+        <TableRowIconButton
           type="button"
-          className="button-secondary"
-          aria-label="Save current filter as preset"
-          title="Save current filter as preset"
-          onClick={openSaveDialog}
+          onClick={() => void openCreate()}
+          disabled={accounts.length < 2}
+          title="Add Journal Entry"
+          aria-label="Add Journal Entry"
         >
-          <Save size={16} strokeWidth={2} aria-hidden /> Save preset
-        </button>
-        {presetsError && (
-          <p className="error" role="alert">
-            {presetsError}
-          </p>
-        )}
+          <NotebookPen size={18} strokeWidth={2} aria-hidden />
+        </TableRowIconButton>
       </div>
+
+      {presetsError && (
+        <p className="error journal-presets-fetch-error" role="alert">
+          {presetsError}
+        </p>
+      )}
 
       <dialog ref={saveDialogRef} aria-label="Save filter preset">
         <form method="dialog" onSubmit={(e) => void handleSavePreset(e)}>
