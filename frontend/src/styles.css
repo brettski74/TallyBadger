@@ -607,6 +607,20 @@ th {
   cursor: not-allowed;
 }
 
+.table-row-icon-button[aria-pressed="true"] {
+  background: var(--primary);
+  color: var(--primary-text);
+}
+
+.table-row-icon-button[aria-pressed="true"]:hover:not(:disabled) {
+  background: #0369a1;
+  color: var(--primary-text);
+}
+
+.table-row-icon-button[aria-pressed="true"]:focus-visible {
+  outline-color: var(--primary-text);
+}
+
 .table-row-actions {
   display: inline-flex;
   flex-wrap: wrap;
@@ -1174,24 +1188,6 @@ th.table-row-actions-heading {
   margin: 0 0 0.75rem;
 }
 
-.rule-sets-capture-summary {
-  list-style: none;
-  margin: 0 0 0.75rem;
-  padding: 0;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.35rem;
-}
-
-.rule-sets-capture-chip {
-  display: inline-block;
-  padding: 0.25rem 0.5rem;
-  border-radius: 6px;
-  background: var(--bg-subtle);
-  border: 1px solid var(--border);
-  font-size: 0.875rem;
-}
-
 .rule-sets-capture-actions button {
   width: auto;
   margin-top: 0;
@@ -1204,27 +1200,73 @@ th.table-row-actions-heading {
   border-radius: 8px;
 }
 
-.rule-sets-capture-toolbar {
+.rule-sets-capture-fieldset > legend.sr-only {
+  padding: 0;
+}
+
+.rule-sets-matcher-layout {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.65rem 0.75rem;
+  align-items: stretch;
+}
+
+.rule-sets-matcher-reorder {
   display: flex;
   flex-direction: column;
-  flex-wrap: nowrap;
-  align-items: center;
+  justify-content: center;
   gap: 0.25rem;
-  margin-bottom: 0.75rem;
 }
 
-.rule-sets-capture-toolbar button {
-  width: auto;
-  margin: 0;
-  padding: 0.35rem 0.55rem;
-  font-size: 0.85rem;
-}
-
-.rule-sets-flags {
+.rule-sets-matcher-fields {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 0.65rem;
+  min-width: 0;
+}
+
+.rule-sets-matcher-label-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 0.75rem;
-  margin-top: 0.5rem;
+}
+
+@media (max-width: 520px) {
+  .rule-sets-matcher-label-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.rule-sets-matcher-field {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  margin: 0;
+  font: inherit;
+}
+
+.rule-sets-matcher-field-caption {
+  flex-shrink: 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.rule-sets-matcher-field input {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+  box-sizing: border-box;
+}
+
+.rule-sets-matcher-flag-grid {
+  display: grid;
+  grid-template-columns: 32px 32px;
+  grid-template-rows: 32px 32px;
+  gap: 0.25rem;
+  align-self: center;
 }
 
 .rule-sets-cel-field {
