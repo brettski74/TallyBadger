@@ -355,12 +355,8 @@ export function CelRuleSetsSection() {
   }
 
   function addRule() {
-    let newIndex = 0;
-    setRules((prev) => {
-      const next = [...prev, newRule(prev.length)];
-      newIndex = next.length - 1;
-      return next;
-    });
+    const newIndex = draftRules.length;
+    setRules((prev) => [...prev, newRule(prev.length)]);
     setSelectedRuleIndex(newIndex);
   }
 

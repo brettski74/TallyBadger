@@ -121,6 +121,56 @@ describe("CelRuleSetsSection", () => {
     });
   });
 
+  it("selects the newly added rule for editing (not the first rule)", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/import-rules/cel/rule-sets/1") && !init?.method) {
+        return new Response(
+          JSON.stringify({
+            id: 1,
+            name: "One rule",
+            rule_set: {
+              rules: [
+                {
+                  name: "Existing",
+                  enabled: true,
+                  sort_order: 0,
+                  expression: "true",
+                  captures: [],
+                },
+              ],
+            },
+            created_at: "2026-04-01T00:00:00Z",
+            updated_at: "2026-04-01T00:00:00Z",
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.endsWith("/import-rules/cel/rule-sets")) {
+        return new Response(
+          JSON.stringify([{ id: 1, name: "One rule", updated_at: "2026-04-01T00:00:00Z" }]),
+          { status: 200 },
+        );
+      }
+      return new Response("x", { status: 500 });
+    });
+
+    render(<CelRuleSetsSection />);
+    await userEvent.selectOptions(await screen.findByRole("combobox"), "One rule");
+
+    await waitFor(() => {
+      expect(screen.getByRole("textbox", { name: /^CEL expression$/i })).toHaveValue("true");
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: "Add rule" }));
+
+    const items = screen.getAllByRole("listitem");
+    expect(items).toHaveLength(2);
+    expect(items[0]).not.toHaveClass("is-active");
+    expect(items[1]).toHaveClass("is-active");
+    expect(screen.getByRole("textbox", { name: /^CEL expression$/i })).toHaveValue("null");
+  });
+
   it("moves a rule up when Move rule up is clicked (order not undone by renumber)", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input.toString();
