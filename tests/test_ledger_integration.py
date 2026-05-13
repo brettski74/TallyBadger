@@ -25,6 +25,7 @@ from tallybadger.ledger.models import (
     JournalLineIn,
     LedgerSettingsUpdate,
     PartyCreate,
+    PartyUpdate,
     SettlementAllocationIn,
     SettlementWrite,
 )
@@ -1091,3 +1092,254 @@ def test_api_attachment_download_content_disposition(integration_db_url: str) ->
         assert "my file.pdf" in cd or "my%20file.pdf" in cd
     finally:
         app.dependency_overrides.pop(get_ledger_service, None)
+
+
+def test_update_entry_allows_inactive_account_when_account_party_pair_unchanged(
+    ledger_service: LedgerService,
+) -> None:
+    cash = ledger_service.create_account(AccountCreate(name="Cash", type="asset"))
+    revenue = ledger_service.create_account(AccountCreate(name="Rent", type="revenue"))
+    party = ledger_service.create_party(PartyCreate(name="Tenant A", role="customer", is_active=True))
+    created = ledger_service.create_entry(
+        JournalEntryWrite(
+            entry_date=date(2026, 5, 10),
+            summary="rent in",
+            description="rent in",
+            lines=[
+                JournalLineIn(account_id=cash.id, party_id=party.id, amount=Decimal("100.00")),
+                JournalLineIn(account_id=revenue.id, party_id=party.id, amount=Decimal("-100.00")),
+            ],
+        )
+    )
+    ledger_service.update_account(revenue.id, AccountUpdate(is_active=False))
+    ledger_service.update_party(party.id, PartyUpdate(is_active=False))
+
+    updated = ledger_service.update_entry(
+        created.id,
+        JournalEntryWrite(
+            entry_date=date(2026, 5, 11),
+            summary="rent in revised",
+            description="edited header only",
+            lines=[
+                JournalLineIn(account_id=cash.id, party_id=party.id, amount=Decimal("120.00")),
+                JournalLineIn(account_id=revenue.id, party_id=party.id, amount=Decimal("-120.00")),
+            ],
+        ),
+    )
+    assert updated.summary == "rent in revised"
+    assert {ln.account_id for ln in updated.lines} == {cash.id, revenue.id}
+
+
+def test_update_entry_rejects_line_with_new_inactive_account(
+    ledger_service: LedgerService,
+) -> None:
+    cash = ledger_service.create_account(AccountCreate(name="Cash", type="asset"))
+    revenue = ledger_service.create_account(AccountCreate(name="Rent", type="revenue"))
+    dormant = ledger_service.create_account(AccountCreate(name="Old Revenue", type="revenue"))
+    ledger_service.update_account(dormant.id, AccountUpdate(is_active=False))
+    created = ledger_service.create_entry(
+        JournalEntryWrite(
+            entry_date=date(2026, 5, 12),
+            summary="initial",
+            description="initial",
+            lines=[
+                JournalLineIn(account_id=cash.id, amount=Decimal("50.00")),
+                JournalLineIn(account_id=revenue.id, amount=Decimal("-50.00")),
+            ],
+        )
+    )
+    with pytest.raises(LedgerValidationError, match="deactivated"):
+        ledger_service.update_entry(
+            created.id,
+            JournalEntryWrite(
+                entry_date=date(2026, 5, 12),
+                summary="swap to inactive",
+                description="swap to inactive",
+                lines=[
+                    JournalLineIn(account_id=cash.id, amount=Decimal("50.00")),
+                    JournalLineIn(account_id=dormant.id, amount=Decimal("-50.00")),
+                ],
+            ),
+        )
+
+
+def test_income_expense_report_omits_inactive_zero_accounts(
+    ledger_service: LedgerService,
+) -> None:
+    cash = ledger_service.create_account(AccountCreate(name="Cash", type="asset"))
+    active_rev = ledger_service.create_account(AccountCreate(name="Active Rent", type="revenue"))
+    dormant_rev = ledger_service.create_account(AccountCreate(name="Dormant Revenue", type="revenue"))
+    ledger_service.create_entry(
+        JournalEntryWrite(
+            entry_date=date(2026, 3, 1),
+            summary="only active rent",
+            description=None,
+            lines=[
+                JournalLineIn(account_id=cash.id, amount=Decimal("10.00")),
+                JournalLineIn(account_id=active_rev.id, amount=Decimal("-10.00")),
+            ],
+        )
+    )
+    ledger_service.update_account(dormant_rev.id, AccountUpdate(is_active=False))
+    report = ledger_service.income_expense_report(
+        start_date=date(2026, 1, 1),
+        end_date=date(2026, 12, 31),
+        exclude_zero_balance_accounts=False,
+        preset=None,
+    )
+    rev_ids = {r.account_id for r in report.revenue_accounts}
+    assert dormant_rev.id not in rev_ids
+    assert active_rev.id in rev_ids
+
+
+def test_balance_sheet_report_omits_inactive_zero_accounts(
+    ledger_service: LedgerService,
+) -> None:
+    cash = ledger_service.create_account(AccountCreate(name="Cash", type="asset"))
+    dormant_asset = ledger_service.create_account(AccountCreate(name="Idle Equipment", type="asset"))
+    equity_seed = ledger_service.create_account(AccountCreate(name="Equity Seed", type="equity"))
+    ledger_service.create_entry(
+        JournalEntryWrite(
+            entry_date=date(2026, 2, 1),
+            summary="fund cash",
+            description=None,
+            lines=[
+                JournalLineIn(account_id=cash.id, amount=Decimal("200.00")),
+                JournalLineIn(account_id=equity_seed.id, amount=Decimal("-200.00")),
+            ],
+        )
+    )
+    ledger_service.update_account(dormant_asset.id, AccountUpdate(is_active=False))
+    report = ledger_service.balance_sheet_report(
+        as_of_date=date(2026, 6, 1),
+        exclude_requires_review=False,
+        preset=None,
+    )
+    asset_ids = {a.account_id for a in report.assets.accounts if a.account_id is not None}
+    assert dormant_asset.id not in asset_ids
+    assert cash.id in asset_ids
+
+
+def test_balance_sheet_keeps_inactive_account_with_nonzero_balance(
+    ledger_service: LedgerService,
+) -> None:
+    cash = ledger_service.create_account(AccountCreate(name="Cash", type="asset"))
+    used = ledger_service.create_account(AccountCreate(name="Used Asset", type="asset"))
+    eq = ledger_service.create_account(AccountCreate(name="Equity", type="equity"))
+    ledger_service.create_entry(
+        JournalEntryWrite(
+            entry_date=date(2026, 2, 1),
+            summary="buy asset",
+            description=None,
+            lines=[
+                JournalLineIn(account_id=cash.id, amount=Decimal("-50.00")),
+                JournalLineIn(account_id=used.id, amount=Decimal("50.00")),
+            ],
+        )
+    )
+    ledger_service.create_entry(
+        JournalEntryWrite(
+            entry_date=date(2026, 2, 2),
+            summary="balance",
+            description=None,
+            lines=[
+                JournalLineIn(account_id=cash.id, amount=Decimal("50.00")),
+                JournalLineIn(account_id=eq.id, amount=Decimal("-50.00")),
+            ],
+        )
+    )
+    ledger_service.update_account(used.id, AccountUpdate(is_active=False))
+    report = ledger_service.balance_sheet_report(
+        as_of_date=date(2026, 6, 1),
+        exclude_requires_review=False,
+        preset=None,
+    )
+    asset_ids = {a.account_id for a in report.assets.accounts if a.account_id is not None}
+    assert used.id in asset_ids
+
+
+def test_create_accrual_plan_rejects_inactive_party_or_accounts(
+    ledger_service: LedgerService,
+) -> None:
+    ar = ledger_service.create_account(AccountCreate(name="AR", type="asset"))
+    rent = ledger_service.create_account(AccountCreate(name="Rent", type="revenue"))
+    party = ledger_service.create_party(PartyCreate(name="Inactive Tenant", role="customer", is_active=True))
+    ledger_service.update_party(party.id, PartyUpdate(is_active=False))
+    with pytest.raises(LedgerValidationError, match="inactive"):
+        ledger_service.create_accrual_plan(
+            AccrualPlanCreate(
+                name="Bad party",
+                direction="revenue",
+                party_id=party.id,
+                target_account_id=rent.id,
+                bridge_account_id=ar.id,
+                frequency="monthly_day",
+                start_date=date(2026, 8, 1),
+                end_date=date(2026, 8, 31),
+                amount=Decimal("100.00"),
+                summary_template="{plan}",
+                day_of_month=1,
+            ),
+        )
+
+    party2 = ledger_service.create_party(PartyCreate(name="Active Tenant", role="customer", is_active=True))
+    bad_bridge = ledger_service.create_account(AccountCreate(name="Bad AR", type="asset"))
+    ledger_service.update_account(bad_bridge.id, AccountUpdate(is_active=False))
+    with pytest.raises(LedgerValidationError, match="deactivated"):
+        ledger_service.create_accrual_plan(
+            AccrualPlanCreate(
+                name="Bad bridge",
+                direction="revenue",
+                party_id=party2.id,
+                target_account_id=rent.id,
+                bridge_account_id=bad_bridge.id,
+                frequency="monthly_day",
+                start_date=date(2026, 8, 1),
+                end_date=date(2026, 8, 31),
+                amount=Decimal("100.00"),
+                summary_template="{plan}",
+                day_of_month=1,
+            ),
+        )
+
+
+def test_update_ledger_settings_validate_on_change_for_system_defaults(
+    ledger_service: LedgerService,
+) -> None:
+    ar = ledger_service.create_account(AccountCreate(name="Tenant AR", type="asset"))
+    ar2 = ledger_service.create_account(AccountCreate(name="Tenant AR 2", type="asset"))
+    ledger_service.update_ledger_settings(LedgerSettingsUpdate(accounts_receivable_account_id=ar.id))
+    ledger_service.update_account(ar.id, AccountUpdate(is_active=False))
+
+    out = ledger_service.update_ledger_settings(
+        LedgerSettingsUpdate(max_attachment_upload_bytes=2048),
+    )
+    assert out.accounts_receivable_account_id == ar.id
+    assert out.max_attachment_upload_bytes == 2048
+
+    ledger_service.update_account(ar2.id, AccountUpdate(is_active=False))
+    with pytest.raises(LedgerValidationError, match="deactivated"):
+        ledger_service.update_ledger_settings(LedgerSettingsUpdate(accounts_receivable_account_id=ar2.id))
+
+
+def test_update_party_does_not_revalidate_inactive_default_accounts_unless_changed(
+    ledger_service: LedgerService,
+) -> None:
+    rev = ledger_service.create_account(AccountCreate(name="Party Rev", type="revenue"))
+    party = ledger_service.create_party(
+        PartyCreate(
+            name="Mixed Co",
+            role="customer",
+            is_active=True,
+            default_revenue_account_id=rev.id,
+        )
+    )
+    ledger_service.update_account(rev.id, AccountUpdate(is_active=False))
+    out = ledger_service.update_party(party.id, PartyUpdate(name="Mixed Co Renamed"))
+    assert out.name == "Mixed Co Renamed"
+    assert out.default_revenue_account_id == rev.id
+
+    rev2 = ledger_service.create_account(AccountCreate(name="Rev Two", type="revenue"))
+    ledger_service.update_account(rev2.id, AccountUpdate(is_active=False))
+    with pytest.raises(LedgerValidationError, match="active"):
+        ledger_service.update_party(party.id, PartyUpdate(default_revenue_account_id=rev2.id))
