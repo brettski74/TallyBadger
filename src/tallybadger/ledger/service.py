@@ -1,7 +1,7 @@
 from collections import Counter, defaultdict
 from collections.abc import Callable
 from datetime import date, timedelta
-from typing import Literal
+from typing import Any, Literal
 import calendar
 import os
 import re
@@ -253,6 +253,26 @@ class LedgerConflictError(LedgerError):
 
 class LedgerNotFoundError(LedgerError):
     """Raised when a ledger record does not exist."""
+
+
+class LedgerDuplicateImportContentError(LedgerError):
+    """Another import batch already recorded this file hash; client may confirm and retry."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "This CSV matches the content of a previously loaded import. "
+            "Submit the import again with confirm_duplicate_content=true if you still want to post it.",
+        )
+
+
+class LedgerImportBasenameConflictError(LedgerError):
+    """An active import batch already uses this basename (case-insensitive)."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "An active import batch already uses this file name (ignoring case). "
+            "Deactivate the earlier batch or rename the file, then try again.",
+        )
 
 
 class LedgerService:
@@ -1946,52 +1966,80 @@ class LedgerService:
                 (debit_account_id,),
             )
 
+    def _insert_journal_entry_as_new(
+        self,
+        cur: Any,
+        payload: JournalEntryWrite,
+        *,
+        import_batch_id: int | None,
+    ) -> int:
+        self._assert_all_line_accounts_exist(cur, payload.lines)
+        self._assert_all_line_parties_exist(cur, payload.lines)
+        self._assert_journal_cheque_reference(cur, payload.cheque_id)
+        new_review = _coerce_new_review_messages(payload)
+        if import_batch_id is None:
+            cur.execute(
+                """
+                INSERT INTO journal_entries (
+                  entry_date, summary, description, requires_review, cheque_id
+                )
+                VALUES (%s, %s, %s, FALSE, %s)
+                RETURNING id
+                """,
+                (
+                    payload.entry_date,
+                    payload.summary.strip(),
+                    payload.description,
+                    payload.cheque_id,
+                ),
+            )
+        else:
+            cur.execute(
+                """
+                INSERT INTO journal_entries (
+                  entry_date, summary, description, requires_review, cheque_id, import_batch_id
+                )
+                VALUES (%s, %s, %s, FALSE, %s, %s)
+                RETURNING id
+                """,
+                (
+                    payload.entry_date,
+                    payload.summary.strip(),
+                    payload.description,
+                    payload.cheque_id,
+                    import_batch_id,
+                ),
+            )
+        entry_id = int(cur.fetchone()["id"])
+        for line in payload.lines:
+            self._assert_account_active(cur, line.account_id)
+            self._assert_party_active(cur, line.party_id)
+            cur.execute(
+                """
+                INSERT INTO journal_lines (entry_id, account_id, party_id, amount)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (entry_id, line.account_id, line.party_id, line.amount),
+            )
+        self._assert_entry_balanced(cur, entry_id)
+        self._insert_review_messages(cur, entry_id, new_review)
+        self._sync_cheque_register_after_journal_save(
+            cur,
+            entry_date=payload.entry_date,
+            new_cheque_id=payload.cheque_id,
+            prev_cheque_id=None,
+        )
+        return entry_id
+
     def create_entry(self, payload: JournalEntryWrite) -> JournalEntryOut:
         self._validate_summary(payload.summary)
         self._validate_lines(payload.lines)
         _validate_review_request(payload, 0)
-        new_review = _coerce_new_review_messages(payload)
         try:
             with self._connection_factory() as conn:
                 with conn.transaction():
                     with conn.cursor(row_factory=dict_row) as cur:
-                        self._assert_all_line_accounts_exist(cur, payload.lines)
-                        self._assert_all_line_parties_exist(cur, payload.lines)
-                        self._assert_journal_cheque_reference(cur, payload.cheque_id)
-                        cur.execute(
-                            """
-                            INSERT INTO journal_entries (
-                              entry_date, summary, description, requires_review, cheque_id
-                            )
-                            VALUES (%s, %s, %s, FALSE, %s)
-                            RETURNING id
-                            """,
-                            (
-                                payload.entry_date,
-                                payload.summary.strip(),
-                                payload.description,
-                                payload.cheque_id,
-                            ),
-                        )
-                        entry_id = cur.fetchone()["id"]
-                        for line in payload.lines:
-                            self._assert_account_active(cur, line.account_id)
-                            self._assert_party_active(cur, line.party_id)
-                            cur.execute(
-                                """
-                                INSERT INTO journal_lines (entry_id, account_id, party_id, amount)
-                                VALUES (%s, %s, %s, %s)
-                                """,
-                                (entry_id, line.account_id, line.party_id, line.amount),
-                            )
-                        self._assert_entry_balanced(cur, entry_id)
-                        self._insert_review_messages(cur, entry_id, new_review)
-                        self._sync_cheque_register_after_journal_save(
-                            cur,
-                            entry_date=payload.entry_date,
-                            new_cheque_id=payload.cheque_id,
-                            prev_cheque_id=None,
-                        )
+                        entry_id = self._insert_journal_entry_as_new(cur, payload, import_batch_id=None)
                     return self.get_entry(entry_id, conn=conn)
         except errors.ForeignKeyViolation as exc:
             raise LedgerValidationError("journal line references unknown account") from exc
@@ -2009,49 +2057,69 @@ class LedgerService:
                 with conn.transaction():
                     with conn.cursor(row_factory=dict_row) as cur:
                         for payload in payloads:
-                            self._assert_all_line_accounts_exist(cur, payload.lines)
-                            self._assert_all_line_parties_exist(cur, payload.lines)
-                            self._assert_journal_cheque_reference(cur, payload.cheque_id)
-                            cur.execute(
-                                """
-                                INSERT INTO journal_entries (
-                                  entry_date, summary, description, requires_review, cheque_id
-                                )
-                                VALUES (%s, %s, %s, FALSE, %s)
-                                RETURNING id
-                                """,
-                                (
-                                    payload.entry_date,
-                                    payload.summary.strip(),
-                                    payload.description,
-                                    payload.cheque_id,
-                                ),
-                            )
-                            entry_id = cur.fetchone()["id"]
-                            for line in payload.lines:
-                                self._assert_account_active(cur, line.account_id)
-                                self._assert_party_active(cur, line.party_id)
-                                cur.execute(
-                                    """
-                                    INSERT INTO journal_lines (entry_id, account_id, party_id, amount)
-                                    VALUES (%s, %s, %s, %s)
-                                    """,
-                                    (entry_id, line.account_id, line.party_id, line.amount),
-                                )
-                            self._assert_entry_balanced(cur, entry_id)
-                            self._insert_review_messages(
-                                cur,
-                                entry_id,
-                                _coerce_new_review_messages(payload),
-                            )
-                            self._sync_cheque_register_after_journal_save(
-                                cur,
-                                entry_date=payload.entry_date,
-                                new_cheque_id=payload.cheque_id,
-                                prev_cheque_id=None,
-                            )
+                            entry_id = self._insert_journal_entry_as_new(cur, payload, import_batch_id=None)
                             created_ids.append(entry_id)
                     return [self.get_entry(entry_id, conn=conn) for entry_id in created_ids]
+        except errors.ForeignKeyViolation as exc:
+            raise LedgerValidationError("journal line references unknown account") from exc
+
+    def create_import_batch_with_entries(
+        self,
+        *,
+        basename: str,
+        content_sha256: bytes,
+        payloads: list[JournalEntryWrite],
+        confirm_duplicate_content: bool,
+    ) -> tuple[int, list[JournalEntryOut]]:
+        if not payloads:
+            raise LedgerValidationError("import batch requires at least one journal entry")
+        for payload in payloads:
+            self._validate_summary(payload.summary)
+            self._validate_lines(payload.lines)
+            _validate_review_request(payload, 0)
+        created_ids: list[int] = []
+        try:
+            with self._connection_factory() as conn:
+                with conn.transaction():
+                    with conn.cursor(row_factory=dict_row) as cur:
+                        if not confirm_duplicate_content:
+                            cur.execute(
+                                """
+                                SELECT EXISTS(
+                                  SELECT 1 FROM import_batches WHERE content_sha256 = %s
+                                ) AS dup
+                                """,
+                                (content_sha256,),
+                            )
+                            if bool(cur.fetchone()["dup"]):
+                                raise LedgerDuplicateImportContentError()
+                        try:
+                            cur.execute(
+                                """
+                                INSERT INTO import_batches (basename, content_sha256)
+                                VALUES (%s, %s)
+                                RETURNING id
+                                """,
+                                (basename, content_sha256),
+                            )
+                            batch_row = cur.fetchone()
+                            assert batch_row is not None
+                            batch_id = int(batch_row["id"])
+                        except errors.UniqueViolation as exc:
+                            if (
+                                getattr(exc.diag, "constraint_name", None)
+                                == "uq_import_batches_active_basename_ci"
+                            ):
+                                raise LedgerImportBasenameConflictError() from exc
+                            raise
+                        for payload in payloads:
+                            entry_id = self._insert_journal_entry_as_new(
+                                cur,
+                                payload,
+                                import_batch_id=batch_id,
+                            )
+                            created_ids.append(entry_id)
+                    return batch_id, [self.get_entry(entry_id, conn=conn) for entry_id in created_ids]
         except errors.ForeignKeyViolation as exc:
             raise LedgerValidationError("journal line references unknown account") from exc
 

@@ -1035,6 +1035,10 @@ th.table-row-actions-heading {
   margin: 0 0 0.5rem 0;
 }
 
+.csv-import-duplicate-panel {
+  margin: 0.75rem 0 0 0;
+}
+
 .csv-import-validation-rows {
   margin: 0;
   padding-left: 1.25rem;

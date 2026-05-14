@@ -5,6 +5,7 @@ import { listCelRuleSets, type CelRuleSetSummary } from "../api/celRuleSets";
 import {
   ApiHttpError,
   createImportTemplate,
+  CsvImportDuplicateContentError,
   executeCsvImport,
   getImportTemplate,
   listImportTemplates,
@@ -146,6 +147,7 @@ export function CsvImportSection({ accounts, onImportSucceeded }: CsvImportSecti
   >(null);
   const [executing, setExecuting] = useState(false);
   const [executeResult, setExecuteResult] = useState<CsvImportExecuteResult | null>(null);
+  const [duplicateImportPrompt, setDuplicateImportPrompt] = useState<string | null>(null);
 
   const loadLists = useCallback(async () => {
     setListError(null);
@@ -235,6 +237,7 @@ export function CsvImportSection({ accounts, onImportSucceeded }: CsvImportSecti
     setContinueError(null);
     setExecuteError(null);
     setExecuteResult(null);
+    setDuplicateImportPrompt(null);
   }
 
   function applySnapshot(
@@ -474,18 +477,27 @@ export function CsvImportSection({ accounts, onImportSucceeded }: CsvImportSecti
       .join("\n");
   }
 
-  async function handleExecuteImport() {
+  async function handleExecuteImport(options?: { confirmDuplicateContent?: boolean }) {
     if (!rawRows.length) {
       setExecuteError("No CSV rows are loaded.");
+      return;
+    }
+    if (!file) {
+      setExecuteError("Choose a CSV file first (the upload name is sent as the import basename).");
       return;
     }
     setExecuteError(null);
     setExecuteRowErrors(null);
     setExecuteResult(null);
+    if (!options?.confirmDuplicateContent) {
+      setDuplicateImportPrompt(null);
+    }
     setExecuting(true);
     try {
       const result = await executeCsvImport({
         csv_text: csvTextFromRows(rawRows),
+        basename: file.name,
+        confirm_duplicate_content: options?.confirmDuplicateContent ?? false,
         has_header_row: hasHeaderRow,
         columns: toApiColumns(columns),
         cel_rule_set_id: celRuleSetId ? Number(celRuleSetId) : null,
@@ -496,6 +508,7 @@ export function CsvImportSection({ accounts, onImportSucceeded }: CsvImportSecti
             : null,
       });
       setExecuteResult(result);
+      setDuplicateImportPrompt(null);
       onImportSucceeded?.();
     } catch (err) {
       const rowErrors =
@@ -508,12 +521,19 @@ export function CsvImportSection({ accounts, onImportSucceeded }: CsvImportSecti
       if (rowErrors !== null && err instanceof Error) {
         setExecuteError(err.message);
         setExecuteRowErrors([...rowErrors].sort((a, b) => a.row_number - b.row_number));
+        setDuplicateImportPrompt(null);
+      } else if (err instanceof CsvImportDuplicateContentError) {
+        setExecuteError(err.message);
+        setExecuteRowErrors(null);
+        setDuplicateImportPrompt(err.message);
       } else if (err instanceof ApiHttpError) {
         setExecuteError(err.message);
         setExecuteRowErrors(null);
+        setDuplicateImportPrompt(null);
       } else {
         setExecuteError(err instanceof Error ? err.message : "Failed to execute import");
         setExecuteRowErrors(null);
+        setDuplicateImportPrompt(null);
       }
     } finally {
       setExecuting(false);
@@ -833,6 +853,18 @@ export function CsvImportSection({ accounts, onImportSucceeded }: CsvImportSecti
                       ))}
                     </ul>
                   ) : null}
+                </div>
+              ) : null}
+              {duplicateImportPrompt ? (
+                <div className="csv-import-duplicate-panel" role="region" aria-label="Duplicate file contents">
+                  <button
+                    type="button"
+                    className="button-secondary"
+                    onClick={() => void handleExecuteImport({ confirmDuplicateContent: true })}
+                    disabled={executing}
+                  >
+                    Post anyway (duplicate file contents)
+                  </button>
                 </div>
               ) : null}
               {executeResult ? (
