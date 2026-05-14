@@ -41,7 +41,7 @@ def clean_import_tables(integration_db_url: str) -> Iterator[None]:
                 cur.execute(
                     """
                     TRUNCATE TABLE import_templates, journal_lines, journal_entry_attachments,
-                      attachments, journal_entries,
+                      attachments, journal_entries, import_batches,
                       accrual_plans, parties, accounts, cel_rule_sets
                     RESTART IDENTITY CASCADE
                     """,

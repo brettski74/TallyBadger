@@ -66,6 +66,7 @@ def _truncate_all_data(integration_db_url: str) -> None:
                       journal_entry_attachments,
                       attachments,
                       journal_entries,
+                      import_batches,
                       cheques,
                       accrual_plans,
                       party_match_patterns,

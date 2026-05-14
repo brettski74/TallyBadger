@@ -48,6 +48,7 @@ def clean_cheque_tables(integration_db_url: str) -> Iterator[None]:
                       journal_entry_attachments,
                       attachments,
                       journal_entries,
+                      import_batches,
                       cheques,
                       accrual_obligations,
                       settlement_allocations,
