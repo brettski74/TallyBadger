@@ -23,7 +23,7 @@ Domain entities that carry an `is_active` flag (today: accounts and parties; the
 
 - **New associations are rejected.** Validations on create or on any field change that **introduces a new reference** to a row (e.g. `POST /cheques`, `PATCH /cheques` swapping `credit_account_id`, `PATCH /ledger-settings` setting a default account id) must verify the target is `is_active = TRUE`.
 - **Existing associations are preserved.** A row already pointing at a now-inactive entity continues to load, display, list, and edit normally. Editing other fields on that row, or re-affirming the same id in a PATCH body, must **not** re-validate the referenced row's `is_active` state — only an actual id change triggers a fresh eligibility check.
-- **UI pickers** filter to active options for new associations, but should keep an already-stored inactive value visible (annotated if helpful) when editing the row so the operator can leave it in place or replace it deliberately.
+- **UI pickers** shall display a set of options that include all active entities as well as any pre-existing saved value. This means that the user should only be able to select valid values when using the UI.
 - **System defaults** (e.g. last-used defaults persisted by a save flow) follow the same "validate-on-change only" rule: a write that introduces a new id validates eligibility; rewriting the same id or leaving the field untouched does not.
 
 Specific flows are free to impose stricter behaviour where it makes product sense (e.g. final clearing or posting against a now-inactive account may warrant a tighter rule, decided per-ticket), but **the default is "inactive blocks new, not existing"**. Do not invent a stricter rule silently — change this section in the same PR.

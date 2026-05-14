@@ -9,6 +9,7 @@ import {
   importBackup,
 } from "../api/backup";
 import { getLedgerSettings, updateLedgerSettings } from "../api/settlements";
+import { accountsForSettingPicker } from "../journal/accountSelect";
 
 interface ConfigurationSectionProps {
   accounts: Account[];
@@ -16,10 +17,15 @@ interface ConfigurationSectionProps {
 
 export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
   const [arId, setArId] = useState("");
+  const [arBaseline, setArBaseline] = useState("");
   const [apId, setApId] = useState("");
+  const [apBaseline, setApBaseline] = useState("");
   const [urId, setUrId] = useState("");
+  const [urBaseline, setUrBaseline] = useState("");
   const [unallocDrId, setUnallocDrId] = useState("");
+  const [unallocDrBaseline, setUnallocDrBaseline] = useState("");
   const [unallocCrId, setUnallocCrId] = useState("");
+  const [unallocCrBaseline, setUnallocCrBaseline] = useState("");
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [savedMessage, setSavedMessage] = useState<string | null>(null);
   const [backupError, setBackupError] = useState<string | null>(null);
@@ -33,15 +39,25 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
     async function loadSettings() {
       try {
         const settings = await getLedgerSettings();
-        setArId(settings.accounts_receivable_account_id ? String(settings.accounts_receivable_account_id) : "");
-        setApId(settings.accounts_payable_account_id ? String(settings.accounts_payable_account_id) : "");
-        setUrId(settings.unearned_revenue_account_id ? String(settings.unearned_revenue_account_id) : "");
-        setUnallocDrId(
-          settings.unallocated_debits_account_id ? String(settings.unallocated_debits_account_id) : "",
-        );
-        setUnallocCrId(
-          settings.unallocated_credits_account_id ? String(settings.unallocated_credits_account_id) : "",
-        );
+        const ar = settings.accounts_receivable_account_id ? String(settings.accounts_receivable_account_id) : "";
+        const ap = settings.accounts_payable_account_id ? String(settings.accounts_payable_account_id) : "";
+        const ur = settings.unearned_revenue_account_id ? String(settings.unearned_revenue_account_id) : "";
+        const udr = settings.unallocated_debits_account_id
+          ? String(settings.unallocated_debits_account_id)
+          : "";
+        const ucr = settings.unallocated_credits_account_id
+          ? String(settings.unallocated_credits_account_id)
+          : "";
+        setArId(ar);
+        setArBaseline(ar);
+        setApId(ap);
+        setApBaseline(ap);
+        setUrId(ur);
+        setUrBaseline(ur);
+        setUnallocDrId(udr);
+        setUnallocDrBaseline(udr);
+        setUnallocCrId(ucr);
+        setUnallocCrBaseline(ucr);
       } catch (err) {
         setSettingsError(err instanceof Error ? err.message : "Failed to load ledger settings");
       }
@@ -61,21 +77,33 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
         unallocated_debits_account_id: unallocDrId ? Number(unallocDrId) : null,
         unallocated_credits_account_id: unallocCrId ? Number(unallocCrId) : null,
       });
-      setArId(settings.accounts_receivable_account_id ? String(settings.accounts_receivable_account_id) : "");
-      setApId(settings.accounts_payable_account_id ? String(settings.accounts_payable_account_id) : "");
-      setUrId(settings.unearned_revenue_account_id ? String(settings.unearned_revenue_account_id) : "");
-      setUnallocDrId(
-        settings.unallocated_debits_account_id ? String(settings.unallocated_debits_account_id) : "",
-      );
-      setUnallocCrId(
-        settings.unallocated_credits_account_id ? String(settings.unallocated_credits_account_id) : "",
-      );
+      const ar = settings.accounts_receivable_account_id ? String(settings.accounts_receivable_account_id) : "";
+      const ap = settings.accounts_payable_account_id ? String(settings.accounts_payable_account_id) : "";
+      const ur = settings.unearned_revenue_account_id ? String(settings.unearned_revenue_account_id) : "";
+      const udr = settings.unallocated_debits_account_id
+        ? String(settings.unallocated_debits_account_id)
+        : "";
+      const ucr = settings.unallocated_credits_account_id
+        ? String(settings.unallocated_credits_account_id)
+        : "";
+      setArId(ar);
+      setArBaseline(ar);
+      setApId(ap);
+      setApBaseline(ap);
+      setUrId(ur);
+      setUrBaseline(ur);
+      setUnallocDrId(udr);
+      setUnallocDrBaseline(udr);
+      setUnallocCrId(ucr);
+      setUnallocCrBaseline(ucr);
       setSavedMessage("Settings saved.");
     } catch (err) {
       setSettingsError(err instanceof Error ? err.message : "Failed to update settings");
     }
   }
 
+  const assetAccounts = accounts.filter((a) => a.type === "asset");
+  const liabilityAccounts = accounts.filter((a) => a.type === "liability");
   const suspenseAccounts = accounts.filter((a) => a.type === "suspense");
 
   return (
@@ -91,9 +119,10 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
           Accounts receivable
           <select value={arId} onChange={(e) => setArId(e.target.value)}>
             <option value="">Select asset account</option>
-            {accounts.filter((a) => a.type === "asset").map((a) => (
+            {accountsForSettingPicker(assetAccounts, arId, arBaseline).map((a) => (
               <option key={a.id} value={a.id}>
                 {a.name}
+                {!a.is_active ? " (inactive)" : ""}
               </option>
             ))}
           </select>
@@ -102,9 +131,10 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
           Accounts payable
           <select value={apId} onChange={(e) => setApId(e.target.value)}>
             <option value="">Select liability account</option>
-            {accounts.filter((a) => a.type === "liability").map((a) => (
+            {accountsForSettingPicker(liabilityAccounts, apId, apBaseline).map((a) => (
               <option key={a.id} value={a.id}>
                 {a.name}
+                {!a.is_active ? " (inactive)" : ""}
               </option>
             ))}
           </select>
@@ -113,9 +143,10 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
           Unearned revenue
           <select value={urId} onChange={(e) => setUrId(e.target.value)}>
             <option value="">Select liability account</option>
-            {accounts.filter((a) => a.type === "liability").map((a) => (
+            {accountsForSettingPicker(liabilityAccounts, urId, urBaseline).map((a) => (
               <option key={a.id} value={a.id}>
                 {a.name}
+                {!a.is_active ? " (inactive)" : ""}
               </option>
             ))}
           </select>
@@ -130,9 +161,10 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
           Unallocated debits (default debit side)
           <select value={unallocDrId} onChange={(e) => setUnallocDrId(e.target.value)}>
             <option value="">Select suspense account</option>
-            {suspenseAccounts.map((a) => (
+            {accountsForSettingPicker(suspenseAccounts, unallocDrId, unallocDrBaseline).map((a) => (
               <option key={a.id} value={a.id}>
                 {a.name}
+                {!a.is_active ? " (inactive)" : ""}
               </option>
             ))}
           </select>
@@ -141,9 +173,10 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
           Unallocated credits (default credit side)
           <select value={unallocCrId} onChange={(e) => setUnallocCrId(e.target.value)}>
             <option value="">Select suspense account</option>
-            {suspenseAccounts.map((a) => (
+            {accountsForSettingPicker(suspenseAccounts, unallocCrId, unallocCrBaseline).map((a) => (
               <option key={a.id} value={a.id}>
                 {a.name}
+                {!a.is_active ? " (inactive)" : ""}
               </option>
             ))}
           </select>
