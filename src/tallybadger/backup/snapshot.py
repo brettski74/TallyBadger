@@ -313,6 +313,7 @@ def _truncate_complete_scope(conn: Connection) -> None:
               journal_entry_attachments,
               attachments,
               journal_entries,
+              import_batches,
               cheques,
               accrual_plans,
               party_match_patterns,
