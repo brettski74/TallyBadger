@@ -103,12 +103,16 @@ def test_create_entry_runs_inside_transaction() -> None:
 def test_update_entry_runs_inside_transaction() -> None:
     service, conn, cur = _build_service_with_mocks()
     cur.rowcount = 1
-    cur.fetchall.return_value = [{"id": 1}, {"id": 2}]
+    cur.fetchall.side_effect = [
+        [{"id": 1}, {"id": 2}],
+        [
+            {"account_id": 1, "party_id": None},
+            {"account_id": 2, "party_id": None},
+        ],
+    ]
     cur.fetchone.side_effect = [
         {"c": 0},
         {"cheque_id": None},
-        {"is_active": True},
-        {"is_active": True},
         {"line_count": 2, "total": Decimal("0")},
     ]
     service.get_entry = MagicMock(  # type: ignore[method-assign]

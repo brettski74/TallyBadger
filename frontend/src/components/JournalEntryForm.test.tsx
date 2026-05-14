@@ -321,6 +321,44 @@ describe("JournalEntryForm", () => {
     expect(options.some((t) => t?.includes("Retired"))).toBe(false);
   });
 
+  it("each line account list includes only that line's loaded inactive id, not other lines' (can revert after a temporary change)", async () => {
+    const initialLines: LineDraft[] = [
+      { key: "a", account_id: 1, party_id: "", amount: "10" },
+      { key: "b", account_id: 3, party_id: "", amount: "-10" },
+    ];
+    render(
+      <JournalEntryForm
+        mode="edit"
+        accounts={accounts}
+        parties={parties}
+        initialEntryDate="2026-04-20"
+        initialSummary="Split"
+        initialDescription=""
+        reviewMessages={[]}
+        initialLines={initialLines}
+        onSubmit={vi.fn()}
+        onCancel={() => {}}
+      />,
+    );
+    const user = userEvent.setup();
+    const accountSelects = screen
+      .getAllByRole("combobox")
+      .filter((el) => String(el.getAttribute("aria-label")).startsWith("Account for line"));
+
+    const optionsForLine = (idx: number) =>
+      Array.from(accountSelects[idx]!.querySelectorAll("option")).map((o) => o.textContent?.trim());
+
+    expect(optionsForLine(0).some((t) => t?.includes("Retired"))).toBe(false);
+    expect(optionsForLine(1).some((t) => t?.includes("Retired"))).toBe(true);
+
+    await user.selectOptions(accountSelects[1]!, "1");
+    expect(optionsForLine(1).some((t) => t?.includes("Retired"))).toBe(true);
+
+    await user.selectOptions(accountSelects[1]!, "3");
+    expect(optionsForLine(1).some((t) => t?.includes("Retired"))).toBe(true);
+    expect(optionsForLine(0).some((t) => t?.includes("Retired"))).toBe(false);
+  });
+
   const openCheque: Cheque = {
     id: 99,
     credit_account_id: 1,

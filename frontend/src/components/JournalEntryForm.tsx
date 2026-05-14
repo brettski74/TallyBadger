@@ -9,7 +9,7 @@ import {
   type JournalEntryWrite,
 } from "../api/journalEntries";
 import { isTargetAssociatedWithForm } from "../hooks/useFormSaveDiscardShortcuts";
-import { accountsForJournalLinePickers } from "../journal/accountSelect";
+import { accountsForLinePicker } from "../journal/accountSelect";
 import { saveActionTooltip, saveAriaKeyShortcuts } from "../lib/keyboardHints";
 import { isMacLikeUserAgent } from "../lib/platformKeyboard";
 
@@ -206,32 +206,17 @@ export function JournalEntryForm({
   const handleSubmitForShortcutRef = useRef<() => Promise<void>>(async () => {});
   const isMac = isMacLikeUserAgent();
 
-  const lineAccountIds = useMemo(
-    () =>
-      lines
-        .map((l) => l.account_id)
-        .filter((id): id is number => typeof id === "number" && id > 0),
-    [lines],
-  );
-
-  const selectableAccounts = useMemo(() => {
-    const base = accountsForJournalLinePickers(accounts, lineAccountIds);
-    const byId = new Map(base.map((a) => [a.id, a]));
-    for (const line of lines) {
-      const hint = line.account_name?.trim();
-      if (typeof line.account_id === "number" && line.account_id > 0 && hint && !byId.has(line.account_id)) {
-        byId.set(line.account_id, {
-          id: line.account_id,
-          name: hint,
-          type: "asset",
-          is_active: true,
-          created_at: "1970-01-01T00:00:00Z",
-          updated_at: "1970-01-01T00:00:00Z",
-        });
+  const loadedAccountIdByLineKey = useMemo(() => {
+    const m = new Map<string, number>();
+    if (initialLines) {
+      for (const l of initialLines) {
+        if (typeof l.account_id === "number" && l.account_id > 0) {
+          m.set(l.key, l.account_id);
+        }
       }
     }
-    return Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name));
-  }, [accounts, lineAccountIds, lines]);
+    return m;
+  }, [initialLines]);
 
   const selectableParties = useMemo(() => {
     const byId = new Map(parties.map((p) => [p.id, p]));
@@ -243,6 +228,7 @@ export function JournalEntryForm({
           name: hint,
           role: "other",
           is_active: true,
+          match_patterns: [],
           created_at: "1970-01-01T00:00:00Z",
           updated_at: "1970-01-01T00:00:00Z",
         });
@@ -623,7 +609,11 @@ export function JournalEntryForm({
                   }}
                 >
                   <option value="">Select account…</option>
-                  {selectableAccounts.map((a) => (
+                  {accountsForLinePicker(
+                    accounts,
+                    line,
+                    loadedAccountIdByLineKey.get(line.key) ?? null,
+                  ).map((a) => (
                     <option key={a.id} value={a.id}>
                       {a.name}
                       {!a.is_active ? " (inactive)" : ""}

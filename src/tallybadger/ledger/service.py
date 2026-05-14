@@ -1,4 +1,4 @@
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Callable
 from datetime import date, timedelta
 from typing import Literal
@@ -124,6 +124,8 @@ def _validate_party_default_accounts(
     role: str,
     revenue_id: int | None,
     expense_id: int | None,
+    require_active_revenue: bool = True,
+    require_active_expense: bool = True,
 ) -> None:
     if revenue_id is not None and role not in ("customer", "both"):
         raise LedgerValidationError(
@@ -141,7 +143,7 @@ def _validate_party_default_accounts(
         row = cur.fetchone()
         if row is None:
             raise LedgerValidationError("default revenue/equity account not found")
-        if not row["is_active"]:
+        if require_active_revenue and not row["is_active"]:
             raise LedgerValidationError("default revenue/equity account must be active")
         if row["type"] not in ("revenue", "equity"):
             raise LedgerValidationError(
@@ -155,7 +157,7 @@ def _validate_party_default_accounts(
         row = cur.fetchone()
         if row is None:
             raise LedgerValidationError("default expense account not found")
-        if not row["is_active"]:
+        if require_active_expense and not row["is_active"]:
             raise LedgerValidationError("default expense account must be active")
         if row["type"] != "expense":
             raise LedgerValidationError("default expense account must have account type expense")
@@ -403,11 +405,25 @@ class LedgerService:
                         if "default_expense_account_id" in data:
                             effective_exp = data["default_expense_account_id"]
 
+                        require_active_revenue = (
+                            "default_revenue_account_id" in data
+                            and data["default_revenue_account_id"] is not None
+                            and data["default_revenue_account_id"]
+                            != current["default_revenue_account_id"]
+                        )
+                        require_active_expense = (
+                            "default_expense_account_id" in data
+                            and data["default_expense_account_id"] is not None
+                            and data["default_expense_account_id"]
+                            != current["default_expense_account_id"]
+                        )
                         _validate_party_default_accounts(
                             cur,
                             role=str(effective_role),
                             revenue_id=effective_rev,
                             expense_id=effective_exp,
+                            require_active_revenue=require_active_revenue,
+                            require_active_expense=require_active_expense,
                         )
 
                         updates: list[str] = []
@@ -655,6 +671,9 @@ class LedgerService:
                 with conn.cursor(row_factory=dict_row) as cur:
                     self._assert_all_plan_references_exist(cur, payload)
                     self._assert_plan_account_direction_rules(cur, payload)
+                    self._assert_party_active(cur, payload.party_id)
+                    self._assert_account_active(cur, payload.target_account_id)
+                    self._assert_account_active(cur, payload.bridge_account_id)
                     cur.execute(
                         """
                         INSERT INTO accrual_plans (
@@ -826,43 +845,58 @@ class LedgerService:
         with self._connection_factory() as conn:
             with conn.transaction():
                 with conn.cursor(row_factory=dict_row) as cur:
+                    cur.execute(
+                        """
+                        SELECT accounts_receivable_account_id, accounts_payable_account_id,
+                               unearned_revenue_account_id,
+                               unallocated_debits_account_id, unallocated_credits_account_id,
+                               default_cheque_credit_account_id, default_cheque_debit_account_id
+                        FROM ledger_settings
+                        WHERE id = 1
+                        FOR UPDATE
+                        """
+                    )
+                    existing = cur.fetchone()
+                    if not existing:
+                        raise LedgerValidationError("ledger settings row is missing")
+
                     if payload.accounts_receivable_account_id is not None:
                         self._assert_account_type(cur, payload.accounts_receivable_account_id, "asset")
+                        if payload.accounts_receivable_account_id != existing.get(
+                            "accounts_receivable_account_id",
+                        ):
+                            self._assert_account_active(cur, payload.accounts_receivable_account_id)
                     if payload.accounts_payable_account_id is not None:
                         self._assert_account_type(cur, payload.accounts_payable_account_id, "liability")
+                        if payload.accounts_payable_account_id != existing.get(
+                            "accounts_payable_account_id",
+                        ):
+                            self._assert_account_active(cur, payload.accounts_payable_account_id)
                     if payload.unearned_revenue_account_id is not None:
                         self._assert_account_type(cur, payload.unearned_revenue_account_id, "liability")
+                        if payload.unearned_revenue_account_id != existing.get(
+                            "unearned_revenue_account_id",
+                        ):
+                            self._assert_account_active(cur, payload.unearned_revenue_account_id)
                     if payload.unallocated_debits_account_id is not None:
                         self._assert_account_type(cur, payload.unallocated_debits_account_id, "suspense")
+                        if payload.unallocated_debits_account_id != existing.get(
+                            "unallocated_debits_account_id",
+                        ):
+                            self._assert_account_active(cur, payload.unallocated_debits_account_id)
                     if payload.unallocated_credits_account_id is not None:
                         self._assert_account_type(cur, payload.unallocated_credits_account_id, "suspense")
-                    # Cheque defaults (#105): validate active+eligible only when the value is
-                    # actually changing. Re-affirming a now-ineligible value is intentionally
-                    # accepted, mirroring the cheque save contract.
-                    if (
-                        payload.default_cheque_credit_account_id is not None
-                        or payload.default_cheque_debit_account_id is not None
-                    ):
-                        cur.execute(
-                            """
-                            SELECT default_cheque_credit_account_id,
-                                   default_cheque_debit_account_id
-                            FROM ledger_settings
-                            WHERE id = 1
-                            FOR UPDATE
-                            """
-                        )
-                        existing = cur.fetchone() or {}
-                        new_cr = payload.default_cheque_credit_account_id
-                        new_dr = payload.default_cheque_debit_account_id
-                        if new_cr is not None and new_cr != existing.get(
-                            "default_cheque_credit_account_id",
+                        if payload.unallocated_credits_account_id != existing.get(
+                            "unallocated_credits_account_id",
                         ):
-                            self._assert_cheque_credit_account(cur, new_cr)
-                        if new_dr is not None and new_dr != existing.get(
-                            "default_cheque_debit_account_id",
-                        ):
-                            self._assert_cheque_debit_account(cur, new_dr)
+                            self._assert_account_active(cur, payload.unallocated_credits_account_id)
+
+                    new_cr = payload.default_cheque_credit_account_id
+                    new_dr = payload.default_cheque_debit_account_id
+                    if new_cr is not None and new_cr != existing.get("default_cheque_credit_account_id"):
+                        self._assert_cheque_credit_account(cur, new_cr)
+                    if new_dr is not None and new_dr != existing.get("default_cheque_debit_account_id"):
+                        self._assert_cheque_debit_account(cur, new_dr)
                     cur.execute(
                         """
                         UPDATE ledger_settings
@@ -1319,6 +1353,8 @@ class LedgerService:
             acct_type = row["type"]
             raw_total = Decimal(row["raw_line_total"])
             natural = natural_pl_total_for_account_type(acct_type, raw_total)
+            if not bool(row["is_active"]) and natural == Decimal("0"):
+                continue
             out_row = IncomeExpenseAccountRowOut(
                 account_id=row["id"],
                 account_name=row["name"],
@@ -1423,6 +1459,8 @@ class LedgerService:
                 acct_type,
                 Decimal(row["raw_line_total"]),
             )
+            if not bool(row["is_active"]) and natural == Decimal("0"):
+                continue
             out_row = BalanceSheetAccountRowOut(
                 account_id=int(row["id"]),
                 account_name=str(row["name"]),
@@ -2068,12 +2106,29 @@ class LedgerService:
                         )
 
                         cur.execute(
+                            """
+                            SELECT account_id, party_id
+                            FROM journal_lines
+                            WHERE entry_id = %s
+                            ORDER BY id
+                            """,
+                            (entry_id,),
+                        )
+                        prior_pairs = Counter(
+                            (int(r["account_id"]), r["party_id"]) for r in cur.fetchall()
+                        )
+
+                        cur.execute(
                             "DELETE FROM journal_lines WHERE entry_id = %s",
                             (entry_id,),
                         )
                         for line in payload.lines:
-                            self._assert_account_active(cur, line.account_id)
-                            self._assert_party_active(cur, line.party_id)
+                            key = (line.account_id, line.party_id)
+                            if prior_pairs[key] > 0:
+                                prior_pairs[key] -= 1
+                            else:
+                                self._assert_account_active(cur, line.account_id)
+                                self._assert_party_active(cur, line.party_id)
                             cur.execute(
                                 """
                                 INSERT INTO journal_lines (entry_id, account_id, party_id, amount)
