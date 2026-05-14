@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import re
+from pathlib import PurePath
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer, model_validator
 
 from tallybadger.import_dates import parse_import_date_string, parse_import_datetime_string
 from tallybadger.import_rules.cel_engine import evaluate_cel
@@ -28,7 +30,12 @@ from tallybadger.ledger.models import (
     JournalLineIn,
     LedgerSettingsOut,
 )
-from tallybadger.ledger.service import LedgerService, LedgerValidationError
+from tallybadger.ledger.service import (
+    LedgerDuplicateImportContentError,
+    LedgerImportBasenameConflictError,
+    LedgerService,
+    LedgerValidationError,
+)
 
 router = APIRouter(prefix="", tags=["import-csv"])
 
@@ -48,11 +55,23 @@ ImportNormalBalance = Literal["debit", "credit"]
 
 class CsvImportExecuteRequest(BaseModel):
     csv_text: str = Field(min_length=1)
+    basename: str = Field(min_length=1, max_length=512)
+    confirm_duplicate_content: bool = False
     has_header_row: bool = False
     columns: list[ImportTemplateColumn] = Field(default_factory=list)
     cel_rule_set_id: int | None = None
     default_import_account_id: int | None = Field(default=None, gt=0)
     default_import_normal_balance: ImportNormalBalance | None = None
+
+    @field_validator("basename", mode="before")
+    @classmethod
+    def _normalize_basename(cls, value: object) -> str:
+        if not isinstance(value, str):
+            raise ValueError("basename must be a string")
+        base = PurePath(value.strip()).name.strip()
+        if not base:
+            raise ValueError("basename must be non-empty")
+        return base
 
     @model_validator(mode="after")
     def default_import_pair(self) -> "CsvImportExecuteRequest":
@@ -98,6 +117,7 @@ class CsvImportExecuteResult(BaseModel):
     dropped_rows: int = 0
     row_errors: list[CsvImportRowError] = Field(default_factory=list)
     entries: list[CsvJournalEntryOut] = Field(default_factory=list)
+    import_batch_id: int | None = None
 
 
 def _parse_decimal_from_csv(raw: str) -> Decimal:
@@ -581,8 +601,40 @@ def execute_csv_import(
             },
         )
 
+    if not pending_entries:
+        return CsvImportExecuteResult(
+            posted_entries=0,
+            dropped_rows=dropped_rows,
+            row_errors=[],
+            entries=[],
+            import_batch_id=None,
+        )
+
+    content_sha256 = hashlib.sha256(payload.csv_text.encode("utf-8")).digest()
+
     try:
-        created = ledger_service.create_entries_batch(pending_entries)
+        batch_id, created = ledger_service.create_import_batch_with_entries(
+            basename=payload.basename,
+            content_sha256=content_sha256,
+            payloads=pending_entries,
+            confirm_duplicate_content=payload.confirm_duplicate_content,
+        )
+    except LedgerDuplicateImportContentError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "duplicate_import_content",
+                "message": str(exc),
+            },
+        ) from exc
+    except LedgerImportBasenameConflictError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "import_basename_conflict",
+                "message": str(exc),
+            },
+        ) from exc
     except LedgerValidationError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
 
@@ -597,5 +649,6 @@ def execute_csv_import(
         posted_entries=len(created),
         dropped_rows=dropped_rows,
         entries=entries_out,
+        import_batch_id=batch_id,
     )
 

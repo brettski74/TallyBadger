@@ -74,9 +74,16 @@ function mockListEndpoints() {
       });
     }
     if (url.includes("/imports/csv/execute") && init?.method === "POST") {
-      return new Response(JSON.stringify({ posted_entries: 1, dropped_rows: 0, row_errors: [], entries: [] }), {
-        status: 200,
-      });
+      return new Response(
+        JSON.stringify({
+          posted_entries: 1,
+          dropped_rows: 0,
+          row_errors: [],
+          entries: [],
+          import_batch_id: 1,
+        }),
+        { status: 200 },
+      );
     }
     return new Response(`unmocked: ${url}`, { status: 500 });
   });
@@ -289,6 +296,9 @@ describe("CsvImportSection", () => {
       ([input, init]) => (typeof input === "string" ? input : input.toString()).includes("/imports/csv/execute") && init?.method === "POST",
     );
     expect(executeCall).toBeTruthy();
+    const posted = JSON.parse(String(executeCall![1]!.body)) as { basename?: string; confirm_duplicate_content?: boolean };
+    expect(posted.basename).toBe("import.csv");
+    expect(posted.confirm_duplicate_content).toBe(false);
   });
 
   it("lists every row error when execute returns 422 with row_errors", async () => {
@@ -371,5 +381,97 @@ describe("CsvImportSection", () => {
     await waitFor(() => {
       expect(onImportSucceeded).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it("shows duplicate confirm and retries with confirm_duplicate_content", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/imports/csv/execute") && init?.method === "POST") {
+        const body = JSON.parse(String(init.body)) as { confirm_duplicate_content?: boolean };
+        if (!body.confirm_duplicate_content) {
+          return new Response(
+            JSON.stringify({
+              detail: {
+                code: "duplicate_import_content",
+                message: "Same file hash as an earlier import.",
+              },
+            }),
+            { status: 409 },
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            posted_entries: 1,
+            dropped_rows: 0,
+            row_errors: [],
+            entries: [],
+            import_batch_id: 9,
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.includes("/import-templates") && init?.method === "POST") {
+        return new Response(JSON.stringify({ id: 1, name: "x", has_header_row: true, columns: [], cel_rule_set_id: null, created_at: "", updated_at: "", ...TEMPLATE_API_DEFAULTS }), { status: 201 });
+      }
+      if (url.includes("/import-templates/") && init?.method === undefined) {
+        return new Response(
+          JSON.stringify({
+            id: 1,
+            name: "Bank",
+            has_header_row: true,
+            columns: [],
+            cel_rule_set_id: null,
+            created_at: "2026-04-01T00:00:00Z",
+            updated_at: "2026-04-01T00:00:00Z",
+            ...TEMPLATE_API_DEFAULTS,
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.endsWith("/import-templates") || url.match(/\/import-templates\?/)) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      if (url.includes("/import-rules/cel/rule-sets")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      return new Response(`unmocked: ${url}`, { status: 500 });
+    });
+
+    vi.mocked(readFileAsText).mockResolvedValue("date,summary,dr,cr,amount\n2026-07-01,Rent July,Cash,Rent Revenue,1200\n");
+
+    render(<CsvImportSection accounts={EMPTY_ACCOUNTS} />);
+    await screen.findByLabelText("CSV file");
+    const file = new File(["dummy"], "dup-test.csv", { type: "text/csv" });
+    await userEvent.upload(screen.getByLabelText("CSV file"), file);
+    await userEvent.click(screen.getByRole("button", { name: "Continue to preview" }));
+
+    await userEvent.type(screen.getByLabelText("Attribute for column 1"), "date");
+    await userEvent.selectOptions(screen.getByLabelText("Type for column 1"), "date");
+    await userEvent.type(screen.getByLabelText("Date format for column 1"), "YYYY-MM-DD");
+    await userEvent.type(screen.getByLabelText("Attribute for column 2"), "summary");
+    await userEvent.type(screen.getByLabelText("Attribute for column 3"), "dr-account");
+    await userEvent.type(screen.getByLabelText("Attribute for column 4"), "cr-account");
+    await userEvent.type(screen.getByLabelText("Attribute for column 5"), "amount");
+    await userEvent.selectOptions(screen.getByLabelText("Type for column 5"), "numeric");
+
+    await userEvent.click(screen.getByRole("button", { name: "Execute import" }));
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent("Same file hash");
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: "Post anyway (duplicate file contents)" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent("Import complete: 1 entries posted");
+    });
+
+    const posts = fetchMock.mock.calls.filter(
+      ([u, init]) =>
+        (typeof u === "string" ? u : u.toString()).includes("/imports/csv/execute") && init?.method === "POST",
+    );
+    expect(posts.length).toBe(2);
+    const second = JSON.parse(String(posts[1]![1]!.body)) as { confirm_duplicate_content?: boolean; basename?: string };
+    expect(second.confirm_duplicate_content).toBe(true);
+    expect(second.basename).toBe("dup-test.csv");
   });
 });

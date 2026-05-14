@@ -83,6 +83,7 @@ def test_execute_csv_non_iso_date_after_cel_returns_422_not_500() -> None:
     try:
         payload = {
             "csv_text": "date,summary\n2026-01-01,not-an-iso-date\n",
+            "basename": "rows.csv",
             "has_header_row": True,
             "columns": [
                 {"attribute_name": "date", "data_type": "date", "date_format": "YYYY-MM-DD"},
@@ -109,6 +110,7 @@ def test_execute_csv_row_error_includes_cel_debug_when_journal_build_fails() -> 
     try:
         payload = {
             "csv_text": "date,summary\n2026-01-01,not-an-iso-date\n",
+            "basename": "rows.csv",
             "has_header_row": True,
             "columns": [
                 {"attribute_name": "date", "data_type": "date", "date_format": "YYYY-MM-DD"},
@@ -133,6 +135,7 @@ def test_execute_csv_non_date_type_after_cel_returns_422_not_500() -> None:
     try:
         payload = {
             "csv_text": "date,summary\n2026-01-01,Rent\n",
+            "basename": "rows.csv",
             "has_header_row": True,
             "columns": [
                 {"attribute_name": "date", "data_type": "date", "date_format": "YYYY-MM-DD"},
@@ -157,6 +160,7 @@ def test_execute_csv_cel_date_literal_column_label_returns_422_not_500() -> None
     try:
         payload = {
             "csv_text": "date,summary\n2026-01-01,Rent\n",
+            "basename": "rows.csv",
             "has_header_row": True,
             "columns": [
                 {"attribute_name": "date", "data_type": "date", "date_format": "YYYY-MM-DD"},
@@ -181,6 +185,7 @@ def test_execute_csv_cel_missing_comma_in_set_map_returns_422_not_500() -> None:
     try:
         payload = {
             "csv_text": "date,summary\n2026-01-01,ok\n",
+            "basename": "rows.csv",
             "has_header_row": True,
             "columns": [
                 {"attribute_name": "date", "data_type": "date", "date_format": "YYYY-MM-DD"},
@@ -340,7 +345,7 @@ def test_execute_csv_debug_only_on_entries_that_used_debug() -> None:
             ),
         ],
     )
-    ledger.create_entries_batch.return_value = [e1, e2]
+    ledger.create_import_batch_with_entries.return_value = (1, [e1, e2])
     from tallybadger.api.routes.import_csv import get_cel_rule_set_service, get_ledger_service
     from tallybadger.main import app
 
@@ -350,6 +355,7 @@ def test_execute_csv_debug_only_on_entries_that_used_debug() -> None:
         client = TestClient(app)
         payload = {
             "csv_text": "date,summary\n2026-01-01,A\n2026-01-02,B\n",
+            "basename": "two-rows.csv",
             "has_header_row": True,
             "columns": [
                 {"attribute_name": "date", "data_type": "date", "date_format": "YYYY-MM-DD"},
@@ -428,7 +434,7 @@ def test_execute_csv_seeds_default_account_for_cel_from_template() -> None:
             ),
         ],
     )
-    ledger.create_entries_batch.return_value = [je]
+    ledger.create_import_batch_with_entries.return_value = (2, [je])
     from tallybadger.api.routes.import_csv import get_cel_rule_set_service, get_ledger_service
     from tallybadger.main import app
 
@@ -438,6 +444,7 @@ def test_execute_csv_seeds_default_account_for_cel_from_template() -> None:
         client = TestClient(app)
         payload = {
             "csv_text": "date,summary\n2026-03-01,m\n",
+            "basename": "march.csv",
             "has_header_row": True,
             "columns": [
                 {"attribute_name": "date", "data_type": "date", "date_format": "YYYY-MM-DD"},
@@ -459,6 +466,7 @@ def test_execute_csv_seeds_default_account_for_cel_from_template() -> None:
 def test_execute_csv_cel_error_returns_422_not_500(import_execute_client_cel_invalid: TestClient) -> None:
     payload = {
         "csv_text": "date,summary\n2026-01-01,ok\n",
+        "basename": "ok.csv",
         "has_header_row": True,
         "columns": [
             {"attribute_name": "date", "data_type": "date", "date_format": "YYYY-MM-DD"},
@@ -479,6 +487,7 @@ def test_execute_csv_reports_all_row_errors(import_execute_client: TestClient) -
     csv_text = "date,x\nnotadate,a\nalsono,b\n"
     payload = {
         "csv_text": csv_text,
+        "basename": "bad-dates.csv",
         "has_header_row": True,
         "columns": [
             {"attribute_name": "date", "data_type": "date", "date_format": "YYYY-MM-DD"},

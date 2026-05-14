@@ -107,6 +107,7 @@ def test_csv_import_posts_all_rows_atomically(
     csv_text = "date,summary,dr,cr,amount\n2026-07-01,Rent July,Cash,Rent Revenue,1200.00\n2026-08-01,Rent Aug,Cash,Rent Revenue,1300.00\n"
     payload = {
         "csv_text": csv_text,
+        "basename": "rent-import.csv",
         "has_header_row": True,
         "columns": [
             {"attribute_name": "date", "data_type": "date", "date_format": "YYYY-MM-DD"},
@@ -122,8 +123,19 @@ def test_csv_import_posts_all_rows_atomically(
     assert body["posted_entries"] == 2
     assert body["dropped_rows"] == 0
     assert len(body["entries"]) == 2
+    batch_id = body["import_batch_id"]
+    assert isinstance(batch_id, int)
+    assert _count_rows(integration_db_url, "import_batches") == 1
     assert _count_rows(integration_db_url, "journal_entries") == 2
     assert _count_rows(integration_db_url, "journal_lines") == 4
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT DISTINCT import_batch_id FROM journal_entries WHERE import_batch_id IS NOT NULL",
+            )
+            rows = cur.fetchall()
+            assert len(rows) == 1
+            assert int(rows[0]["import_batch_id"]) == batch_id
 
 
 def test_csv_import_aggregates_row_errors_and_rolls_back(
@@ -140,6 +152,7 @@ def test_csv_import_aggregates_row_errors_and_rolls_back(
     csv_text = "date,summary,dr,cr,amount\n2026-07-01,Rent July,Cash,Rent Revenue,1200.00\n2026-08-01,Rent Aug,Cash,Missing Rev,1300.00\n"
     payload = {
         "csv_text": csv_text,
+        "basename": "bad-row.csv",
         "has_header_row": True,
         "columns": [
             {"attribute_name": "date", "data_type": "date", "date_format": "YYYY-MM-DD"},
@@ -190,6 +203,7 @@ def test_csv_import_applies_optional_cel_rule_set(
 
     payload = {
         "csv_text": "date\n2026-09-10\n",
+        "basename": "cel-one-row.csv",
         "has_header_row": True,
         "cel_rule_set_id": rule_set_id,
         "columns": [
@@ -223,6 +237,7 @@ def test_csv_import_errors_when_unallocated_debit_missing_and_not_configured(
     csv_text = "date,summary,dr,cr,amount\n2026-07-01,Mystery,,Rent Revenue,50.00\n"
     payload = {
         "csv_text": csv_text,
+        "basename": "unalloc-missing.csv",
         "has_header_row": True,
         "columns": [
             {"attribute_name": "date", "data_type": "date", "date_format": "YYYY-MM-DD"},
@@ -267,6 +282,7 @@ def test_csv_import_defaults_unallocated_debit_and_marks_requires_review(
     csv_text = "date,summary,dr,cr,amount\n2026-07-01,Mystery,,Rent Revenue,50.00\n"
     payload = {
         "csv_text": csv_text,
+        "basename": "unalloc-defaulted.csv",
         "has_header_row": True,
         "columns": [
             {"attribute_name": "date", "data_type": "date", "date_format": "YYYY-MM-DD"},
@@ -328,6 +344,7 @@ def test_csv_import_execute_default_import_account_avoids_unallocated_and_review
         "/imports/csv/execute",
         json={
             "csv_text": csv_text,
+            "basename": "explicit-default.csv",
             "has_header_row": True,
             "default_import_account_id": created["Chequing"],
             "default_import_normal_balance": "debit",
@@ -346,6 +363,7 @@ def test_csv_import_execute_default_import_account_avoids_unallocated_and_review
         "/imports/csv/execute",
         json={
             "csv_text": csv_text,
+            "basename": "inferred-default.csv",
             "has_header_row": True,
             "default_import_account_id": created["Chequing"],
             "columns": base_columns,
@@ -357,6 +375,155 @@ def test_csv_import_execute_default_import_account_avoids_unallocated_and_review
     assert body_infer["entries"][0]["review_messages"] == []
     lines_i = body_infer["entries"][0]["lines"]
     assert [ln["account_name"] for ln in lines_i if Decimal(ln["amount"]) > 0] == ["Chequing"]
+
+
+def test_csv_import_header_only_yields_zero_posts_and_no_import_batch(
+    import_api_client: TestClient,
+    integration_db_url: str,
+) -> None:
+    for payload in (
+        {"name": "Cash", "type": "asset", "is_active": True},
+        {"name": "Rent Revenue", "type": "revenue", "is_active": True},
+    ):
+        r = import_api_client.post("/accounts", json=payload)
+        assert r.status_code == 201, r.text
+
+    payload = {
+        "csv_text": "date,summary,dr,cr,amount\n",
+        "basename": "header-only.csv",
+        "has_header_row": True,
+        "columns": [
+            {"attribute_name": "date", "data_type": "date", "date_format": "YYYY-MM-DD"},
+            {"attribute_name": "summary", "data_type": "string"},
+            {"attribute_name": "dr-account", "data_type": "string"},
+            {"attribute_name": "cr-account", "data_type": "string"},
+            {"attribute_name": "amount", "data_type": "numeric"},
+        ],
+    }
+    r = import_api_client.post("/imports/csv/execute", json=payload)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["posted_entries"] == 0
+    assert body["dropped_rows"] == 0
+    assert body["import_batch_id"] is None
+    assert _count_rows(integration_db_url, "import_batches") == 0
+    assert _count_rows(integration_db_url, "journal_entries") == 0
+
+
+def test_csv_import_duplicate_content_requires_confirm_then_posts(
+    import_api_client: TestClient,
+    integration_db_url: str,
+) -> None:
+    for payload in (
+        {"name": "Cash", "type": "asset", "is_active": True},
+        {"name": "Rent Revenue", "type": "revenue", "is_active": True},
+    ):
+        r = import_api_client.post("/accounts", json=payload)
+        assert r.status_code == 201, r.text
+
+    csv_text = "date,summary,dr,cr,amount\n2026-07-01,Rent July,Cash,Rent Revenue,1200.00\n"
+    base = {
+        "csv_text": csv_text,
+        "has_header_row": True,
+        "columns": [
+            {"attribute_name": "date", "data_type": "date", "date_format": "YYYY-MM-DD"},
+            {"attribute_name": "summary", "data_type": "string"},
+            {"attribute_name": "dr-account", "data_type": "string"},
+            {"attribute_name": "cr-account", "data_type": "string"},
+            {"attribute_name": "amount", "data_type": "numeric"},
+        ],
+    }
+    r1 = import_api_client.post("/imports/csv/execute", json={**base, "basename": "first-pass.csv"})
+    assert r1.status_code == 200, r1.text
+    assert r1.json()["import_batch_id"] is not None
+
+    r_dup = import_api_client.post("/imports/csv/execute", json={**base, "basename": "second-name.csv"})
+    assert r_dup.status_code == 409, r_dup.text
+    detail = r_dup.json()["detail"]
+    assert detail["code"] == "duplicate_import_content"
+    assert "confirm_duplicate_content" in detail["message"].lower()
+
+    r_ok = import_api_client.post(
+        "/imports/csv/execute",
+        json={**base, "basename": "second-name.csv", "confirm_duplicate_content": True},
+    )
+    assert r_ok.status_code == 200, r_ok.text
+    assert _count_rows(integration_db_url, "import_batches") == 2
+    assert _count_rows(integration_db_url, "journal_entries") == 2
+
+
+def test_csv_import_active_basename_case_conflict_returns_409(
+    import_api_client: TestClient,
+    integration_db_url: str,
+) -> None:
+    for payload in (
+        {"name": "Cash", "type": "asset", "is_active": True},
+        {"name": "Rent Revenue", "type": "revenue", "is_active": True},
+    ):
+        r = import_api_client.post("/accounts", json=payload)
+        assert r.status_code == 201, r.text
+
+    csv_a = "date,summary,dr,cr,amount\n2026-07-01,A,Cash,Rent Revenue,10.00\n"
+    csv_b = "date,summary,dr,cr,amount\n2026-07-02,B,Cash,Rent Revenue,20.00\n"
+    cols = [
+        {"attribute_name": "date", "data_type": "date", "date_format": "YYYY-MM-DD"},
+        {"attribute_name": "summary", "data_type": "string"},
+        {"attribute_name": "dr-account", "data_type": "string"},
+        {"attribute_name": "cr-account", "data_type": "string"},
+        {"attribute_name": "amount", "data_type": "numeric"},
+    ]
+    r1 = import_api_client.post(
+        "/imports/csv/execute",
+        json={"csv_text": csv_a, "basename": "Stmt.csv", "has_header_row": True, "columns": cols},
+    )
+    assert r1.status_code == 200, r1.text
+
+    r2 = import_api_client.post(
+        "/imports/csv/execute",
+        json={"csv_text": csv_b, "basename": "stmt.csv", "has_header_row": True, "columns": cols},
+    )
+    assert r2.status_code == 409, r2.text
+    detail = r2.json()["detail"]
+    assert detail["code"] == "import_basename_conflict"
+
+
+def test_csv_import_normalizes_basename_to_final_path_segment(
+    import_api_client: TestClient,
+    integration_db_url: str,
+) -> None:
+    for payload in (
+        {"name": "Cash", "type": "asset", "is_active": True},
+        {"name": "Rent Revenue", "type": "revenue", "is_active": True},
+    ):
+        r = import_api_client.post("/accounts", json=payload)
+        assert r.status_code == 201, r.text
+
+    csv_text = "date,summary,dr,cr,amount\n2026-07-01,X,Cash,Rent Revenue,1.00\n"
+    cols = [
+        {"attribute_name": "date", "data_type": "date", "date_format": "YYYY-MM-DD"},
+        {"attribute_name": "summary", "data_type": "string"},
+        {"attribute_name": "dr-account", "data_type": "string"},
+        {"attribute_name": "cr-account", "data_type": "string"},
+        {"attribute_name": "amount", "data_type": "numeric"},
+    ]
+    r = import_api_client.post(
+        "/imports/csv/execute",
+        json={
+            "csv_text": csv_text,
+            "basename": "/tmp/nested/LedgerExport.csv",
+            "has_header_row": True,
+            "columns": cols,
+        },
+    )
+    assert r.status_code == 200, r.text
+    batch_id = r.json()["import_batch_id"]
+    assert batch_id is not None
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT basename FROM import_batches WHERE id = %s", (batch_id,))
+            row = cur.fetchone()
+            assert row is not None
+            assert row["basename"] == "LedgerExport.csv"
 
 
 def test_ledger_settings_rejects_non_suspense_unallocated_account(
