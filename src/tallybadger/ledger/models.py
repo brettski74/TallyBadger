@@ -243,6 +243,10 @@ class ImportBatchListItem(BaseModel):
     basename: str
     loaded_at: datetime
     is_active: bool
+    is_latest_loaded_import: bool = Field(
+        default=False,
+        description="True when this row is the most recent active import by loaded_at (#49 / #137).",
+    )
 
 
 class ChequeCreate(BaseModel):

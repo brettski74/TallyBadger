@@ -40,9 +40,22 @@ def clean_import_tables(integration_db_url: str) -> Iterator[None]:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    TRUNCATE TABLE import_templates, journal_lines, journal_entry_attachments,
-                      attachments, journal_entries, import_batches,
-                      accrual_plans, parties, accounts, cel_rule_sets
+                    TRUNCATE TABLE
+                      settlement_allocations,
+                      settlement_events,
+                      accrual_obligations,
+                      import_templates,
+                      journal_entry_review_messages,
+                      journal_lines,
+                      journal_entry_attachments,
+                      attachments,
+                      journal_entries,
+                      cheques,
+                      import_batches,
+                      accrual_plans,
+                      parties,
+                      accounts,
+                      cel_rule_sets
                     RESTART IDENTITY CASCADE
                     """,
                 )
@@ -56,16 +69,19 @@ def clean_import_tables(integration_db_url: str) -> Iterator[None]:
 def import_api_client(integration_db_url: str) -> Iterator[TestClient]:
     from tallybadger.api.routes.cel_rule_sets import get_cel_rule_set_service
     from tallybadger.api.routes.import_csv import get_cel_rule_set_service as get_csv_cel_service
-    from tallybadger.api.routes.import_csv import get_ledger_service
+    from tallybadger.api.routes.import_csv import get_ledger_service as get_import_ledger_service
+    from tallybadger.api.routes.ledger import get_ledger_service as get_ledger_ledger_service
 
     @contextmanager
     def connection_factory():
         with connect(integration_db_url, row_factory=dict_row) as conn:
             yield conn
 
-    app.dependency_overrides[get_ledger_service] = lambda: LedgerService(
-        connection_factory=connection_factory,
-    )
+    def _ledger() -> LedgerService:
+        return LedgerService(connection_factory=connection_factory)
+
+    app.dependency_overrides[get_import_ledger_service] = _ledger
+    app.dependency_overrides[get_ledger_ledger_service] = _ledger
     app.dependency_overrides[get_cel_rule_set_service] = lambda: CelRuleSetService(
         connection_factory=connection_factory,
     )
@@ -73,7 +89,8 @@ def import_api_client(integration_db_url: str) -> Iterator[TestClient]:
         connection_factory=connection_factory,
     )
     yield TestClient(app)
-    app.dependency_overrides.pop(get_ledger_service, None)
+    app.dependency_overrides.pop(get_import_ledger_service, None)
+    app.dependency_overrides.pop(get_ledger_ledger_service, None)
     app.dependency_overrides.pop(get_cel_rule_set_service, None)
     app.dependency_overrides.pop(get_csv_cel_service, None)
 
@@ -579,6 +596,8 @@ def test_get_import_batches_lists_loaded_batches(
     assert r.status_code == 200, r.text
     batches = r.json()
     assert any(b["basename"] == "list-batches-test.csv" for b in batches)
+    latest = next(b for b in batches if b["basename"] == "list-batches-test.csv")
+    assert latest["is_latest_loaded_import"] is True
 
 
 def test_journal_entries_filter_by_import_basename_case_insensitive(
@@ -653,3 +672,261 @@ def test_list_journal_entries_rejects_import_batch_id_and_basename_together(
     )
     assert r.status_code == 422, r.text
     assert "both" in str(r.json()["detail"]).lower()
+
+
+def test_unload_import_batch_returns_404_when_already_unloaded(
+    import_api_client: TestClient,
+    integration_db_url: str,
+) -> None:
+    for payload in (
+        {"name": "Cash", "type": "asset", "is_active": True},
+        {"name": "Rent Revenue", "type": "revenue", "is_active": True},
+    ):
+        assert import_api_client.post("/accounts", json=payload).status_code == 201
+
+    ex = import_api_client.post(
+        "/imports/csv/execute",
+        json={
+            "csv_text": "date,summary,dr,cr,amount\n2026-07-01,Rent,Cash,Rent Revenue,10.00\n",
+            "basename": "unload-twice.csv",
+            "has_header_row": True,
+            "columns": [
+                {"attribute_name": "date", "data_type": "date", "date_format": "YYYY-MM-DD"},
+                {"attribute_name": "summary", "data_type": "string"},
+                {"attribute_name": "dr-account", "data_type": "string"},
+                {"attribute_name": "cr-account", "data_type": "string"},
+                {"attribute_name": "amount", "data_type": "numeric"},
+            ],
+        },
+    )
+    assert ex.status_code == 200, ex.text
+    batch_id = ex.json()["import_batch_id"]
+    assert batch_id is not None
+
+    d1 = import_api_client.delete(f"/import-batches/{batch_id}")
+    assert d1.status_code == 204, d1.text
+    d2 = import_api_client.delete(f"/import-batches/{batch_id}")
+    assert d2.status_code == 404, d2.text
+    assert "unload" in d2.json()["detail"].lower() or "not found" in d2.json()["detail"].lower()
+    assert _count_rows(integration_db_url, "import_batches") == 0
+    assert _count_rows(integration_db_url, "journal_entries") == 0
+
+
+def test_unload_import_batch_rolls_back_same_day_receipt_settlement(
+    import_api_client: TestClient,
+    integration_db_url: str,
+) -> None:
+    for payload in (
+        {"name": "Cash", "type": "asset", "is_active": True},
+        {"name": "Rent Revenue", "type": "revenue", "is_active": True},
+        {"name": "Accounts Receivable", "type": "asset", "is_active": True},
+    ):
+        assert import_api_client.post("/accounts", json=payload).status_code == 201
+
+    accounts = import_api_client.get("/accounts").json()
+    by_name = {a["name"]: a["id"] for a in accounts}
+    cash_id = by_name["Cash"]
+    ar_id = by_name["Accounts Receivable"]
+
+    pr = import_api_client.post(
+        "/parties",
+        json={"name": "Tenant Unload", "role": "customer", "is_active": True},
+    )
+    assert pr.status_code == 201, pr.text
+    party_id = pr.json()["id"]
+
+    assert (
+        import_api_client.patch(
+            "/ledger-settings",
+            json={"accounts_receivable_account_id": ar_id},
+        ).status_code
+        == 200
+    )
+
+    ex = import_api_client.post(
+        "/imports/csv/execute",
+        json={
+            "csv_text": (
+                "date,summary,dr,cr,amount\n"
+                "2026-07-01,July rent due,Accounts Receivable,Rent Revenue,500.00\n"
+            ),
+            "basename": "settle-then-unload.csv",
+            "has_header_row": True,
+            "columns": [
+                {"attribute_name": "date", "data_type": "date", "date_format": "YYYY-MM-DD"},
+                {"attribute_name": "summary", "data_type": "string"},
+                {"attribute_name": "dr-account", "data_type": "string"},
+                {"attribute_name": "cr-account", "data_type": "string"},
+                {"attribute_name": "amount", "data_type": "numeric"},
+            ],
+        },
+    )
+    assert ex.status_code == 200, ex.text
+    batch_id = ex.json()["import_batch_id"]
+    entry_id = ex.json()["entries"][0]["id"]
+
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT jl.id
+                FROM journal_lines jl
+                WHERE jl.entry_id = %s AND jl.account_id = %s
+                """,
+                (entry_id, ar_id),
+            )
+            ar_line_id = int(cur.fetchone()["id"])
+            cur.execute(
+                """
+                INSERT INTO accrual_obligations (
+                    party_id, accrual_plan_id, source_entry_id, source_line_id,
+                    obligation_type, status, original_amount, open_amount
+                )
+                VALUES (%s, NULL, %s, %s, 'receivable', 'open', %s, %s)
+                RETURNING id
+                """,
+                (party_id, entry_id, ar_line_id, Decimal("500"), Decimal("500")),
+            )
+            obligation_id = int(cur.fetchone()["id"])
+        conn.commit()
+
+    st = import_api_client.post(
+        "/settlements",
+        json={
+            "party_id": party_id,
+            "settlement_type": "receipt",
+            "event_date": "2026-07-01",
+            "amount": "500.00",
+            "cash_account_id": cash_id,
+            "allocations": [{"obligation_id": obligation_id, "amount": "500.00"}],
+            "note": "same-day unload test",
+        },
+    )
+    assert st.status_code == 201, st.text
+    assert _count_rows(integration_db_url, "settlement_events") == 1
+
+    du = import_api_client.delete(f"/import-batches/{batch_id}")
+    assert du.status_code == 204, du.text
+    assert _count_rows(integration_db_url, "import_batches") == 0
+    assert _count_rows(integration_db_url, "journal_entries") == 0
+    assert _count_rows(integration_db_url, "settlement_events") == 0
+    assert _count_rows(integration_db_url, "accrual_obligations") == 0
+
+
+def test_import_batches_is_latest_loaded_import_two_batches(
+    import_api_client: TestClient,
+    integration_db_url: str,
+) -> None:
+    for payload in (
+        {"name": "Cash", "type": "asset", "is_active": True},
+        {"name": "Rent Revenue", "type": "revenue", "is_active": True},
+    ):
+        assert import_api_client.post("/accounts", json=payload).status_code == 201
+
+    cols = [
+        {"attribute_name": "date", "data_type": "date", "date_format": "YYYY-MM-DD"},
+        {"attribute_name": "summary", "data_type": "string"},
+        {"attribute_name": "dr-account", "data_type": "string"},
+        {"attribute_name": "cr-account", "data_type": "string"},
+        {"attribute_name": "amount", "data_type": "numeric"},
+    ]
+    assert (
+        import_api_client.post(
+            "/imports/csv/execute",
+            json={
+                "csv_text": "date,summary,dr,cr,amount\n2026-07-01,A,Cash,Rent Revenue,1.00\n",
+                "basename": "older.csv",
+                "has_header_row": True,
+                "columns": cols,
+            },
+        ).status_code
+        == 200
+    )
+    assert (
+        import_api_client.post(
+            "/imports/csv/execute",
+            json={
+                "csv_text": "date,summary,dr,cr,amount\n2026-07-02,B,Cash,Rent Revenue,2.00\n",
+                "basename": "newer.csv",
+                "has_header_row": True,
+                "columns": cols,
+            },
+        ).status_code
+        == 200
+    )
+
+    batches = import_api_client.get("/import-batches").json()
+    by_base = {b["basename"]: b for b in batches}
+    assert by_base["older.csv"]["is_latest_loaded_import"] is False
+    assert by_base["newer.csv"]["is_latest_loaded_import"] is True
+
+
+def test_unload_import_batch_reopens_cleared_cheque(
+    import_api_client: TestClient,
+    integration_db_url: str,
+) -> None:
+    for payload in (
+        {"name": "Chequing", "type": "asset", "is_active": True},
+        {"name": "Mowing", "type": "expense", "is_active": True},
+        {"name": "Cash", "type": "asset", "is_active": True},
+        {"name": "Rent Revenue", "type": "revenue", "is_active": True},
+    ):
+        assert import_api_client.post("/accounts", json=payload).status_code == 201
+
+    accounts = import_api_client.get("/accounts").json()
+    by_name = {a["name"]: a["id"] for a in accounts}
+    cq = import_api_client.post(
+        "/cheques",
+        json={
+            "credit_account_id": by_name["Chequing"],
+            "debit_account_id": by_name["Mowing"],
+            "summary": "Lawn",
+            "cheque_number": 901,
+            "issue_date": "2026-06-01",
+            "amount": "88.00",
+            "status": "open",
+        },
+    )
+    assert cq.status_code == 201, cq.text
+    cheque_id = cq.json()["id"]
+
+    ex = import_api_client.post(
+        "/imports/csv/execute",
+        json={
+            "csv_text": "date,summary,dr,cr,amount\n2026-07-01,Rent,Cash,Rent Revenue,100.00\n",
+            "basename": "cheque-unload.csv",
+            "has_header_row": True,
+            "columns": [
+                {"attribute_name": "date", "data_type": "date", "date_format": "YYYY-MM-DD"},
+                {"attribute_name": "summary", "data_type": "string"},
+                {"attribute_name": "dr-account", "data_type": "string"},
+                {"attribute_name": "cr-account", "data_type": "string"},
+                {"attribute_name": "amount", "data_type": "numeric"},
+            ],
+        },
+    )
+    assert ex.status_code == 200, ex.text
+    batch_id = ex.json()["import_batch_id"]
+    entry_id = ex.json()["entries"][0]["id"]
+
+    get_e = import_api_client.get(f"/journal-entries/{entry_id}")
+    assert get_e.status_code == 200, get_e.text
+    body = get_e.json()
+    put_body = {
+        "entry_date": body["entry_date"],
+        "summary": body["summary"],
+        "description": body["description"],
+        "cheque_id": cheque_id,
+        "lines": [{"account_id": ln["account_id"], "party_id": ln.get("party_id"), "amount": str(ln["amount"])} for ln in body["lines"]],
+    }
+    put_r = import_api_client.put(f"/journal-entries/{entry_id}", json=put_body)
+    assert put_r.status_code == 200, put_r.text
+    assert put_r.json()["cheque_id"] == cheque_id
+
+    ch_row = import_api_client.get(f"/cheques/{cheque_id}").json()
+    assert ch_row["status"] == "cleared"
+
+    assert import_api_client.delete(f"/import-batches/{batch_id}").status_code == 204
+    ch_after = import_api_client.get(f"/cheques/{cheque_id}").json()
+    assert ch_after["status"] == "open"
+    assert ch_after["cleared_date"] is None

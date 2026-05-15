@@ -17,6 +17,11 @@ import {
   type ImportTemplateNormalBalance,
   type ImportTemplateSummary,
 } from "../api/importTemplates";
+import {
+  listImportBatches,
+  unloadImportBatch,
+  type ImportBatchListItem,
+} from "../api/importBatches";
 import { parseCsv } from "../lib/csvParse";
 import { readFileAsText } from "../lib/readFileAsText";
 
@@ -148,13 +153,17 @@ export function CsvImportSection({ accounts, onImportSucceeded }: CsvImportSecti
   const [executing, setExecuting] = useState(false);
   const [executeResult, setExecuteResult] = useState<CsvImportExecuteResult | null>(null);
   const [duplicateImportPrompt, setDuplicateImportPrompt] = useState<string | null>(null);
+  const [importBatches, setImportBatches] = useState<ImportBatchListItem[]>([]);
+  const [unloadingBatchId, setUnloadingBatchId] = useState<number | null>(null);
+  const [unloadError, setUnloadError] = useState<string | null>(null);
 
   const loadLists = useCallback(async () => {
     setListError(null);
     try {
-      const [t, r] = await Promise.all([listImportTemplates(), listCelRuleSets()]);
+      const [t, r, b] = await Promise.all([listImportTemplates(), listCelRuleSets(), listImportBatches()]);
       setTemplates(t);
       setRuleSets(r);
+      setImportBatches(b);
     } catch (err) {
       setListError(err instanceof Error ? err.message : "Failed to load templates or rule sets");
     }
@@ -509,6 +518,11 @@ export function CsvImportSection({ accounts, onImportSucceeded }: CsvImportSecti
       });
       setExecuteResult(result);
       setDuplicateImportPrompt(null);
+      try {
+        setImportBatches(await listImportBatches());
+      } catch {
+        /* list refresh is best-effort */
+      }
       if (result.import_batch_id != null) {
         const basename = (result.basename ?? file?.name ?? "").trim();
         if (basename) {
@@ -545,6 +559,35 @@ export function CsvImportSection({ accounts, onImportSucceeded }: CsvImportSecti
     }
   }
 
+  async function handleUnloadImportBatch(batch: ImportBatchListItem) {
+    setUnloadError(null);
+    if (!batch.is_latest_loaded_import) {
+      const proceed = window.confirm(
+        "This file is not the most recent CSV import (by load time). Unloading it can leave the ledger inconsistent " +
+          "if later imports or work depended on it. Only continue if you know the blast radius. Continue?",
+      );
+      if (!proceed) {
+        return;
+      }
+    }
+    const confirmUnload = window.confirm(
+      `Unload "${batch.basename}"? All journal entries posted from this import will be permanently removed, ` +
+        "including rolling back settlements, obligations, and cheque clearances tied to those entries.",
+    );
+    if (!confirmUnload) {
+      return;
+    }
+    setUnloadingBatchId(batch.id);
+    try {
+      await unloadImportBatch(batch.id);
+      await loadLists();
+    } catch (err) {
+      setUnloadError(err instanceof Error ? err.message : "Unload failed");
+    } finally {
+      setUnloadingBatchId(null);
+    }
+  }
+
   function onDropFiles(files: FileList | null) {
     const next = files?.[0];
     if (!next) {
@@ -570,6 +613,56 @@ export function CsvImportSection({ accounts, onImportSucceeded }: CsvImportSecti
             {listError}
           </p>
         )}
+
+        <div className="csv-import-loaded-batches">
+          <h3>Loaded CSV imports</h3>
+          <p className="muted">
+            Unload removes the batch row and all journal lines created for that file, and rolls back settlements,
+            accrual obligations, and cheque links on those entries where the API can do so safely.
+          </p>
+          {unloadError ? (
+            <p className="error" role="alert">
+              {unloadError}
+            </p>
+          ) : null}
+          {importBatches.length === 0 ? (
+            <p className="muted">No import batches in the ledger yet.</p>
+          ) : (
+            <table className="csv-import-batches-table">
+              <thead>
+                <tr>
+                  <th scope="col">File</th>
+                  <th scope="col">Loaded</th>
+                  <th scope="col" />
+                </tr>
+              </thead>
+              <tbody>
+                {importBatches.map((b) => (
+                  <tr key={b.id}>
+                    <td>{b.basename}</td>
+                    <td>
+                      <span className="muted">{new Date(b.loaded_at).toLocaleString()}</span>
+                      {!b.is_latest_loaded_import ? (
+                        <span className="csv-import-batch-flag"> · not latest import</span>
+                      ) : null}
+                    </td>
+                    <td>
+                      <button
+                        type="button"
+                        className="button-secondary"
+                        disabled={unloadingBatchId !== null || !!listError}
+                        aria-label={`Unload import ${b.basename}`}
+                        onClick={() => void handleUnloadImportBatch(b)}
+                      >
+                        {unloadingBatchId === b.id ? "Unloading…" : "Unload"}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
 
         {step === "start" && (
           <form className="csv-import-start" onSubmit={(e) => void handleContinue(e)}>

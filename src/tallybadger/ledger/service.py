@@ -2152,15 +2152,384 @@ class LedgerService:
             with conn.cursor(row_factory=dict_row) as cur:
                 cur.execute(
                     """
-                    SELECT id, basename, loaded_at, is_active
-                    FROM import_batches
-                    ORDER BY loaded_at DESC, id DESC
+                    SELECT ib.id,
+                           ib.basename,
+                           ib.loaded_at,
+                           ib.is_active,
+                           (
+                               ib.is_active
+                               AND ib.id = (
+                                   SELECT ib2.id
+                                   FROM import_batches ib2
+                                   WHERE ib2.is_active
+                                   ORDER BY ib2.loaded_at DESC, ib2.id DESC
+                                   LIMIT 1
+                               )
+                           ) AS is_latest_loaded_import
+                    FROM import_batches ib
+                    ORDER BY ib.loaded_at DESC, ib.id DESC
                     LIMIT %s
                     """,
                     (limit,),
                 )
                 rows = cur.fetchall()
         return [ImportBatchListItem.model_validate(r) for r in rows]
+
+    def unload_import_batch(self, batch_id: int) -> None:
+        """Remove a CSV import batch, its journal entries, and rolled-back load-induced links (#137 / #49)."""
+        with self._connection_factory() as conn:
+            with conn.transaction():
+                with conn.cursor(row_factory=dict_row) as cur:
+                    cur.execute("SELECT id FROM import_batches WHERE id = %s", (batch_id,))
+                    if not cur.fetchone():
+                        raise LedgerNotFoundError(
+                            f"import batch {batch_id} not found (it may have already been unloaded)",
+                        )
+                    cur.execute(
+                        "SELECT id FROM journal_entries WHERE import_batch_id = %s",
+                        (batch_id,),
+                    )
+                    batch_entry_ids = {int(r["id"]) for r in cur.fetchall()}
+                    settings = self._fetch_settings_row(cur)
+                    if batch_entry_ids:
+                        self._rollback_settlements_for_import_batch(cur, batch_entry_ids, settings)
+                        cur.execute(
+                            """
+                            DELETE FROM accrual_obligations
+                            WHERE source_entry_id = ANY(%s::bigint[])
+                               OR source_line_id IN (
+                                   SELECT jl.id FROM journal_lines jl
+                                   WHERE jl.entry_id = ANY(%s::bigint[])
+                               )
+                            """,
+                            (list(batch_entry_ids), list(batch_entry_ids)),
+                        )
+                    cheque_ids: list[int | None] = []
+                    for entry_id in sorted(batch_entry_ids):
+                        cur.execute(
+                            "SELECT cheque_id FROM journal_entries WHERE id = %s FOR UPDATE",
+                            (entry_id,),
+                        )
+                        row = cur.fetchone()
+                        if not row:
+                            continue
+                        cheque_ids.append(row.get("cheque_id"))
+                        cur.execute("DELETE FROM journal_entries WHERE id = %s", (entry_id,))
+                    for cid in cheque_ids:
+                        self._reopen_cleared_cheque_if_unreferenced(cur, cid)
+                    cur.execute("DELETE FROM import_batches WHERE id = %s", (batch_id,))
+
+    def _rollback_settlements_for_import_batch(
+        self,
+        cur: Any,
+        batch_entry_ids: set[int],
+        settings: dict,
+    ) -> None:
+        cur.execute(
+            """
+            SELECT DISTINCT se.id
+            FROM settlement_events se
+            INNER JOIN settlement_allocations sa ON sa.settlement_event_id = se.id
+            INNER JOIN accrual_obligations ao ON ao.id = sa.obligation_id
+            WHERE ao.source_entry_id = ANY(%s::bigint[])
+               OR ao.source_line_id IN (
+                   SELECT jl.id FROM journal_lines jl
+                   WHERE jl.entry_id = ANY(%s::bigint[])
+               )
+            ORDER BY se.id DESC
+            """,
+            (list(batch_entry_ids), list(batch_entry_ids)),
+        )
+        for row in cur.fetchall():
+            self._reverse_one_settlement_event_for_import_unload(
+                cur,
+                int(row["id"]),
+                batch_entry_ids,
+                settings,
+            )
+
+    def _reverse_one_settlement_event_for_import_unload(
+        self,
+        cur: Any,
+        settlement_event_id: int,
+        batch_entry_ids: set[int],
+        settings: dict,
+    ) -> None:
+        cur.execute(
+            """
+            SELECT id, party_id, settlement_type, event_date, amount, cash_account_id, entry_id
+            FROM settlement_events
+            WHERE id = %s
+            """,
+            (settlement_event_id,),
+        )
+        ev = cur.fetchone()
+        if not ev:
+            return
+        cur.execute(
+            """
+            SELECT obligation_id, amount
+            FROM settlement_allocations
+            WHERE settlement_event_id = %s
+            ORDER BY id ASC
+            """,
+            (settlement_event_id,),
+        )
+        alloc_rows = cur.fetchall()
+        if not alloc_rows:
+            cur.execute("DELETE FROM settlement_events WHERE id = %s", (settlement_event_id,))
+            return
+        obligation_ids = [int(r["obligation_id"]) for r in alloc_rows]
+        allocation_by_id = {int(r["obligation_id"]): Decimal(r["amount"]) for r in alloc_rows}
+        cur.execute(
+            """
+            SELECT ao.id,
+                   ao.party_id,
+                   ao.obligation_type,
+                   ao.status,
+                   ao.open_amount,
+                   ao.original_amount,
+                   ao.source_entry_id,
+                   ao.source_line_id,
+                   je.entry_date AS source_entry_date
+            FROM accrual_obligations ao
+            INNER JOIN journal_entries je ON je.id = ao.source_entry_id
+            WHERE ao.id = ANY(%s::bigint[])
+            FOR UPDATE OF ao
+            """,
+            (obligation_ids,),
+        )
+        by_id = {int(r["id"]): dict(r) for r in cur.fetchall()}
+        obligations = [by_id[oid] for oid in obligation_ids if oid in by_id]
+        if len(obligations) != len(obligation_ids):
+            raise LedgerValidationError("settlement references missing obligation rows during import unload")
+
+        st = ev["settlement_type"]
+        entry_id = int(ev["entry_id"])
+        event_date = ev["event_date"]
+        allocated_total = sum(allocation_by_id.values(), Decimal("0"))
+
+        if st == "payment":
+            cur.execute("DELETE FROM settlement_events WHERE id = %s", (settlement_event_id,))
+            cur.execute("DELETE FROM journal_entries WHERE id = %s", (entry_id,))
+            return
+
+        if st != "receipt":
+            raise LedgerValidationError(f"unsupported settlement_type {st!r} during import unload")
+
+        collapse = self._receipt_allocations_all_same_accrual_day(obligations, allocation_by_id, event_date)
+
+        if collapse:
+            unapplied = Decimal(ev["amount"]) - allocated_total
+            ur_id = settings.get("unearned_revenue_account_id")
+            if unapplied > Decimal("0") and ur_id is not None:
+                self._reverse_append_cash_unearned(
+                    cur,
+                    entry_id,
+                    int(ev["party_id"]),
+                    int(ev["cash_account_id"]),
+                    int(ur_id),
+                    unapplied,
+                )
+            ar_id = settings["accounts_receivable_account_id"]
+            for ob in reversed(obligations):
+                amt = allocation_by_id.get(int(ob["id"]), Decimal("0"))
+                if amt <= Decimal("0"):
+                    continue
+                self._reverse_same_day_settle_receivable_obligation(
+                    cur,
+                    ob,
+                    amt,
+                    int(ev["cash_account_id"]),
+                    int(ar_id),
+                )
+            cur.execute("DELETE FROM settlement_events WHERE id = %s", (settlement_event_id,))
+            return
+
+        for ob in reversed(obligations):
+            amt = allocation_by_id.get(int(ob["id"]), Decimal("0"))
+            sd = ob.get("source_entry_date")
+            if sd is not None and sd > event_date and amt > Decimal("0"):
+                self._reverse_early_receipt_line_reclassification(cur, ob, amt, settings)
+
+        cur.execute("DELETE FROM settlement_events WHERE id = %s", (settlement_event_id,))
+        if entry_id not in batch_entry_ids:
+            cur.execute("DELETE FROM journal_entries WHERE id = %s", (entry_id,))
+
+    @staticmethod
+    def _reverse_append_cash_unearned(
+        cur: Any,
+        entry_id: int,
+        party_id: int,
+        cash_account_id: int,
+        unearned_account_id: int,
+        unapplied: Decimal,
+    ) -> None:
+        cur.execute(
+            """
+            DELETE FROM journal_lines
+            WHERE id = (
+                SELECT jl.id
+                FROM journal_lines jl
+                WHERE jl.entry_id = %s
+                  AND jl.account_id = %s
+                  AND jl.party_id IS NOT DISTINCT FROM %s
+                  AND jl.amount = %s
+                ORDER BY jl.id DESC
+                LIMIT 1
+            )
+            """,
+            (entry_id, unearned_account_id, party_id, -unapplied),
+        )
+        cur.execute(
+            """
+            DELETE FROM journal_lines
+            WHERE id = (
+                SELECT jl.id
+                FROM journal_lines jl
+                WHERE jl.entry_id = %s
+                  AND jl.account_id = %s
+                  AND jl.party_id IS NOT DISTINCT FROM %s
+                  AND jl.amount = %s
+                ORDER BY jl.id DESC
+                LIMIT 1
+            )
+            """,
+            (entry_id, cash_account_id, party_id, unapplied),
+        )
+
+    @staticmethod
+    def _reverse_same_day_settle_receivable_obligation(
+        cur: Any,
+        obligation: dict,
+        allocation_amount: Decimal,
+        cash_account_id: int,
+        ar_account_id: int,
+    ) -> None:
+        sl_id = obligation.get("source_line_id")
+        if sl_id is None:
+            raise LedgerValidationError("cannot reverse same-day settlement: obligation missing source line")
+        cur.execute(
+            """
+            SELECT id, entry_id, party_id, account_id, amount
+            FROM journal_lines
+            WHERE id = %s
+            FOR UPDATE
+            """,
+            (sl_id,),
+        )
+        line = cur.fetchone()
+        if not line:
+            raise LedgerValidationError("cannot reverse same-day settlement: source line missing")
+        entry_id = int(line["entry_id"])
+        party_id = line["party_id"]
+        if line["account_id"] == cash_account_id:
+            cur.execute(
+                """
+                UPDATE journal_lines
+                SET account_id = %s
+                WHERE id = %s
+                """,
+                (ar_account_id, sl_id),
+            )
+            return
+        sign = Decimal("1") if Decimal(line["amount"]) >= 0 else Decimal("-1")
+        target_amt = sign * allocation_amount
+        cur.execute(
+            """
+            SELECT jl.id, jl.amount
+            FROM journal_lines jl
+            WHERE jl.entry_id = %s
+              AND jl.account_id = %s
+              AND jl.party_id IS NOT DISTINCT FROM %s
+              AND jl.id <> %s
+              AND jl.amount = %s
+            ORDER BY jl.id DESC
+            LIMIT 1
+            """,
+            (entry_id, cash_account_id, party_id, sl_id, target_amt),
+        )
+        cash_row = cur.fetchone()
+        if not cash_row:
+            raise LedgerValidationError("cannot reverse same-day partial settlement: cash line not found")
+        allocated_signed = Decimal(cash_row["amount"])
+        cash_line_id = int(cash_row["id"])
+        cur.execute("DELETE FROM journal_lines WHERE id = %s", (cash_line_id,))
+        new_amt = Decimal(line["amount"]) + allocated_signed
+        cur.execute(
+            """
+            UPDATE journal_lines
+            SET amount = %s
+            WHERE id = %s
+            """,
+            (new_amt, sl_id),
+        )
+
+    @staticmethod
+    def _reverse_early_receipt_line_reclassification(
+        cur: Any,
+        obligation: dict,
+        allocation_amount: Decimal,
+        settings: dict,
+    ) -> None:
+        ar_id = settings["accounts_receivable_account_id"]
+        ur_id = settings["unearned_revenue_account_id"]
+        if ar_id is None or ur_id is None:
+            raise LedgerValidationError("cannot reverse early receipt: A/R or unearned account not configured")
+        sl_id = obligation.get("source_line_id")
+        if sl_id is None:
+            return
+        cur.execute(
+            """
+            SELECT id, entry_id, party_id, account_id, amount
+            FROM journal_lines
+            WHERE id = %s
+            FOR UPDATE
+            """,
+            (sl_id,),
+        )
+        line = cur.fetchone()
+        if not line:
+            return
+        entry_id = int(line["entry_id"])
+        party_id = line["party_id"]
+        if line["account_id"] == ur_id:
+            cur.execute(
+                """
+                UPDATE journal_lines
+                SET account_id = %s
+                WHERE id = %s
+                """,
+                (ar_id, sl_id),
+            )
+            return
+        if line["account_id"] != ar_id:
+            return
+        cur.execute(
+            """
+            SELECT jl.id, jl.amount
+            FROM journal_lines jl
+            WHERE jl.entry_id = %s
+              AND jl.account_id = %s
+              AND jl.party_id IS NOT DISTINCT FROM %s
+              AND jl.id <> %s
+            ORDER BY jl.id ASC
+            """,
+            (entry_id, ur_id, party_id, sl_id),
+        )
+        ur_row = cur.fetchone()
+        if not ur_row:
+            return
+        merged = Decimal(ur_row["amount"]) + Decimal(line["amount"])
+        cur.execute("DELETE FROM journal_lines WHERE id = %s", (sl_id,))
+        cur.execute(
+            """
+            UPDATE journal_lines
+            SET account_id = %s, amount = %s
+            WHERE id = %s
+            """,
+            (ar_id, merged, int(ur_row["id"])),
+        )
 
     def update_entry(self, entry_id: int, payload: JournalEntryWrite) -> JournalEntryOut:
         self._validate_summary(payload.summary)

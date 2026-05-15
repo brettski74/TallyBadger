@@ -491,7 +491,15 @@ describe("JournalEntriesPanel", () => {
       const url = String(input);
       if (url.includes("/import-batches")) {
         return new Response(
-          JSON.stringify([{ id: 1, basename: "Stmt.csv", loaded_at: "2026-01-01T00:00:00Z", is_active: true }]),
+          JSON.stringify([
+            {
+              id: 1,
+              basename: "Stmt.csv",
+              loaded_at: "2026-01-01T00:00:00Z",
+              is_active: true,
+              is_latest_loaded_import: true,
+            },
+          ]),
           { status: 200 },
         );
       }

@@ -34,6 +34,7 @@ from tallybadger.ledger.models import (
 from tallybadger.ledger.service import (
     LedgerDuplicateImportContentError,
     LedgerImportBasenameConflictError,
+    LedgerNotFoundError,
     LedgerService,
     LedgerValidationError,
 )
@@ -499,6 +500,18 @@ def list_import_batches(
         return ledger_service.list_import_batches(limit=limit)
     except LedgerValidationError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+
+
+@router.delete("/import-batches/{batch_id}", status_code=status.HTTP_204_NO_CONTENT)
+def unload_import_batch(
+    batch_id: int,
+    ledger_service: LedgerService = Depends(get_ledger_service),
+) -> None:
+    """Unload a CSV import batch: journals, settlements, obligations, cheques (#137 / #49)."""
+    try:
+        ledger_service.unload_import_batch(batch_id)
+    except LedgerNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
 
 @router.post("/imports/csv/execute", response_model=CsvImportExecuteResult)
