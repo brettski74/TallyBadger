@@ -29,6 +29,10 @@ type MainTab =
 
 function App() {
   const [tab, setTab] = useState<MainTab>("accounts");
+  const [journalEntriesPanelKey, setJournalEntriesPanelKey] = useState(0);
+  const [journalInitialImportBasename, setJournalInitialImportBasename] = useState<
+    string | undefined
+  >(undefined);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [parties, setParties] = useState<Party[]>([]);
   const [loading, setLoading] = useState(true);
@@ -66,11 +70,15 @@ function App() {
     setParties((prev) => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)));
   }
 
-  function handlePartyUpdated(updated: Party) {
+  const handlePartyUpdated = useCallback((updated: Party) => {
     setParties((prev) =>
       prev.map((p) => (p.id === updated.id ? updated : p)).sort((a, b) => a.name.localeCompare(b.name)),
     );
-  }
+  }, []);
+
+  const clearJournalInitialImportBasename = useCallback(() => {
+    setJournalInitialImportBasename(undefined);
+  }, []);
 
   return (
     <div className="app-shell">
@@ -168,10 +176,13 @@ function App() {
         )}
         {tab === "journal" && (
           <JournalEntriesPanel
+            key={journalEntriesPanelKey}
             accounts={accounts}
             parties={parties}
             accountsLoading={loading}
             accountsError={error}
+            initialImportBasename={journalInitialImportBasename}
+            onInitialImportBasenameApplied={clearJournalInitialImportBasename}
           />
         )}
         {tab === "cheques" && <ChequesSection accounts={accounts} parties={parties} />}
@@ -190,7 +201,14 @@ function App() {
         {tab === "settlements" && <SettlementsSection accounts={accounts} parties={parties} />}
         {tab === "import_rules" && <CelRuleSetsSection />}
         {tab === "csv_import" && (
-          <CsvImportSection accounts={accounts} onImportSucceeded={() => setTab("journal")} />
+          <CsvImportSection
+            accounts={accounts}
+            onImportSucceeded={(info) => {
+              setJournalInitialImportBasename(info.basename);
+              setJournalEntriesPanelKey((k) => k + 1);
+              setTab("journal");
+            }}
+          />
         )}
         {tab === "reports" && (
           <>

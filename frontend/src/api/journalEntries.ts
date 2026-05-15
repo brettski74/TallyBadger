@@ -72,6 +72,8 @@ export interface ListJournalEntriesParams {
   amount_low?: number;
   amount_high?: number;
   cheque_association?: ChequeAssociation;
+  /** Filter entries whose import batch basename matches (case-insensitive). */
+  import_basename?: string;
   limit?: number;
   offset?: number;
 }
@@ -107,6 +109,9 @@ export async function listJournalEntries(
   }
   if (params.cheque_association && params.cheque_association !== "any") {
     search.set("cheque_association", params.cheque_association);
+  }
+  if (params.import_basename != null && params.import_basename.trim() !== "") {
+    search.set("import_basename", params.import_basename.trim());
   }
   if (params.limit != null) {
     search.set("limit", String(params.limit));

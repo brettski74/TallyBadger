@@ -233,6 +233,8 @@ def list_journal_entries(
     amount_low: int | None = Query(default=None, ge=0),
     amount_high: int | None = Query(default=None, ge=0),
     cheque_association: Literal["any", "with_cheque", "without_cheque"] = "any",
+    import_batch_id: int | None = Query(default=None, gt=0),
+    import_basename: str | None = Query(default=None, min_length=1, max_length=512),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     service: LedgerService = Depends(get_ledger_service),
@@ -248,6 +250,8 @@ def list_journal_entries(
             amount_low=amount_low,
             amount_high=amount_high,
             cheque_association=cheque_association,
+            import_batch_id=import_batch_id,
+            import_basename=import_basename,
             limit=limit,
             offset=offset,
         )

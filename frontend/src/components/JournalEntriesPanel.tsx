@@ -16,6 +16,7 @@ import {
   type JournalEntryReviewMessage,
   type JournalEntryWrite,
 } from "../api/journalEntries";
+import { listImportBatches, type ImportBatchListItem } from "../api/importBatches";
 import {
   createJournalEntryFilterPreset,
   listJournalEntryFilterPresets,
@@ -54,6 +55,8 @@ interface FilterState {
   amountLow: string;
   amountHigh: string;
   chequeAssociation: ChequeAssociation;
+  /** CSV import file basename (matches API `import_basename`; #136). */
+  importBasename: string;
 }
 
 const EMPTY_FILTER: FilterState = {
@@ -66,6 +69,7 @@ const EMPTY_FILTER: FilterState = {
   amountLow: "",
   amountHigh: "",
   chequeAssociation: "any",
+  importBasename: "",
 };
 
 function definitionFromFilter(state: FilterState): JournalEntryFilterPresetDefinition {
@@ -79,6 +83,8 @@ function definitionFromFilter(state: FilterState): JournalEntryFilterPresetDefin
   if (state.amountLow !== "") def.amount_low = Number(state.amountLow);
   if (state.amountHigh !== "") def.amount_high = Number(state.amountHigh);
   if (state.chequeAssociation !== "any") def.cheque_association = state.chequeAssociation;
+  const ib = state.importBasename.trim();
+  if (ib !== "") def.import_basename = ib;
   return def;
 }
 
@@ -93,6 +99,7 @@ function filterFromDefinition(def: JournalEntryFilterPresetDefinition): FilterSt
     amountLow: def.amount_low != null ? String(def.amount_low) : "",
     amountHigh: def.amount_high != null ? String(def.amount_high) : "",
     chequeAssociation: def.cheque_association ?? "any",
+    importBasename: def.import_basename?.trim() ?? "",
   };
 }
 
@@ -108,6 +115,7 @@ function filterMatchesDefinition(
     state.amountLow === normalized.amountLow &&
     state.amountHigh === normalized.amountHigh &&
     state.chequeAssociation === normalized.chequeAssociation &&
+    (state.importBasename || "") === (normalized.importBasename || "") &&
     sameIdList(state.accountIds, normalized.accountIds) &&
     sameIdList(state.partyIds, normalized.partyIds) &&
     sameIdList(state.accrualPlanIds, normalized.accrualPlanIds)
@@ -139,6 +147,9 @@ interface JournalEntriesPanelProps {
   parties: Party[];
   accountsLoading: boolean;
   accountsError: string | null;
+  /** After CSV import: open list filtered to this basename only (#136). */
+  initialImportBasename?: string;
+  onInitialImportBasenameApplied?: () => void;
 }
 
 export function JournalEntriesPanel({
@@ -146,16 +157,23 @@ export function JournalEntriesPanel({
   parties,
   accountsLoading,
   accountsError,
+  initialImportBasename,
+  onInitialImportBasenameApplied,
 }: JournalEntriesPanelProps) {
   const [view, setView] = useState<"list" | "form">("list");
   const [editingId, setEditingId] = useState<number | null>(null);
   const [entries, setEntries] = useState<JournalEntryListItem[]>([]);
   const [listLoading, setListLoading] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
-  const [filter, setFilter] = useState<FilterState>(EMPTY_FILTER);
+  const [filter, setFilter] = useState<FilterState>(() =>
+    initialImportBasename
+      ? { ...EMPTY_FILTER, importBasename: initialImportBasename }
+      : EMPTY_FILTER,
+  );
   const [hasMore, setHasMore] = useState(false);
 
   const [accrualPlans, setAccrualPlans] = useState<AccrualPlan[]>([]);
+  const [importBatches, setImportBatches] = useState<ImportBatchListItem[]>([]);
   const [presets, setPresets] = useState<JournalEntryFilterPreset[]>([]);
   const [appliedPresetId, setAppliedPresetId] = useState<number | null>(null);
   const [presetsError, setPresetsError] = useState<string | null>(null);
@@ -190,6 +208,7 @@ export function JournalEntriesPanel({
       amount_high: filter.amountHigh !== "" ? Number(filter.amountHigh) : undefined,
       cheque_association:
         filter.chequeAssociation !== "any" ? filter.chequeAssociation : undefined,
+      import_basename: filter.importBasename.trim() || undefined,
     }),
     [filter],
   );
@@ -228,6 +247,13 @@ export function JournalEntriesPanel({
   }, [view, refreshList]);
 
   useEffect(() => {
+    if (!initialImportBasename) {
+      return;
+    }
+    onInitialImportBasenameApplied?.();
+  }, [initialImportBasename, onInitialImportBasenameApplied]);
+
+  useEffect(() => {
     void (async () => {
       try {
         const [plans, loadedPresets] = await Promise.all([
@@ -242,6 +268,12 @@ export function JournalEntriesPanel({
         );
       }
     })();
+  }, []);
+
+  useEffect(() => {
+    void listImportBatches().then(setImportBatches).catch(() => {
+      setImportBatches([]);
+    });
   }, []);
 
   async function loadMore() {
@@ -273,6 +305,20 @@ export function JournalEntriesPanel({
     }
     return null;
   }, [appliedPreset, filter]);
+
+  const importBasenameOptions = useMemo(() => {
+    const seen = new Set<string>();
+    const out: ImportBatchListItem[] = [];
+    for (const b of importBatches) {
+      const k = b.basename.toLowerCase();
+      if (seen.has(k)) {
+        continue;
+      }
+      seen.add(k);
+      out.push(b);
+    }
+    return out;
+  }, [importBatches]);
 
   function applyPreset(presetId: number) {
     const preset = presets.find((p) => p.id === presetId);
@@ -573,6 +619,29 @@ export function JournalEntriesPanel({
           selectedIds={filter.accrualPlanIds}
           onIdsChange={(ids) => updateFilter({ accrualPlanIds: ids })}
         />
+        <label className="journal-filter-slot journal-filter-slot-select">
+          <span className="journal-filter-inline-label">Import file</span>
+          <select
+            className="journal-filter-control"
+            aria-label="Filter by CSV import file basename"
+            value={filter.importBasename}
+            onChange={(e) => updateFilter({ importBasename: e.target.value })}
+          >
+            <option value="">Any</option>
+            {filter.importBasename.trim() !== "" &&
+              !importBasenameOptions.some(
+                (b) =>
+                  b.basename.toLowerCase() === filter.importBasename.trim().toLowerCase(),
+              ) && (
+                <option value={filter.importBasename}>{filter.importBasename}</option>
+              )}
+            {importBasenameOptions.map((b) => (
+              <option key={b.id} value={b.basename}>
+                {b.basename}
+              </option>
+            ))}
+          </select>
+        </label>
         <label className="journal-filter-slot journal-filter-slot-select">
           <span className="journal-filter-inline-label">Cheque</span>
           <select

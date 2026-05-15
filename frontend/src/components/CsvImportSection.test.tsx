@@ -81,6 +81,7 @@ function mockListEndpoints() {
           row_errors: [],
           entries: [],
           import_batch_id: 1,
+          basename: "import.csv",
         }),
         { status: 200 },
       );
@@ -381,6 +382,86 @@ describe("CsvImportSection", () => {
     await waitFor(() => {
       expect(onImportSucceeded).toHaveBeenCalledTimes(1);
     });
+    expect(onImportSucceeded).toHaveBeenCalledWith({ basename: "import.csv" });
+  });
+
+  it("does not call onImportSucceeded when execute returns no import batch", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/import-templates") && init?.method === "POST") {
+        return new Response(
+          JSON.stringify({
+            id: 1,
+            name: "x",
+            has_header_row: true,
+            columns: [],
+            ...TEMPLATE_API_DEFAULTS,
+          }),
+          { status: 201 },
+        );
+      }
+      if (url.includes("/import-templates/") && init?.method === undefined) {
+        return new Response(
+          JSON.stringify({
+            id: 1,
+            name: "Bank",
+            has_header_row: true,
+            columns: [],
+            cel_rule_set_id: null,
+            created_at: "2026-04-01T00:00:00Z",
+            updated_at: "2026-04-01T00:00:00Z",
+            ...TEMPLATE_API_DEFAULTS,
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.endsWith("/import-templates") || url.match(/\/import-templates\?/)) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      if (url.includes("/import-rules/cel/rule-sets")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      if (url.includes("/imports/csv/execute") && init?.method === "POST") {
+        return new Response(
+          JSON.stringify({
+            posted_entries: 0,
+            dropped_rows: 0,
+            row_errors: [],
+            entries: [],
+            import_batch_id: null,
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response(`unmocked: ${url}`, { status: 500 });
+    });
+
+    vi.mocked(readFileAsText).mockResolvedValue("date,summary,dr,cr,amount\n");
+
+    const onImportSucceeded = vi.fn();
+    render(<CsvImportSection accounts={EMPTY_ACCOUNTS} onImportSucceeded={onImportSucceeded} />);
+    await screen.findByLabelText("CSV file");
+    const file = new File(["dummy"], "empty.csv", { type: "text/csv" });
+    await userEvent.upload(screen.getByLabelText("CSV file"), file);
+    await userEvent.click(screen.getByRole("button", { name: "Continue to preview" }));
+
+    await userEvent.click(screen.getByLabelText("First row is a header"));
+
+    await userEvent.type(screen.getByLabelText("Attribute for column 1"), "date");
+    await userEvent.selectOptions(screen.getByLabelText("Type for column 1"), "date");
+    await userEvent.type(screen.getByLabelText("Date format for column 1"), "YYYY-MM-DD");
+    await userEvent.type(screen.getByLabelText("Attribute for column 2"), "summary");
+    await userEvent.type(screen.getByLabelText("Attribute for column 3"), "dr-account");
+    await userEvent.type(screen.getByLabelText("Attribute for column 4"), "cr-account");
+    await userEvent.type(screen.getByLabelText("Attribute for column 5"), "amount");
+    await userEvent.selectOptions(screen.getByLabelText("Type for column 5"), "numeric");
+
+    await userEvent.click(screen.getByRole("button", { name: "Execute import" }));
+
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/imports/csv/execute"))).toBe(true);
+    });
+    expect(onImportSucceeded).not.toHaveBeenCalled();
   });
 
   it("shows duplicate confirm and retries with confirm_duplicate_content", async () => {
@@ -406,6 +487,7 @@ describe("CsvImportSection", () => {
             row_errors: [],
             entries: [],
             import_batch_id: 9,
+            basename: "dup-test.csv",
           }),
           { status: 200 },
         );

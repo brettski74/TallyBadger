@@ -12,6 +12,8 @@ export interface JournalEntryFilterPresetDefinition {
   amount_low?: number | null;
   amount_high?: number | null;
   cheque_association?: ChequeAssociation;
+  /** CSV import file basename (matches journal list filter; #136). */
+  import_basename?: string | null;
 }
 
 export interface JournalEntryFilterPreset {

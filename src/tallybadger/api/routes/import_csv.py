@@ -11,7 +11,7 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer, model_validator
 
 from tallybadger.import_dates import parse_import_date_string, parse_import_datetime_string
@@ -25,6 +25,7 @@ from tallybadger.import_rules.errors import ImportRulesCelError
 from tallybadger.import_templates.models import ImportTemplateColumn
 from tallybadger.ledger.models import (
     AccountOut,
+    ImportBatchListItem,
     JournalEntryOut,
     JournalEntryWrite,
     JournalLineIn,
@@ -118,6 +119,10 @@ class CsvImportExecuteResult(BaseModel):
     row_errors: list[CsvImportRowError] = Field(default_factory=list)
     entries: list[CsvJournalEntryOut] = Field(default_factory=list)
     import_batch_id: int | None = None
+    basename: str | None = Field(
+        default=None,
+        description="Normalized CSV filename for the batch when import_batch_id is set (#136).",
+    )
 
 
 def _parse_decimal_from_csv(raw: str) -> Decimal:
@@ -485,6 +490,17 @@ def _bag_to_journal_entry(
     )
 
 
+@router.get("/import-batches", response_model=list[ImportBatchListItem])
+def list_import_batches(
+    limit: int = Query(default=200, ge=1, le=500),
+    ledger_service: LedgerService = Depends(get_ledger_service),
+) -> list[ImportBatchListItem]:
+    try:
+        return ledger_service.list_import_batches(limit=limit)
+    except LedgerValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+
+
 @router.post("/imports/csv/execute", response_model=CsvImportExecuteResult)
 def execute_csv_import(
     payload: CsvImportExecuteRequest,
@@ -608,6 +624,7 @@ def execute_csv_import(
             row_errors=[],
             entries=[],
             import_batch_id=None,
+            basename=None,
         )
 
     content_sha256 = hashlib.sha256(payload.csv_text.encode("utf-8")).digest()
@@ -650,5 +667,6 @@ def execute_csv_import(
         dropped_rows=dropped_rows,
         entries=entries_out,
         import_batch_id=batch_id,
+        basename=payload.basename,
     )
 

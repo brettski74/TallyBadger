@@ -208,6 +208,7 @@ def test_list_journal_entries_forwards_new_filter_dimensions() -> None:
             ("amount_low", "10"),
             ("amount_high", "20"),
             ("cheque_association", "with_cheque"),
+            ("import_basename", "Stmt.csv"),
         ],
     )
 
@@ -218,6 +219,7 @@ def test_list_journal_entries_forwards_new_filter_dimensions() -> None:
     assert captured["amount_low"] == 10
     assert captured["amount_high"] == 20
     assert captured["cheque_association"] == "with_cheque"
+    assert captured["import_basename"] == "Stmt.csv"
     app.dependency_overrides.clear()
 
 
