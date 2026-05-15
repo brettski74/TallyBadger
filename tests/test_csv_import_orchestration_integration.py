@@ -368,6 +368,8 @@ def test_csv_import_execute_default_import_account_avoids_unallocated_and_review
             "has_header_row": True,
             "default_import_account_id": created["Chequing"],
             "columns": base_columns,
+            # Same bytes as the first execute: duplicate content guard otherwise returns 409.
+            "confirm_duplicate_content": True,
         },
     )
     assert r_infer.status_code == 200, r_infer.text
