@@ -6,6 +6,7 @@ export interface ImportBatchListItem {
   basename: string;
   loaded_at: string;
   is_active: boolean;
+  is_latest_loaded_import: boolean;
 }
 
 export async function listImportBatches(limit = 200): Promise<ImportBatchListItem[]> {
@@ -20,4 +21,11 @@ export async function listImportBatches(limit = 200): Promise<ImportBatchListIte
     throw new Error(await readApiErrorMessage(response));
   }
   return response.json();
+}
+
+export async function unloadImportBatch(batchId: number): Promise<void> {
+  const response = await fetch(`${getApiBase()}/import-batches/${batchId}`, { method: "DELETE" });
+  if (!response.ok) {
+    throw new Error(await readApiErrorMessage(response));
+  }
 }

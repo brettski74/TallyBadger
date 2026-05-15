@@ -73,6 +73,12 @@ function mockListEndpoints() {
         status: 200,
       });
     }
+    if (/\/import-batches\/\d+/.test(url) && init?.method === "DELETE") {
+      return new Response(null, { status: 204 });
+    }
+    if (url.includes("/import-batches") && !/\/import-batches\/\d+/.test(url)) {
+      return new Response(JSON.stringify([]), { status: 200 });
+    }
     if (url.includes("/imports/csv/execute") && init?.method === "POST") {
       return new Response(
         JSON.stringify({
@@ -246,6 +252,12 @@ describe("CsvImportSection", () => {
       if (url.includes("/import-rules/cel/rule-sets")) {
         return new Response(JSON.stringify([]), { status: 200 });
       }
+      if (/\/import-batches\/\d+/.test(url) && init?.method === "DELETE") {
+        return new Response(null, { status: 204 });
+      }
+      if (url.includes("/import-batches") && !/\/import-batches\/\d+/.test(url)) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
       return new Response("x", { status: 500 });
     });
 
@@ -323,6 +335,12 @@ describe("CsvImportSection", () => {
         return new Response(JSON.stringify([]), { status: 200 });
       }
       if (url.includes("/import-rules/cel/rule-sets")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      if (/\/import-batches\/\d+/.test(url) && init?.method === "DELETE") {
+        return new Response(null, { status: 204 });
+      }
+      if (url.includes("/import-batches") && !/\/import-batches\/\d+/.test(url)) {
         return new Response(JSON.stringify([]), { status: 200 });
       }
       return new Response("unmocked", { status: 500 });
@@ -421,6 +439,12 @@ describe("CsvImportSection", () => {
       if (url.includes("/import-rules/cel/rule-sets")) {
         return new Response(JSON.stringify([]), { status: 200 });
       }
+      if (/\/import-batches\/\d+/.test(url) && init?.method === "DELETE") {
+        return new Response(null, { status: 204 });
+      }
+      if (url.includes("/import-batches") && !/\/import-batches\/\d+/.test(url)) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
       if (url.includes("/imports/csv/execute") && init?.method === "POST") {
         return new Response(
           JSON.stringify({
@@ -516,6 +540,12 @@ describe("CsvImportSection", () => {
       if (url.includes("/import-rules/cel/rule-sets")) {
         return new Response(JSON.stringify([]), { status: 200 });
       }
+      if (/\/import-batches\/\d+/.test(url) && init?.method === "DELETE") {
+        return new Response(null, { status: 204 });
+      }
+      if (url.includes("/import-batches") && !/\/import-batches\/\d+/.test(url)) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
       return new Response(`unmocked: ${url}`, { status: 500 });
     });
 
@@ -555,5 +585,81 @@ describe("CsvImportSection", () => {
     const second = JSON.parse(String(posts[1]![1]!.body)) as { confirm_duplicate_content?: boolean; basename?: string };
     expect(second.confirm_duplicate_content).toBe(true);
     expect(second.basename).toBe("dup-test.csv");
+  });
+
+  it("asks once before unload for non-latest import and aborts without DELETE when cancelled", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (/\/import-batches\/\d+/.test(url) && init?.method === "DELETE") {
+        return new Response(null, { status: 204 });
+      }
+      if (url.includes("/import-batches")) {
+        return new Response(
+          JSON.stringify([
+            {
+              id: 1,
+              basename: "older.csv",
+              loaded_at: "2026-01-01T00:00:00Z",
+              is_active: true,
+              is_latest_loaded_import: false,
+            },
+            {
+              id: 2,
+              basename: "newer.csv",
+              loaded_at: "2026-02-01T00:00:00Z",
+              is_active: true,
+              is_latest_loaded_import: true,
+            },
+          ]),
+          { status: 200 },
+        );
+      }
+      if (url.includes("/import-templates") || url.includes("/import-rules/cel/rule-sets")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      return new Response("unmocked", { status: 500 });
+    });
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+
+    render(<CsvImportSection accounts={EMPTY_ACCOUNTS} />);
+    await screen.findByRole("heading", { name: "Loaded CSV imports" });
+    await userEvent.click(screen.getByRole("button", { name: "Unload import older.csv" }));
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "DELETE")).toHaveLength(0);
+  });
+
+  it("DELETEs latest import batch after a single confirm", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (/\/import-batches\/\d+/.test(url) && init?.method === "DELETE") {
+        return new Response(null, { status: 204 });
+      }
+      if (url.includes("/import-batches")) {
+        return new Response(
+          JSON.stringify([
+            {
+              id: 2,
+              basename: "newer.csv",
+              loaded_at: "2026-02-01T00:00:00Z",
+              is_active: true,
+              is_latest_loaded_import: true,
+            },
+          ]),
+          { status: 200 },
+        );
+      }
+      if (url.includes("/import-templates") || url.includes("/import-rules/cel/rule-sets")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      return new Response("unmocked", { status: 500 });
+    });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    render(<CsvImportSection accounts={EMPTY_ACCOUNTS} />);
+    await screen.findByRole("heading", { name: "Loaded CSV imports" });
+    await userEvent.click(screen.getByRole("button", { name: "Unload import newer.csv" }));
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(true);
+    });
   });
 });
