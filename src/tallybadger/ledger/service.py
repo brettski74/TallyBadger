@@ -42,6 +42,7 @@ from tallybadger.ledger.models import (
     IncomeExpenseAccountRowOut,
     IncomeExpensePeriodEcho,
     IncomeExpenseReportOut,
+    ImportBatchListItem,
     LedgerSettingsOut,
     LedgerSettingsUpdate,
     ObligationStatusUpdate,
@@ -1195,9 +1196,20 @@ class LedgerService:
         amount_low: int | None = None,
         amount_high: int | None = None,
         cheque_association: str = "any",
+        import_batch_id: int | None = None,
+        import_basename: str | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> list[JournalEntryListItem]:
+        if import_batch_id is not None and import_basename is not None:
+            raise LedgerValidationError(
+                "import_batch_id and import_basename cannot both be set for journal list"
+            )
+        if import_basename is not None:
+            stripped = import_basename.strip()
+            if not stripped:
+                raise LedgerValidationError("import_basename must be non-blank when provided")
+            import_basename = stripped
         if cheque_association not in ("any", "with_cheque", "without_cheque"):
             raise LedgerValidationError(
                 "cheque_association must be one of 'any', 'with_cheque', 'without_cheque'"
@@ -1244,6 +1256,16 @@ class LedgerService:
             conditions.append("je.cheque_id IS NOT NULL")
         elif cheque_association == "without_cheque":
             conditions.append("je.cheque_id IS NULL")
+        if import_batch_id is not None:
+            conditions.append("je.import_batch_id = %s")
+            params.append(import_batch_id)
+        elif import_basename is not None:
+            conditions.append(
+                "EXISTS (SELECT 1 FROM import_batches ib "
+                "WHERE ib.id = je.import_batch_id "
+                "AND LOWER(ib.basename) = LOWER(%s))"
+            )
+            params.append(import_basename)
         if amount_low is not None or amount_high is not None:
             # Per-entry "list amount" mirrors labels_and_amount_for_journal_list_lines:
             # debits when there are positive lines; otherwise the magnitude of credit lines.
@@ -2122,6 +2144,23 @@ class LedgerService:
                     return batch_id, [self.get_entry(entry_id, conn=conn) for entry_id in created_ids]
         except errors.ForeignKeyViolation as exc:
             raise LedgerValidationError("journal line references unknown account") from exc
+
+    def list_import_batches(self, *, limit: int = 200) -> list[ImportBatchListItem]:
+        if limit < 1 or limit > 500:
+            raise LedgerValidationError("limit must be between 1 and 500")
+        with self._connection_factory() as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(
+                    """
+                    SELECT id, basename, loaded_at, is_active
+                    FROM import_batches
+                    ORDER BY loaded_at DESC, id DESC
+                    LIMIT %s
+                    """,
+                    (limit,),
+                )
+                rows = cur.fetchall()
+        return [ImportBatchListItem.model_validate(r) for r in rows]
 
     def update_entry(self, entry_id: int, payload: JournalEntryWrite) -> JournalEntryOut:
         self._validate_summary(payload.summary)

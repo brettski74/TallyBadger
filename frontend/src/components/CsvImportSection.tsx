@@ -110,8 +110,8 @@ function baselineKey(parts: {
 
 export interface CsvImportSectionProps {
   accounts: Account[];
-  /** Called after a successful `POST /imports/csv/execute` (e.g. switch main tab to journal). */
-  onImportSucceeded?: () => void;
+  /** After a successful import that created a batch: switch tab and pass canonical basename (#136). */
+  onImportSucceeded?: (info: { basename: string }) => void;
 }
 
 export function CsvImportSection({ accounts, onImportSucceeded }: CsvImportSectionProps) {
@@ -509,7 +509,12 @@ export function CsvImportSection({ accounts, onImportSucceeded }: CsvImportSecti
       });
       setExecuteResult(result);
       setDuplicateImportPrompt(null);
-      onImportSucceeded?.();
+      if (result.import_batch_id != null) {
+        const basename = (result.basename ?? file?.name ?? "").trim();
+        if (basename) {
+          onImportSucceeded?.({ basename });
+        }
+      }
     } catch (err) {
       const rowErrors =
         err !== null &&

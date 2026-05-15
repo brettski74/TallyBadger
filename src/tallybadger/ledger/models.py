@@ -2,7 +2,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, model_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator, model_validator
 
 from tallybadger.core.byte_size import parse_byte_size
 
@@ -175,6 +175,17 @@ class JournalEntryFilterPresetDefinition(BaseModel):
     amount_low: int | None = Field(default=None, ge=0)
     amount_high: int | None = Field(default=None, ge=0)
     cheque_association: ChequeAssociation = "any"
+    import_basename: str | None = Field(default=None, max_length=512)
+
+    @field_validator("import_basename", mode="before")
+    @classmethod
+    def _normalize_import_basename(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError("import_basename must be a string or null")
+        stripped = value.strip()
+        return stripped if stripped else None
 
     @model_validator(mode="after")
     def _validate(self) -> "JournalEntryFilterPresetDefinition":
@@ -221,6 +232,17 @@ class JournalEntryFilterPresetOut(BaseModel):
     definition: JournalEntryFilterPresetDefinition
     created_at: datetime
     updated_at: datetime
+
+
+class ImportBatchListItem(BaseModel):
+    """One CSV import batch row for operator discovery (#136)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    basename: str
+    loaded_at: datetime
+    is_active: bool
 
 
 class ChequeCreate(BaseModel):

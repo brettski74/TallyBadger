@@ -69,6 +69,8 @@ export interface CsvImportExecuteResult {
   row_errors: CsvImportRowError[];
   entries?: unknown[];
   import_batch_id?: number | null;
+  /** Present when a batch was created; use for post-import navigation (#136). */
+  basename?: string | null;
 }
 
 /** 422 from POST /imports/csv/execute with full `row_errors` for UI display. */

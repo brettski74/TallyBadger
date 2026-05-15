@@ -489,6 +489,12 @@ describe("JournalEntriesPanel", () => {
   it("forwards new filter dimensions as repeated query params", async () => {
     const fetchMock = vi.spyOn(global, "fetch").mockImplementation(async (input) => {
       const url = String(input);
+      if (url.includes("/import-batches")) {
+        return new Response(
+          JSON.stringify([{ id: 1, basename: "Stmt.csv", loaded_at: "2026-01-01T00:00:00Z", is_active: true }]),
+          { status: 200 },
+        );
+      }
       if (url.includes("/journal-entry-filter-presets") || url.includes("/accrual-plans")) {
         return new Response(JSON.stringify([]), { status: 200 });
       }
@@ -511,6 +517,7 @@ describe("JournalEntriesPanel", () => {
     await user.selectOptions(screen.getByLabelText("Filter by cheque association"), ["with_cheque"]);
     await user.type(screen.getByLabelText("Filter amount low"), "10");
     await user.type(screen.getByLabelText("Filter amount high"), "99");
+    await user.selectOptions(screen.getByLabelText("Filter by CSV import file basename"), "Stmt.csv");
 
     await waitFor(() => {
       const listCalls = fetchMock.mock.calls.filter(([u]) => {
@@ -527,6 +534,7 @@ describe("JournalEntriesPanel", () => {
       expect(last).toContain("cheque_association=with_cheque");
       expect(last).toContain("amount_low=10");
       expect(last).toContain("amount_high=99");
+      expect(last).toContain("import_basename=Stmt.csv");
     });
   });
 
@@ -728,5 +736,45 @@ describe("JournalEntriesPanel", () => {
 
     await user.click(screen.getByLabelText("Requires review"));
     expect((presetSelect as HTMLSelectElement).value).toBe("");
+  });
+
+  it("applies initialImportBasename and forwards import_basename on journal list", async () => {
+    const onConsumed = vi.fn();
+    const fetchMock = vi.spyOn(global, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes("/import-batches")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      if (url.includes("/journal-entry-filter-presets") || url.includes("/accrual-plans")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      if (url.includes("/cheques")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      if (url.includes("/journal-entries") && !/\/journal-entries\/\d/.test(url)) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      return new Response("not mocked", { status: 500 });
+    });
+
+    render(
+      <JournalEntriesPanel
+        accounts={accounts}
+        parties={parties}
+        accountsLoading={false}
+        accountsError={null}
+        initialImportBasename="rent.csv"
+        onInitialImportBasenameApplied={onConsumed}
+      />,
+    );
+
+    await waitFor(() => expect(onConsumed).toHaveBeenCalled());
+    await waitFor(() => {
+      const listCalls = fetchMock.mock.calls.filter(([u]) => {
+        const s = String(u);
+        return s.includes("/journal-entries") && s.includes("import_basename=rent.csv");
+      });
+      expect(listCalls.length).toBeGreaterThan(0);
+    });
   });
 });

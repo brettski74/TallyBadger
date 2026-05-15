@@ -125,6 +125,7 @@ def test_csv_import_posts_all_rows_atomically(
     assert len(body["entries"]) == 2
     batch_id = body["import_batch_id"]
     assert isinstance(batch_id, int)
+    assert body["basename"] == "rent-import.csv"
     assert _count_rows(integration_db_url, "import_batches") == 1
     assert _count_rows(integration_db_url, "journal_entries") == 2
     assert _count_rows(integration_db_url, "journal_lines") == 4
@@ -541,3 +542,112 @@ def test_ledger_settings_rejects_non_suspense_unallocated_account(
     assert r2.status_code == 422, r2.text
     assert "suspense" in r2.json()["detail"].lower()
 
+
+def test_get_import_batches_lists_loaded_batches(
+    import_api_client: TestClient,
+    integration_db_url: str,
+) -> None:
+    for payload in (
+        {"name": "Cash", "type": "asset", "is_active": True},
+        {"name": "Rent Revenue", "type": "revenue", "is_active": True},
+    ):
+        r = import_api_client.post("/accounts", json=payload)
+        assert r.status_code == 201, r.text
+
+    csv_text = "date,summary,dr,cr,amount\n2026-07-01,Rent,Cash,Rent Revenue,100.00\n"
+    ex = import_api_client.post(
+        "/imports/csv/execute",
+        json={
+            "csv_text": csv_text,
+            "basename": "list-batches-test.csv",
+            "has_header_row": True,
+            "columns": [
+                {"attribute_name": "date", "data_type": "date", "date_format": "YYYY-MM-DD"},
+                {"attribute_name": "summary", "data_type": "string"},
+                {"attribute_name": "dr-account", "data_type": "string"},
+                {"attribute_name": "cr-account", "data_type": "string"},
+                {"attribute_name": "amount", "data_type": "numeric"},
+            ],
+        },
+    )
+    assert ex.status_code == 200, ex.text
+    assert ex.json()["basename"] == "list-batches-test.csv"
+
+    r = import_api_client.get("/import-batches")
+    assert r.status_code == 200, r.text
+    batches = r.json()
+    assert any(b["basename"] == "list-batches-test.csv" for b in batches)
+
+
+def test_journal_entries_filter_by_import_basename_case_insensitive(
+    import_api_client: TestClient,
+    integration_db_url: str,
+) -> None:
+    for payload in (
+        {"name": "Cash", "type": "asset", "is_active": True},
+        {"name": "Rent Revenue", "type": "revenue", "is_active": True},
+    ):
+        r = import_api_client.post("/accounts", json=payload)
+        assert r.status_code == 201, r.text
+
+    csv_text = "date,summary,dr,cr,amount\n2026-07-01,Rent,Cash,Rent Revenue,50.00\n"
+    ex = import_api_client.post(
+        "/imports/csv/execute",
+        json={
+            "csv_text": csv_text,
+            "basename": "FilterMe.csv",
+            "has_header_row": True,
+            "columns": [
+                {"attribute_name": "date", "data_type": "date", "date_format": "YYYY-MM-DD"},
+                {"attribute_name": "summary", "data_type": "string"},
+                {"attribute_name": "dr-account", "data_type": "string"},
+                {"attribute_name": "cr-account", "data_type": "string"},
+                {"attribute_name": "amount", "data_type": "numeric"},
+            ],
+        },
+    )
+    assert ex.status_code == 200, ex.text
+
+    jr = import_api_client.get("/journal-entries", params={"import_basename": "filterme.csv"})
+    assert jr.status_code == 200, jr.text
+    entries = jr.json()
+    assert len(entries) == 1
+    assert entries[0]["summary"] == "Rent"
+
+
+def test_list_journal_entries_rejects_import_batch_id_and_basename_together(
+    import_api_client: TestClient,
+    integration_db_url: str,
+) -> None:
+    for payload in (
+        {"name": "Cash", "type": "asset", "is_active": True},
+        {"name": "Rent Revenue", "type": "revenue", "is_active": True},
+    ):
+        r = import_api_client.post("/accounts", json=payload)
+        assert r.status_code == 201, r.text
+
+    csv_text = "date,summary,dr,cr,amount\n2026-07-01,Rent,Cash,Rent Revenue,10.00\n"
+    ex = import_api_client.post(
+        "/imports/csv/execute",
+        json={
+            "csv_text": csv_text,
+            "basename": "both-filters.csv",
+            "has_header_row": True,
+            "columns": [
+                {"attribute_name": "date", "data_type": "date", "date_format": "YYYY-MM-DD"},
+                {"attribute_name": "summary", "data_type": "string"},
+                {"attribute_name": "dr-account", "data_type": "string"},
+                {"attribute_name": "cr-account", "data_type": "string"},
+                {"attribute_name": "amount", "data_type": "numeric"},
+            ],
+        },
+    )
+    assert ex.status_code == 200, ex.text
+    bid = ex.json()["import_batch_id"]
+
+    r = import_api_client.get(
+        "/journal-entries",
+        params={"import_batch_id": bid, "import_basename": "both-filters.csv"},
+    )
+    assert r.status_code == 422, r.text
+    assert "both" in str(r.json()["detail"]).lower()

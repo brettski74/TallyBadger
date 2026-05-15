@@ -13,6 +13,7 @@ export const DEV_SERVER_API_PROXY_PREFIXES = [
   "health",
   "import-rules",
   "import-templates",
+  "import-batches",
   "imports",
   "journal-entries",
   "journal-entry-filter-presets",
