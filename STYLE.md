@@ -93,6 +93,13 @@ This is important - Merging PRs is only ever done by the human user!!!!
 
 State **what changed**, **why**, how to **verify** (commands run, screenshots for UI), and **which issue(s)** the PR addresses.
 
+## Definition of Done ##
+
+For implementation to be complete:
+- All requirements must have been implemented.
+- Tests must have been added or updated to adequately test new functionality or fixed bugs.
+- All tests have been run. You must run them yourself, not ask the user to do it for you. You can use the test and frontend-test targets in the Makefile for this.
+
 ## Consistency checklist (default self-review)
 
 Use this table when preparing a PR; extend it as the repo evolves.
