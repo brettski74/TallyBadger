@@ -414,7 +414,7 @@ describe("ChequesSection #141 — cheque series", () => {
     const user = userEvent.setup();
     await screen.findByRole("table");
     await user.click(screen.getByRole("button", { name: "New cheque" }));
-    await user.click(screen.getByLabelText(/Series \(post-dated\)/i));
+    await user.click(screen.getByRole("checkbox", { name: /Create as series/i }));
     await user.selectOptions(screen.getByLabelText(/^Credit account/i), "1");
     await user.selectOptions(screen.getByLabelText(/^Debit account/i), "2");
     await user.type(screen.getByLabelText(/^Summary/i), "Snow");
@@ -423,10 +423,9 @@ describe("ChequesSection #141 — cheque series", () => {
       target: { value: "2025-11-01" },
     });
     await user.type(screen.getByLabelText(/^Amount/i), "900");
-    await user.click(screen.getByRole("button", { name: "Preview series" }));
-
+    await user.click(screen.getByRole("button", { name: "Preview" }));
     await waitFor(() => {
-      expect(screen.getByText("Open cheque number already in use")).toBeInTheDocument();
+      expect(screen.getByText("Open cheque number already in use on this credit account")).toBeInTheDocument();
     });
     expect(screen.getByRole("button", { name: "Create series" })).toBeDisabled();
 
@@ -490,7 +489,7 @@ describe("ChequesSection #141 — cheque series", () => {
     const user = userEvent.setup();
     await screen.findByRole("table");
     await user.click(screen.getByRole("button", { name: "New cheque" }));
-    await user.click(screen.getByLabelText(/Series \(post-dated\)/i));
+    await user.click(screen.getByRole("checkbox", { name: /Create as series/i }));
     await user.selectOptions(screen.getByLabelText(/^Credit account/i), "1");
     await user.selectOptions(screen.getByLabelText(/^Debit account/i), "2");
     await user.type(screen.getByLabelText(/^Summary/i), "Series");
@@ -499,7 +498,7 @@ describe("ChequesSection #141 — cheque series", () => {
       target: { value: "2026-01-01" },
     });
     await user.type(screen.getByLabelText(/^Amount/i), "50");
-    await user.click(screen.getByRole("button", { name: "Preview series" }));
+    await user.click(screen.getByRole("button", { name: "Preview" }));
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Create series" })).toBeEnabled();
     });
