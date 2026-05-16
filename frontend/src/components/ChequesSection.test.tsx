@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import type { Account } from "../api/accounts";
@@ -42,6 +42,7 @@ interface RouteMocks {
     default_cheque_credit_account_id: number | null;
     default_cheque_debit_account_id: number | null;
     max_attachment_upload_bytes: number;
+    max_cheque_series_count: number;
     updated_at: string;
   }>;
 }
@@ -56,6 +57,7 @@ function defaultSettings(overrides: RouteMocks["settings"] = {}) {
     default_cheque_credit_account_id: null,
     default_cheque_debit_account_id: null,
     max_attachment_upload_bytes: 5_242_880,
+    max_cheque_series_count: 60,
     updated_at: "2026-04-01T00:00:00Z",
     ...overrides,
   };
@@ -363,5 +365,151 @@ describe("ChequesSection #105 — picker eligibility and last-used defaults", ()
     // Inactive Old Bank rendered with annotation alongside eligible options.
     expect(optionNames).toEqual(expect.arrayContaining(["Old Bank (asset, inactive)"]));
     expect(optionNames).toEqual(expect.arrayContaining(["Chequing (asset)", "Savings (asset)"]));
+  });
+});
+
+describe("ChequesSection #141 — cheque series", () => {
+  it("previews series and blocks create when a cheque number conflicts", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.includes("/ledger-settings")) {
+        return new Response(JSON.stringify(defaultSettings()), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.includes("/cheques/series/preview") && init?.method === "POST") {
+        return new Response(
+          JSON.stringify({
+            rows: [
+              {
+                cheque_number: 1001,
+                issue_date: "2025-11-01",
+                amount: "900.00",
+                number_conflict: false,
+              },
+              {
+                cheque_number: 1002,
+                issue_date: "2025-12-01",
+                amount: "900.00",
+                number_conflict: true,
+              },
+            ],
+            series_count: 2,
+            max_allowed: 60,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (url.includes("/cheques/series") && init?.method === "POST") {
+        return new Response(JSON.stringify([]), { status: 201 });
+      }
+      return new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    render(<ChequesSection accounts={accounts} parties={parties} />);
+    const user = userEvent.setup();
+    await screen.findByRole("table");
+    await user.click(screen.getByRole("button", { name: "New cheque" }));
+    await user.click(screen.getByRole("checkbox", { name: /Create as series/i }));
+    await user.selectOptions(screen.getByLabelText(/^Credit account/i), "1");
+    await user.selectOptions(screen.getByLabelText(/^Debit account/i), "2");
+    await user.type(screen.getByLabelText(/^Summary/i), "Snow");
+    await user.type(screen.getByLabelText(/Starting cheque number/i), "1001");
+    fireEvent.change(screen.getByLabelText(/First issue date/i), {
+      target: { value: "2025-11-01" },
+    });
+    await user.type(screen.getByLabelText(/^Amount/i), "900");
+    await user.click(screen.getByRole("button", { name: "Preview" }));
+    await waitFor(() => {
+      expect(screen.getByText("Open cheque number already in use on this credit account")).toBeInTheDocument();
+    });
+    expect(screen.getByRole("button", { name: "Create series" })).toBeDisabled();
+
+    fetchMock.mockRestore();
+  });
+
+  it("creates a series after a clean preview", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.includes("/ledger-settings")) {
+        return new Response(JSON.stringify(defaultSettings()), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.includes("/cheques/series/preview")) {
+        return new Response(
+          JSON.stringify({
+            rows: [
+              {
+                cheque_number: 10,
+                issue_date: "2026-01-01",
+                amount: "50.00",
+                number_conflict: false,
+              },
+            ],
+            series_count: 1,
+            max_allowed: 60,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (url.includes("/cheques/series") && init?.method === "POST") {
+        return new Response(
+          JSON.stringify([
+            {
+              id: 50,
+              credit_account_id: 1,
+              debit_account_id: 2,
+              summary: "Series",
+              cheque_number: 10,
+              issue_date: "2026-01-01",
+              cleared_date: null,
+              amount: "50.00",
+              party_id: null,
+              status: "open",
+              created_at: "2026-04-01T00:00:00Z",
+              updated_at: "2026-04-01T00:00:00Z",
+            },
+          ]),
+          { status: 201, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      return new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    render(<ChequesSection accounts={accounts} parties={parties} />);
+    const user = userEvent.setup();
+    await screen.findByRole("table");
+    await user.click(screen.getByRole("button", { name: "New cheque" }));
+    await user.click(screen.getByRole("checkbox", { name: /Create as series/i }));
+    await user.selectOptions(screen.getByLabelText(/^Credit account/i), "1");
+    await user.selectOptions(screen.getByLabelText(/^Debit account/i), "2");
+    await user.type(screen.getByLabelText(/^Summary/i), "Series");
+    await user.type(screen.getByLabelText(/Starting cheque number/i), "10");
+    fireEvent.change(screen.getByLabelText(/First issue date/i), {
+      target: { value: "2026-01-01" },
+    });
+    await user.type(screen.getByLabelText(/^Amount/i), "50");
+    await user.click(screen.getByRole("button", { name: "Preview" }));
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Create series" })).toBeEnabled();
+    });
+    await user.click(screen.getByRole("button", { name: "Create series" }));
+
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some((c) => String(c[0]).includes("/cheques/series") && c[1]?.method === "POST")).toBe(
+        true,
+      );
+    });
+
+    fetchMock.mockRestore();
   });
 });

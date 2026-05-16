@@ -99,6 +99,7 @@ For implementation to be complete:
 - All requirements must have been implemented.
 - Tests must have been added or updated to adequately test new functionality or fixed bugs.
 - All tests have been run. You must run them yourself, not ask the user to do it for you. You can use the test and frontend-test targets in the Makefile for this.
+- All tests must be run. This includes the integration tests. Everything that is needed to execute them is installed. If you have issues with Docker or other components, you need to try to diagnose/fix the problem and continue.
 
 ## Consistency checklist (default self-review)
 

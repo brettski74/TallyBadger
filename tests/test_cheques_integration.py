@@ -664,3 +664,122 @@ def test_ledger_settings_patch_skips_validation_on_unchanged_default(
         json={"default_cheque_credit_account_id": cr.id},
     )
     assert resp.status_code == 200, resp.text
+
+
+def _series_body(
+    cr_id: int,
+    dr_id: int,
+    *,
+    count: int | None = None,
+    end_date: str | None = None,
+    starting_issue_date: str = "2025-11-01",
+    starting_cheque_number: int = 1001,
+) -> dict:
+    schedule: dict = {"increment_unit": "months", "increment_n": 1}
+    if count is not None:
+        schedule["count"] = count
+    else:
+        schedule["end_date"] = end_date
+    return {
+        "credit_account_id": cr_id,
+        "debit_account_id": dr_id,
+        "summary": "Snow removal",
+        "starting_cheque_number": starting_cheque_number,
+        "starting_issue_date": starting_issue_date,
+        "amount": "900.00",
+        "party_id": None,
+        "schedule": schedule,
+    }
+
+
+def test_cheque_series_preview_snow_removal_five_months(
+    api_client: TestClient,
+    ledger_service: LedgerService,
+) -> None:
+    cr_id, dr_id = _two_accounts(ledger_service)
+    preview = api_client.post(
+        "/cheques/series/preview",
+        json=_series_body(cr_id, dr_id, end_date="2026-03-31"),
+    )
+    assert preview.status_code == 200, preview.text
+    rows = preview.json()["rows"]
+    assert len(rows) == 5
+    assert [r["issue_date"] for r in rows] == [
+        "2025-11-01",
+        "2025-12-01",
+        "2026-01-01",
+        "2026-02-01",
+        "2026-03-01",
+    ]
+    assert [r["cheque_number"] for r in rows] == [1001, 1002, 1003, 1004, 1005]
+
+
+def test_cheque_series_create_atomic(
+    api_client: TestClient,
+    ledger_service: LedgerService,
+) -> None:
+    cr_id, dr_id = _two_accounts(ledger_service)
+    create = api_client.post(
+        "/cheques/series",
+        json=_series_body(cr_id, dr_id, count=3),
+    )
+    assert create.status_code == 201, create.text
+    created = create.json()
+    assert len(created) == 3
+    listed = api_client.get("/cheques")
+    assert listed.status_code == 200
+    assert len(listed.json()) == 3
+
+
+def test_cheque_series_rejects_over_max_count(
+    api_client: TestClient,
+    ledger_service: LedgerService,
+    integration_db_url: str,
+) -> None:
+    cr_id, dr_id = _two_accounts(ledger_service)
+    with connect(integration_db_url) as conn:
+        with conn.transaction():
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE ledger_settings SET max_cheque_series_count = 2 WHERE id = 1",
+                )
+    preview = api_client.post(
+        "/cheques/series/preview",
+        json=_series_body(cr_id, dr_id, count=3),
+    )
+    assert preview.status_code == 422, preview.text
+    assert "maximum is 2" in preview.text
+
+
+def test_cheque_series_atomic_rollback_on_conflict(
+    api_client: TestClient,
+    ledger_service: LedgerService,
+) -> None:
+    cr_id, dr_id = _two_accounts(ledger_service)
+    assert (
+        api_client.post(
+            "/cheques",
+            json={
+                "credit_account_id": cr_id,
+                "debit_account_id": dr_id,
+                "summary": "Existing",
+                "cheque_number": 1002,
+                "issue_date": "2026-01-01",
+                "amount": "1.00",
+            },
+        ).status_code
+        == 201
+    )
+    conflict = api_client.post(
+        "/cheques/series",
+        json=_series_body(cr_id, dr_id, count=3, starting_cheque_number=1001),
+    )
+    assert conflict.status_code == 409, conflict.text
+    listed = api_client.get("/cheques")
+    assert len(listed.json()) == 1
+
+
+def test_ledger_settings_exposes_max_cheque_series_count(api_client: TestClient) -> None:
+    resp = api_client.get("/ledger-settings")
+    assert resp.status_code == 200
+    assert resp.json()["max_cheque_series_count"] == 60

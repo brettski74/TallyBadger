@@ -2,7 +2,6 @@ from collections import Counter, defaultdict
 from collections.abc import Callable
 from datetime import date, timedelta
 from typing import Any, Literal
-import calendar
 import os
 import re
 from contextlib import AbstractContextManager
@@ -21,6 +20,7 @@ from tallybadger.ledger.balance_sheet_report import (
     BALANCE_SHEET_CURRENCY_LABEL,
     natural_balance_sheet_total_for_account_type,
 )
+from tallybadger.ledger.schedule import DateIncrement, generate_schedule, roll_forward_weekend, safe_day
 from tallybadger.ledger.models import (
     AccountCreate,
     AccountOut,
@@ -38,6 +38,9 @@ from tallybadger.ledger.models import (
     BalanceSheetSectionOut,
     ChequeCreate,
     ChequeOut,
+    ChequeSeriesCreate,
+    ChequeSeriesPreviewOut,
+    ChequeSeriesPreviewRow,
     ChequeUpdate,
     IncomeExpenseAccountRowOut,
     IncomeExpensePeriodEcho,
@@ -851,7 +854,7 @@ class LedgerService:
                            unearned_revenue_account_id,
                            unallocated_debits_account_id, unallocated_credits_account_id,
                            default_cheque_credit_account_id, default_cheque_debit_account_id,
-                           max_attachment_upload_bytes,
+                           max_attachment_upload_bytes, max_cheque_series_count,
                            updated_at
                     FROM ledger_settings
                     WHERE id = 1
@@ -947,6 +950,7 @@ class LedgerService:
                                   default_cheque_credit_account_id,
                                   default_cheque_debit_account_id,
                                   max_attachment_upload_bytes,
+                                  max_cheque_series_count,
                                   updated_at
                         """,
                         (
@@ -1781,6 +1785,134 @@ class LedgerService:
         except errors.ForeignKeyViolation as exc:
             raise LedgerValidationError("cheque references unknown account or party") from exc
         return ChequeOut.model_validate(row)
+
+    def _max_cheque_series_count(self, cur) -> int:
+        cur.execute("SELECT max_cheque_series_count FROM ledger_settings WHERE id = 1")
+        row = cur.fetchone()
+        if not row:
+            raise LedgerValidationError("ledger settings row is missing")
+        return int(row["max_cheque_series_count"])
+
+    def _cheque_series_issue_dates(self, payload: ChequeSeriesCreate) -> list[date]:
+        sched = payload.schedule
+        increment = DateIncrement(sched.increment_unit, sched.increment_n)
+        kwargs: dict = {"increment": increment}
+        if sched.count is not None:
+            kwargs["count"] = sched.count
+        else:
+            kwargs["end"] = sched.end_date
+        return generate_schedule(payload.starting_issue_date, **kwargs)
+
+    def preview_cheque_series(self, payload: ChequeSeriesCreate) -> ChequeSeriesPreviewOut:
+        self._validate_summary(payload.summary)
+        issue_dates = self._cheque_series_issue_dates(payload)
+        with self._connection_factory() as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                max_allowed = self._max_cheque_series_count(cur)
+        if len(issue_dates) > max_allowed:
+            raise LedgerValidationError(
+                f"series would create {len(issue_dates)} cheques; maximum is {max_allowed}",
+            )
+        rows = self._cheque_series_preview_rows(payload, issue_dates)
+        return ChequeSeriesPreviewOut(
+            rows=rows,
+            series_count=len(rows),
+            max_allowed=max_allowed,
+        )
+
+    def _cheque_series_preview_rows(
+        self,
+        payload: ChequeSeriesCreate,
+        issue_dates: list[date],
+    ) -> list[ChequeSeriesPreviewRow]:
+        numbers = [payload.starting_cheque_number + i for i in range(len(issue_dates))]
+        conflicts: set[int] = set()
+        with self._connection_factory() as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(
+                    """
+                    SELECT cheque_number
+                    FROM cheques
+                    WHERE credit_account_id = %s
+                      AND status = 'open'
+                      AND cheque_number = ANY(%s)
+                    """,
+                    (payload.credit_account_id, numbers),
+                )
+                conflicts = {int(r["cheque_number"]) for r in cur.fetchall()}
+        return [
+            ChequeSeriesPreviewRow(
+                cheque_number=numbers[i],
+                issue_date=issue_dates[i],
+                amount=payload.amount,
+                number_conflict=numbers[i] in conflicts,
+            )
+            for i in range(len(issue_dates))
+        ]
+
+    def create_cheque_series(self, payload: ChequeSeriesCreate) -> list[ChequeOut]:
+        self._validate_summary(payload.summary)
+        issue_dates = self._cheque_series_issue_dates(payload)
+        preview_rows = self._cheque_series_preview_rows(payload, issue_dates)
+        if any(r.number_conflict for r in preview_rows):
+            raise LedgerConflictError(
+                "an open cheque with this number already exists for the credit account",
+            )
+        try:
+            with self._connection_factory() as conn:
+                with conn.transaction():
+                    with conn.cursor(row_factory=dict_row) as cur:
+                        max_allowed = self._max_cheque_series_count(cur)
+                        if len(issue_dates) > max_allowed:
+                            raise LedgerValidationError(
+                                f"series would create {len(issue_dates)} cheques; maximum is {max_allowed}",
+                            )
+                        self._assert_cheque_credit_account(cur, payload.credit_account_id)
+                        self._assert_cheque_debit_account(cur, payload.debit_account_id)
+                        if payload.party_id is not None:
+                            cur.execute(
+                                "SELECT 1 FROM parties WHERE id = %s",
+                                (payload.party_id,),
+                            )
+                            if not cur.fetchone():
+                                raise LedgerValidationError("party_id not found")
+                        created: list[ChequeOut] = []
+                        summary = payload.summary.strip()
+                        for i, issue_dt in enumerate(issue_dates):
+                            cheque_number = payload.starting_cheque_number + i
+                            cur.execute(
+                                """
+                                INSERT INTO cheques (
+                                  credit_account_id, debit_account_id, summary, cheque_number,
+                                  issue_date, cleared_date, amount, party_id, status
+                                )
+                                VALUES (%s, %s, %s, %s, %s, NULL, %s, %s, 'open')
+                                RETURNING *
+                                """,
+                                (
+                                    payload.credit_account_id,
+                                    payload.debit_account_id,
+                                    summary,
+                                    cheque_number,
+                                    issue_dt,
+                                    payload.amount,
+                                    payload.party_id,
+                                ),
+                            )
+                            row = cur.fetchone()
+                            created.append(ChequeOut.model_validate(row))
+                        self._write_cheque_default_accounts(
+                            cur,
+                            credit_account_id=payload.credit_account_id,
+                            debit_account_id=payload.debit_account_id,
+                        )
+        except errors.UniqueViolation as exc:
+            raise LedgerConflictError(
+                "an open cheque with this number already exists for the credit account",
+            ) from exc
+        except errors.ForeignKeyViolation as exc:
+            raise LedgerValidationError("cheque references unknown account or party") from exc
+        return created
 
     def update_cheque(self, cheque_id: int, payload: ChequeUpdate) -> ChequeOut:
         patch = payload.model_dump(exclude_unset=True)
@@ -3126,12 +3258,16 @@ class LedgerService:
             (new_ar_line_id, obligation_id),
         )
 
-    @staticmethod
-    def _safe_day(year: int, month: int, day_of_month: int) -> date:
-        last = calendar.monthrange(year, month)[1]
-        return date(year, month, min(day_of_month, last))
-
     def _build_frequency_dates(self, payload: AccrualPlanCreate) -> list[date]:
+        if payload.frequency == "monthly_day":
+            return generate_schedule(
+                payload.start_date,
+                increment=DateIncrement("months", 1),
+                day_of_month=payload.day_of_month,
+                end=payload.end_date,
+                business_day_adjust=payload.business_day_adjust,
+            )
+
         out: list[date] = []
         current = payload.start_date
         while current <= payload.end_date:
@@ -3139,20 +3275,15 @@ class LedgerService:
             if payload.frequency == "weekly":
                 delta = (payload.day_of_week - current.weekday()) % 7  # type: ignore[operator]
                 candidate = current + timedelta(days=delta)
-            elif payload.frequency == "monthly_day":
-                candidate = self._safe_day(current.year, current.month, payload.day_of_month)  # type: ignore[arg-type]
             elif payload.frequency == "yearly":
-                candidate = self._safe_day(
+                candidate = safe_day(
                     current.year,
                     payload.month_of_year,  # type: ignore[arg-type]
                     payload.day_of_month,  # type: ignore[arg-type]
                 )
 
-            if candidate and payload.business_day_adjust and payload.frequency in {
-                "monthly_day",
-                "yearly",
-            }:
-                candidate = self._roll_forward_weekend(candidate)
+            if candidate and payload.business_day_adjust and payload.frequency == "yearly":
+                candidate = roll_forward_weekend(candidate)
 
             if candidate and payload.start_date <= candidate <= payload.end_date and candidate not in out:
                 out.append(candidate)
@@ -3166,14 +3297,6 @@ class LedgerService:
 
         out.sort()
         return out
-
-    @staticmethod
-    def _roll_forward_weekend(value: date) -> date:
-        if value.weekday() == 5:
-            return value + timedelta(days=2)
-        if value.weekday() == 6:
-            return value + timedelta(days=1)
-        return value
 
     @staticmethod
     def _render_template(template: str, entry_date: date, plan_name: str) -> str:

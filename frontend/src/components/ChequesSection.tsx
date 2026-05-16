@@ -1,15 +1,23 @@
-import { FormEvent, MouseEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, Fragment, MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FilePlus2, RefreshCcw } from "lucide-react";
 
 import type { Account } from "../api/accounts";
 import {
   type Cheque,
+  type ChequeIncrementUnit,
   type ChequeListStatus,
+  type ChequeSeriesCreateInput,
+  type ChequeSeriesPreview,
+  type ChequeSeriesPreviewRow,
   createCheque,
+  createChequeSeries,
   listCheques,
   patchCheque,
+  previewChequeSeries,
 } from "../api/cheques";
 import type { Party } from "../api/parties";
 import { type LedgerSettings, getLedgerSettings } from "../api/settlements";
+import { TableRowIconButton } from "./TableRowIconButton";
 
 interface ChequesSectionProps {
   accounts: Account[];
@@ -67,6 +75,31 @@ function buildPickerOptions(
   return options;
 }
 
+function parseChequeAmount(value: string): string | null {
+  const cleaned = value.replace(/[$,\s]/g, "");
+  if (cleaned === "") {
+    return null;
+  }
+  const n = Number.parseFloat(cleaned);
+  if (!Number.isFinite(n)) {
+    return null;
+  }
+  return n.toFixed(2);
+}
+
+function formatChequeCurrency(amount: string | number): string {
+  const raw = typeof amount === "number" ? amount : Number.parseFloat(amount.replace(/[$,\s]/g, ""));
+  if (!Number.isFinite(raw)) {
+    return String(amount);
+  }
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(raw);
+}
+
 export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
   const [listStatus, setListStatus] = useState<ChequeListStatus>("open");
   const [cheques, setCheques] = useState<Cheque[]>([]);
@@ -89,6 +122,19 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
 
   const [defaultCreditId, setDefaultCreditId] = useState<number | null>(null);
   const [defaultDebitId, setDefaultDebitId] = useState<number | null>(null);
+  const [maxChequeSeriesCount, setMaxChequeSeriesCount] = useState(60);
+
+  const [seriesEnabled, setSeriesEnabled] = useState(false);
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const createDialogRef = useRef<HTMLDialogElement>(null);
+  const [incrementUnit, setIncrementUnit] = useState<ChequeIncrementUnit>("months");
+  const [incrementN, setIncrementN] = useState("1");
+  const [seriesStopMode, setSeriesStopMode] = useState<"count" | "end">("count");
+  const [seriesCount, setSeriesCount] = useState("5");
+  const [seriesEndDate, setSeriesEndDate] = useState("");
+  const [seriesPreview, setSeriesPreview] = useState<ChequeSeriesPreview | null>(null);
+  const [seriesPreviewLoading, setSeriesPreviewLoading] = useState(false);
+  const [createDialogView, setCreateDialogView] = useState<"form" | "preview">("form");
 
   const eligibleCreditAccounts = useMemo(
     () =>
@@ -141,6 +187,7 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
       const settings: LedgerSettings = await getLedgerSettings();
       setDefaultCreditId(settings.default_cheque_credit_account_id);
       setDefaultDebitId(settings.default_cheque_debit_account_id);
+      setMaxChequeSeriesCount(settings.max_cheque_series_count);
     } catch {
       // Defaults are an enhancement, not a hard dependency for the rest of the form.
       setDefaultCreditId(null);
@@ -178,15 +225,111 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
     setPartyId("");
   }
 
+  function closeCreateDialog() {
+    setCreateDialogOpen(false);
+    setIsCreating(false);
+    setSeriesEnabled(false);
+    setSeriesPreview(null);
+    setCreateDialogView("form");
+  }
+
   function handleNewCheque() {
     setFormError(null);
     setIsCreating(true);
     setSelected(null);
+    setSeriesEnabled(false);
+    setSeriesPreview(null);
+    setCreateDialogView("form");
     clearForm();
+    setCreateDialogOpen(true);
   }
+
+  useEffect(() => {
+    if (!createDialogOpen) {
+      return;
+    }
+    const el = createDialogRef.current;
+    if (el && !el.open) {
+      el.showModal();
+    }
+  }, [createDialogOpen]);
+
+  function buildSeriesPayload(): ChequeSeriesCreateInput | null {
+    const normalizedAmount = parseChequeAmount(amount);
+    if (!creditId || !debitId || !summary.trim() || !chequeNumber || !issueDate || !normalizedAmount) {
+      return null;
+    }
+    const startNum = Number(chequeNumber);
+    const n = Number(incrementN);
+    if (!Number.isInteger(startNum) || startNum <= 0 || !Number.isInteger(n) || n <= 0) {
+      return null;
+    }
+    const schedule: ChequeSeriesCreateInput["schedule"] = {
+      increment_unit: incrementUnit,
+      increment_n: n,
+    };
+    if (seriesStopMode === "count") {
+      const count = Number(seriesCount);
+      if (!Number.isInteger(count) || count < 1) {
+        return null;
+      }
+      schedule.count = count;
+    } else {
+      if (!seriesEndDate) {
+        return null;
+      }
+      schedule.end_date = seriesEndDate;
+    }
+    return {
+      credit_account_id: Number(creditId),
+      debit_account_id: Number(debitId),
+      summary: summary.trim(),
+      starting_cheque_number: startNum,
+      starting_issue_date: issueDate,
+      amount: normalizedAmount,
+      party_id: partyId ? Number(partyId) : null,
+      schedule,
+    };
+  }
+
+  async function runSeriesPreview(): Promise<boolean> {
+    setFormError(null);
+    const payload = buildSeriesPayload();
+    if (!payload) {
+      setFormError(
+        "Credit account, debit account, summary, starting cheque number, issue date, amount, and schedule fields are required.",
+      );
+      setSeriesPreview(null);
+      return false;
+    }
+    setSeriesPreviewLoading(true);
+    try {
+      const preview = await previewChequeSeries(payload);
+      setSeriesPreview(preview);
+      return true;
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "Preview failed");
+      setSeriesPreview(null);
+      return false;
+    } finally {
+      setSeriesPreviewLoading(false);
+    }
+  }
+
+  async function handleShowSeriesPreview() {
+    const ok = await runSeriesPreview();
+    if (ok) {
+      setCreateDialogView("preview");
+    }
+  }
+
+  const seriesHasConflict = seriesPreview?.rows.some((r) => r.number_conflict) ?? false;
 
   function handleSelectRow(ch: Cheque) {
     setFormError(null);
+    if (createDialogOpen) {
+      closeCreateDialog();
+    }
     setIsCreating(false);
     setSelected(ch);
   }
@@ -205,7 +348,8 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
   async function handleSave(event: FormEvent) {
     event.preventDefault();
     setFormError(null);
-    if (!creditId || !debitId || !summary.trim() || !chequeNumber || !issueDate || !amount) {
+    const normalizedAmount = parseChequeAmount(amount);
+    if (!creditId || !debitId || !summary.trim() || !chequeNumber || !issueDate || !normalizedAmount) {
       setFormError("Credit account, debit account, summary, cheque number, issue date, and amount are required.");
       return;
     }
@@ -217,17 +361,39 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
     setFormBusy(true);
     try {
       if (isCreating || !selected) {
-        const created = await createCheque({
-          credit_account_id: Number(creditId),
-          debit_account_id: Number(debitId),
-          summary: summary.trim(),
-          cheque_number: num,
-          issue_date: issueDate,
-          amount,
-          party_id: partyId ? Number(partyId) : null,
-        });
-        setIsCreating(false);
-        setSelected(created);
+        if (seriesEnabled) {
+          if (!seriesPreview || seriesHasConflict) {
+            setFormError(
+              seriesHasConflict
+                ? "Resolve open-cheque number conflicts before creating the series."
+                : "Preview the series before creating cheques.",
+            );
+            setFormBusy(false);
+            return;
+          }
+          const payload = buildSeriesPayload();
+          if (!payload) {
+            setFormError("Complete all series fields before creating.");
+            return;
+          }
+          const created = await createChequeSeries(payload);
+          closeCreateDialog();
+          if (created.length > 0) {
+            setSelected(created[0]);
+          }
+        } else {
+          const created = await createCheque({
+            credit_account_id: Number(creditId),
+            debit_account_id: Number(debitId),
+            summary: summary.trim(),
+            cheque_number: num,
+            issue_date: issueDate,
+            amount: normalizedAmount,
+            party_id: partyId ? Number(partyId) : null,
+          });
+          closeCreateDialog();
+          setSelected(created);
+        }
         await reloadList();
         await refreshDefaults();
       } else {
@@ -237,7 +403,7 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
           summary: summary.trim(),
           cheque_number: num,
           issue_date: issueDate,
-          amount,
+          amount: normalizedAmount,
           party_id: partyId ? Number(partyId) : null,
         });
         setSelected(updated);
@@ -334,18 +500,361 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
     }
   }
 
-  const showForm = isCreating || selected != null;
+  const creditPickerOptions = buildPickerOptions(
+    eligibleCreditAccounts,
+    accounts,
+    selected ? selected.credit_account_id : null,
+  );
+  const debitPickerOptions = buildPickerOptions(
+    eligibleDebitAccounts,
+    accounts,
+    selected ? selected.debit_account_id : null,
+  );
+  const cleared = selected?.status === "cleared";
+
+  function clearSeriesPreview() {
+    setSeriesPreview(null);
+  }
+
+  function renderChequeFields(options: {
+    startingNumberLabel: string;
+    issueDateLabel: string;
+    onFieldChange?: () => void;
+  }) {
+    const { startingNumberLabel, issueDateLabel, onFieldChange } = options;
+    const bumpSeries = () => {
+      onFieldChange?.();
+      setSeriesPreview(null);
+      setCreateDialogView("form");
+    };
+    return (
+      <div className="cheque-form-grid">
+        <div className="cheque-form-col">
+          <label>
+            {issueDateLabel}
+            <input
+              type="date"
+              value={issueDate}
+              onChange={(e) => {
+                setIssueDate(e.target.value);
+                bumpSeries();
+              }}
+              required
+              disabled={cleared}
+            />
+          </label>
+          <label>
+            {startingNumberLabel}
+            <input
+              type="number"
+              min={1}
+              step={1}
+              value={chequeNumber}
+              onChange={(e) => {
+                setChequeNumber(e.target.value);
+                bumpSeries();
+              }}
+              required
+              disabled={cleared}
+            />
+          </label>
+          <label>
+            Amount
+            <input
+              value={amount}
+              onChange={(e) => {
+                setAmount(e.target.value);
+                bumpSeries();
+              }}
+              onBlur={() => {
+                const normalized = parseChequeAmount(amount);
+                if (normalized) {
+                  setAmount(normalized);
+                }
+              }}
+              required
+              disabled={cleared}
+            />
+          </label>
+        </div>
+        <div className="cheque-form-col">
+          <label>
+            Credit account (cheque)
+            <select
+              value={creditId}
+              onChange={(e) => {
+                setCreditId(e.target.value);
+                bumpSeries();
+              }}
+              required
+              disabled={cleared}
+            >
+              <option value="">Select account</option>
+              {creditPickerOptions.map(({ account, eligible }) => (
+                <option key={account.id} value={account.id}>
+                  {eligible ? eligibleLabel(account) : ineligibleLabel(account)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Debit account
+            <select
+              value={debitId}
+              onChange={(e) => {
+                setDebitId(e.target.value);
+                bumpSeries();
+              }}
+              required
+              disabled={cleared}
+            >
+              <option value="">Select account</option>
+              {debitPickerOptions.map(({ account, eligible }) => (
+                <option key={account.id} value={account.id}>
+                  {eligible ? eligibleLabel(account) : ineligibleLabel(account)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Party (optional)
+            <select
+              value={partyId}
+              onChange={(e) => {
+                setPartyId(e.target.value);
+                bumpSeries();
+              }}
+              disabled={cleared}
+            >
+              <option value="">None</option>
+              {partyOptions.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <label className="cheque-form-summary">
+          Summary
+          <input
+            value={summary}
+            onChange={(e) => {
+              setSummary(e.target.value);
+              bumpSeries();
+            }}
+            required
+            disabled={cleared}
+          />
+        </label>
+      </div>
+    );
+  }
+
+  function renderSeriesEnableCheckbox() {
+    return (
+      <label className="cheque-series-enable">
+        <input
+          type="checkbox"
+          checked={seriesEnabled}
+          onChange={(e) => {
+            const checked = e.target.checked;
+            setSeriesEnabled(checked);
+            setSeriesPreview(null);
+            setCreateDialogView("form");
+            if (!checked) {
+              setSeriesEndDate("");
+            }
+          }}
+        />
+        Create as series (post-dated)
+      </label>
+    );
+  }
+
+  function renderSeriesScheduleFields() {
+    return (
+      <div className={seriesEnabled ? "cheque-series-schedule" : "cheque-series-schedule cheque-series-disabled"}>
+        <div className="cheque-series-row">
+          <label>
+            Increment
+            <select
+              value={incrementUnit}
+              onChange={(e) => {
+                setIncrementUnit(e.target.value as ChequeIncrementUnit);
+                setSeriesPreview(null);
+                setCreateDialogView("form");
+              }}
+              disabled={!seriesEnabled}
+              tabIndex={seriesEnabled ? 0 : -1}
+            >
+              <option value="days">days</option>
+              <option value="weeks">weeks</option>
+              <option value="months">months</option>
+            </select>
+          </label>
+          <label>
+            Every (n)
+            <input
+              type="number"
+              min={1}
+              step={1}
+              value={incrementN}
+              onChange={(e) => {
+                setIncrementN(e.target.value);
+                setSeriesPreview(null);
+                setCreateDialogView("form");
+              }}
+              disabled={!seriesEnabled}
+              tabIndex={seriesEnabled ? 0 : -1}
+            />
+          </label>
+          <fieldset className="cheque-series-stop" disabled={!seriesEnabled}>
+            <legend className="cheque-series-stop-label">Stop after</legend>
+            <label className="cheque-series-inline-radio">
+              <input
+                type="radio"
+                name="series-stop"
+                checked={seriesStopMode === "count"}
+                onChange={() => {
+                  setSeriesStopMode("count");
+                  setSeriesPreview(null);
+                  setCreateDialogView("form");
+                }}
+                tabIndex={seriesEnabled ? 0 : -1}
+              />
+              Count
+            </label>
+            <label className="cheque-series-inline-radio">
+              <input
+                type="radio"
+                name="series-stop"
+                checked={seriesStopMode === "end"}
+                onChange={() => {
+                  setSeriesStopMode("end");
+                  setSeriesPreview(null);
+                  setCreateDialogView("form");
+                }}
+                tabIndex={seriesEnabled ? 0 : -1}
+              />
+              End date
+            </label>
+          </fieldset>
+          {seriesStopMode === "count" ? (
+            <label>
+              Number of cheques
+              <input
+                type="number"
+                min={1}
+                max={maxChequeSeriesCount}
+                step={1}
+                value={seriesCount}
+                onChange={(e) => {
+                  setSeriesCount(e.target.value);
+                  setSeriesPreview(null);
+                  setCreateDialogView("form");
+                }}
+                disabled={!seriesEnabled}
+                tabIndex={seriesEnabled ? 0 : -1}
+              />
+            </label>
+          ) : (
+            <label>
+              End date (inclusive)
+              <input
+                type="date"
+                value={seriesEndDate}
+                onChange={(e) => {
+                  setSeriesEndDate(e.target.value);
+                  setSeriesPreview(null);
+                  setCreateDialogView("form");
+                }}
+                disabled={!seriesEnabled}
+                tabIndex={seriesEnabled ? 0 : -1}
+              />
+            </label>
+          )}
+        </div>
+        <p className="muted cheque-series-hint">
+          Monthly increments use the day-of-month from the first issue date. Maximum {maxChequeSeriesCount} cheques per
+          series.
+        </p>
+      </div>
+    );
+  }
+
+  function renderSeriesPreviewPanel() {
+    if (!seriesPreview) {
+      return null;
+    }
+    const previewColSpan = 4;
+    return (
+      <div className="cheque-series-preview-panel">
+        <table className="cheque-series-preview-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Issue date</th>
+              <th>Summary</th>
+              <th className="cheque-amount-col">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            {seriesPreview.rows.map((row: ChequeSeriesPreviewRow) => (
+              <Fragment key={row.cheque_number}>
+                <tr>
+                  <td>{row.cheque_number}</td>
+                  <td>{row.issue_date}</td>
+                  <td>{summary.trim()}</td>
+                  <td className="cheque-amount-col">{formatChequeCurrency(row.amount)}</td>
+                </tr>
+                {row.number_conflict && (
+                  <tr className="cheque-preview-error-row">
+                    <td colSpan={previewColSpan}>
+                      <div className="journal-review-message-card" role="alert">
+                        <p className="journal-review-message-text">
+                          Open cheque number already in use on this credit account
+                        </p>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            ))}
+          </tbody>
+        </table>
+        <p className="muted">{seriesPreview.series_count} cheques in series</p>
+      </div>
+    );
+  }
+
 
   return (
     <>
       <section className="card journal-card-wide">
-        <h2>Cheque register</h2>
+        <div className="cheque-register-toolbar">
+          <h2>Cheque register</h2>
+          <div className="cheque-register-actions">
+            <TableRowIconButton
+              type="button"
+              aria-label="Refresh list"
+              title="Refresh list"
+              disabled={listLoading}
+              onClick={() => void reloadList()}
+            >
+              <RefreshCcw size={18} strokeWidth={2} aria-hidden />
+            </TableRowIconButton>
+            <TableRowIconButton type="button" aria-label="New cheque" title="New cheque" onClick={handleNewCheque}>
+              <FilePlus2 size={18} strokeWidth={2} aria-hidden />
+            </TableRowIconButton>
+          </div>
+        </div>
         <p className="muted">
           New cheques are always <strong>open</strong>. <strong>Cleared</strong> is set only when a clearing entry is
           posted against this cheque. Use <strong>Void</strong> or <strong>Re-open</strong> for void workflow only.
         </p>
 
-        <div style={{ display: "flex", flexWrap: "wrap", gap: "1rem", alignItems: "end", marginBottom: "1rem" }}>
+        <div className="cheque-register-filters">
           <label>
             Status filter
             <select
@@ -359,12 +868,6 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
               <option value="all">All</option>
             </select>
           </label>
-          <button type="button" onClick={() => void reloadList()} disabled={listLoading}>
-            Refresh list
-          </button>
-          <button type="button" onClick={handleNewCheque}>
-            New cheque
-          </button>
         </div>
 
         {listError && <p className="error-text">{listError}</p>}
@@ -411,7 +914,7 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
                     <td>{ch.cheque_number}</td>
                     <td>{ch.summary}</td>
                     <td>{ch.issue_date}</td>
-                    <td>{ch.amount}</td>
+                    <td className="cheque-amount-col">{formatChequeCurrency(ch.amount)}</td>
                     <td>{accountName(ch.credit_account_id)}</td>
                     <td>{accountName(ch.debit_account_id)}</td>
                     <td>{partyName(ch.party_id)}</td>
@@ -435,110 +938,27 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
         </div>
       </section>
 
-      {showForm && (
+      {selected && !isCreating && (
         <section className="card journal-card-wide">
-          <h2>{isCreating ? "New cheque" : `Edit cheque #${selected?.cheque_number}`}</h2>
-          {!isCreating && selected && (
-            <p>
-              <strong>Status:</strong> {statusLabel(selected.status)}
-              {selected.status === "cleared" && selected.cleared_date && (
-                <span className="muted"> (cleared {selected.cleared_date})</span>
-              )}
-            </p>
-          )}
+          <h2>{`Edit cheque #${selected.cheque_number}`}</h2>
+          <p>
+            <strong>Status:</strong> {statusLabel(selected.status)}
+            {selected.status === "cleared" && selected.cleared_date && (
+              <span className="muted"> (cleared {selected.cleared_date})</span>
+            )}
+          </p>
 
           <form noValidate onSubmit={(e) => void handleSave(e)}>
-            <label>
-              Credit account (cheque)
-              <select
-                value={creditId}
-                onChange={(e) => setCreditId(e.target.value)}
-                required
-                disabled={selected?.status === "cleared"}
-              >
-                <option value="">Select account</option>
-                {buildPickerOptions(
-                  eligibleCreditAccounts,
-                  accounts,
-                  selected ? selected.credit_account_id : null,
-                ).map(({ account, eligible }) => (
-                  <option key={account.id} value={account.id}>
-                    {eligible ? eligibleLabel(account) : ineligibleLabel(account)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Debit account
-              <select
-                value={debitId}
-                onChange={(e) => setDebitId(e.target.value)}
-                required
-                disabled={selected?.status === "cleared"}
-              >
-                <option value="">Select account</option>
-                {buildPickerOptions(
-                  eligibleDebitAccounts,
-                  accounts,
-                  selected ? selected.debit_account_id : null,
-                ).map(({ account, eligible }) => (
-                  <option key={account.id} value={account.id}>
-                    {eligible ? eligibleLabel(account) : ineligibleLabel(account)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Summary
-              <input value={summary} onChange={(e) => setSummary(e.target.value)} required disabled={selected?.status === "cleared"} />
-            </label>
-            <label>
-              Cheque number
-              <input
-                type="number"
-                min={1}
-                step={1}
-                value={chequeNumber}
-                onChange={(e) => setChequeNumber(e.target.value)}
-                required
-                disabled={selected?.status === "cleared"}
-              />
-            </label>
-            <label>
-              Issue date
-              <input
-                type="date"
-                value={issueDate}
-                onChange={(e) => setIssueDate(e.target.value)}
-                required
-                disabled={selected?.status === "cleared"}
-              />
-            </label>
-            <label>
-              Amount
-              <input value={amount} onChange={(e) => setAmount(e.target.value)} required disabled={selected?.status === "cleared"} />
-            </label>
-            <label>
-              Party (optional)
-              <select
-                value={partyId}
-                onChange={(e) => setPartyId(e.target.value)}
-                disabled={selected?.status === "cleared"}
-              >
-                <option value="">None</option>
-                {partyOptions.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+            {renderChequeFields({
+              issueDateLabel: "Issue date",
+              startingNumberLabel: "Cheque number",
+            })}
 
             {formError && <p className="error-text">{formError}</p>}
 
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", alignItems: "center" }}>
-              <button type="submit" disabled={formBusy || selected?.status === "cleared"}>
-                {isCreating ? "Create cheque" : "Save changes"}
+            <div className="dialog-actions">
+              <button type="submit" disabled={formBusy || cleared}>
+                Save changes
               </button>
               {canVoidOrReopen && savedCheque.status === "open" && (
                 <button type="button" onClick={() => void handleVoid()} disabled={formBusy}>
@@ -553,6 +973,93 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
             </div>
           </form>
         </section>
+      )}
+
+      {createDialogOpen && (
+      <dialog
+        ref={createDialogRef}
+        className={createDialogView === "preview" ? "cheque-dialog cheque-dialog-preview" : "cheque-dialog"}
+        aria-labelledby="cheque-create-dialog-title"
+        onClose={closeCreateDialog}
+      >
+        <form
+          method="dialog"
+          className="cheque-dialog-inner"
+          noValidate
+          onSubmit={(e) => void handleSave(e)}
+        >
+          <div className="cheque-dialog-header">
+            <h2 id="cheque-create-dialog-title">
+              {createDialogView === "preview" ? "Preview cheque series" : "New cheque"}
+            </h2>
+            <button type="button" className="button-secondary" onClick={closeCreateDialog}>
+              Close
+            </button>
+          </div>
+
+          {createDialogView === "form" ? (
+            <>
+              {renderChequeFields({
+                issueDateLabel: seriesEnabled ? "First issue date" : "Issue date",
+                startingNumberLabel: seriesEnabled ? "Starting cheque number" : "Cheque number",
+                onFieldChange: clearSeriesPreview,
+              })}
+
+              {renderSeriesEnableCheckbox()}
+              {renderSeriesScheduleFields()}
+
+              {formError && <p className="error-text">{formError}</p>}
+
+              <div className="dialog-actions">
+                <button type="button" className="button-secondary" onClick={closeCreateDialog}>
+                  Cancel
+                </button>
+                {seriesEnabled ? (
+                  <button
+                    type="button"
+                    disabled={formBusy || seriesPreviewLoading}
+                    onClick={() => void handleShowSeriesPreview()}
+                  >
+                    {seriesPreviewLoading ? "Previewing…" : "Preview"}
+                  </button>
+                ) : (
+                  <button type="submit" disabled={formBusy}>
+                    Create cheque
+                  </button>
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              {renderSeriesPreviewPanel()}
+
+              {formError && <p className="error-text">{formError}</p>}
+
+              <div className="dialog-actions">
+                <button type="button" className="button-secondary" onClick={closeCreateDialog}>
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="button-secondary"
+                  onClick={() => {
+                    setCreateDialogView("form");
+                    setFormError(null);
+                  }}
+                >
+                  Edit
+                </button>
+                <button
+                  type="submit"
+                  disabled={formBusy || seriesHasConflict || !seriesPreview}
+                >
+                  Create series
+                </button>
+              </div>
+            </>
+          )}
+        </form>
+      </dialog>
       )}
     </>
   );

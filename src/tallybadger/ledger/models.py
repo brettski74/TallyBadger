@@ -299,6 +299,46 @@ class ChequeOut(BaseModel):
     updated_at: datetime
 
 
+ChequeIncrementUnit = Literal["days", "weeks", "months"]
+
+
+class ChequeSeriesSchedule(BaseModel):
+    increment_unit: ChequeIncrementUnit
+    increment_n: int = Field(gt=0)
+    count: int | None = Field(default=None, ge=1)
+    end_date: date | None = None
+
+    @model_validator(mode="after")
+    def exactly_one_terminator(self) -> "ChequeSeriesSchedule":
+        if (self.count is None) == (self.end_date is None):
+            raise ValueError("provide exactly one of count or end_date")
+        return self
+
+
+class ChequeSeriesCreate(BaseModel):
+    credit_account_id: int = Field(gt=0)
+    debit_account_id: int = Field(gt=0)
+    summary: str = Field(min_length=1, max_length=200)
+    starting_cheque_number: int = Field(gt=0)
+    starting_issue_date: date
+    amount: Decimal = Field(gt=0)
+    party_id: int | None = Field(default=None, gt=0)
+    schedule: ChequeSeriesSchedule
+
+
+class ChequeSeriesPreviewRow(BaseModel):
+    cheque_number: int
+    issue_date: date
+    amount: Decimal
+    number_conflict: bool = False
+
+
+class ChequeSeriesPreviewOut(BaseModel):
+    rows: list[ChequeSeriesPreviewRow]
+    series_count: int
+    max_allowed: int
+
+
 class AccountLedgerLineOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -416,6 +456,7 @@ class LedgerSettingsOut(BaseModel):
     default_cheque_credit_account_id: int | None
     default_cheque_debit_account_id: int | None
     max_attachment_upload_bytes: int
+    max_cheque_series_count: int
     updated_at: datetime
 
 

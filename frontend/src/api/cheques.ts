@@ -5,6 +5,8 @@ export type ChequeStatus = "open" | "cleared" | "void";
 
 export type ChequeListStatus = ChequeStatus | "all";
 
+export type ChequeIncrementUnit = "days" | "weeks" | "months";
+
 export interface Cheque {
   id: number;
   credit_account_id: number;
@@ -42,6 +44,37 @@ export type ChequeUpdateInput = Partial<{
   status: ChequeStatus;
 }>;
 
+export interface ChequeSeriesScheduleInput {
+  increment_unit: ChequeIncrementUnit;
+  increment_n: number;
+  count?: number;
+  end_date?: string;
+}
+
+export interface ChequeSeriesCreateInput {
+  credit_account_id: number;
+  debit_account_id: number;
+  summary: string;
+  starting_cheque_number: number;
+  starting_issue_date: string;
+  amount: string;
+  party_id: number | null;
+  schedule: ChequeSeriesScheduleInput;
+}
+
+export interface ChequeSeriesPreviewRow {
+  cheque_number: number;
+  issue_date: string;
+  amount: string;
+  number_conflict: boolean;
+}
+
+export interface ChequeSeriesPreview {
+  rows: ChequeSeriesPreviewRow[];
+  series_count: number;
+  max_allowed: number;
+}
+
 export async function listCheques(params: { status?: ChequeListStatus } = {}): Promise<Cheque[]> {
   const search = new URLSearchParams();
   search.set("status", params.status ?? "open");
@@ -68,6 +101,30 @@ export async function createCheque(payload: ChequeCreateInput): Promise<Cheque> 
       ...payload,
       cleared_date: null,
     }),
+  });
+  if (!response.ok) {
+    throw new Error(await readApiErrorMessage(response));
+  }
+  return response.json();
+}
+
+export async function previewChequeSeries(payload: ChequeSeriesCreateInput): Promise<ChequeSeriesPreview> {
+  const response = await fetch(`${getApiBase()}/cheques/series/preview`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error(await readApiErrorMessage(response));
+  }
+  return response.json();
+}
+
+export async function createChequeSeries(payload: ChequeSeriesCreateInput): Promise<Cheque[]> {
+  const response = await fetch(`${getApiBase()}/cheques/series`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
   });
   if (!response.ok) {
     throw new Error(await readApiErrorMessage(response));
