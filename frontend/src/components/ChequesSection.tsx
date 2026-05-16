@@ -811,7 +811,11 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
                 {row.number_conflict && (
                   <tr className="cheque-preview-error-row">
                     <td colSpan={previewColSpan}>
-                      <span className="error-text">Open cheque number already in use on this credit account</span>
+                      <div className="journal-review-message-card" role="alert">
+                        <p className="journal-review-message-text">
+                          Open cheque number already in use on this credit account
+                        </p>
+                      </div>
                     </td>
                   </tr>
                 )}

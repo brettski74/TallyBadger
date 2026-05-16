@@ -1721,7 +1721,7 @@ th.table-row-actions-heading {
 }
 
 .cheque-preview-error-row td {
-  padding-top: 0;
+  padding-top: 0.15rem;
   padding-bottom: 0.5rem;
   border-top: none;
 }
