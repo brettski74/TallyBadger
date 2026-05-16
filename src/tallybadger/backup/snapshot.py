@@ -32,6 +32,7 @@ FORMAT_VERSION_HISTORY: tuple[str, ...] = (
     "1.2.0",
     "1.3.0",
     "1.4.0",
+    "1.5.0",
 )
 
 
@@ -99,6 +100,11 @@ def snapshot_includes_filter_presets(format_version: str) -> bool:
     return _format_version_tuple(format_version) >= (1, 4, 0)
 
 
+def snapshot_includes_import_batches(format_version: str) -> bool:
+    """``import_batches.json`` applies for ``format_version`` ≥ 1.5.0 (``complete`` / ``financial``)."""
+    return _format_version_tuple(format_version) >= (1, 5, 0)
+
+
 def configuration_tables_for_format(format_version: str) -> tuple[str, ...]:
     """Configuration snapshot members for ``format_version`` (base ± preset sidecars)."""
     parts: list[str] = list(CONFIGURATION_TABLES_BASE)
@@ -120,6 +126,8 @@ def financial_tables_core(format_version: str) -> tuple[str, ...]:
     parts: list[str] = []
     if _format_version_tuple(format_version) >= (1, 3, 0):
         parts.append("cheques")
+    if snapshot_includes_import_batches(format_version):
+        parts.append("import_batches")
     parts.append("journal_entries")
     if _format_version_tuple(format_version) >= (1, 2, 0):
         parts.append("journal_entry_review_messages")
@@ -194,9 +202,12 @@ def _json_default(obj: Any) -> Any:
     raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
 
 
-def _cell_to_jsonable(value: Any) -> Any:
+def _cell_to_jsonable(column: str, value: Any) -> Any:
     if value is None:
         return None
+    if column == "content_sha256" and isinstance(value, (bytes, memoryview)):
+        raw = value if isinstance(value, bytes) else value.tobytes()
+        return raw.hex()
     if isinstance(value, Decimal):
         return str(value)
     if isinstance(value, datetime):
@@ -209,7 +220,7 @@ def _cell_to_jsonable(value: Any) -> Any:
 def _rows_jsonable(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for row in rows:
-        out.append({k: _cell_to_jsonable(v) for k, v in row.items()})
+        out.append({k: _cell_to_jsonable(k, v) for k, v in row.items()})
     return out
 
 
@@ -359,7 +370,7 @@ def export_snapshot(conn: Connection, export_type: ExportType) -> bytes:
                 member_path = attachment_blob_member_path(rid, mime)
                 payloads[member_path] = blob
                 raw_out.append(
-                    {k: _cell_to_jsonable(v) for k, v in row.items() if k != "blob"},
+                    {k: _cell_to_jsonable(k, v) for k, v in row.items() if k != "blob"},
                 )
             payloads["attachments.json"] = _canonical_json_bytes(raw_out)
         else:
@@ -477,6 +488,10 @@ def _parse_table_file(path: str, raw: bytes) -> list[dict[str, Any]]:
 def _coerce_cell(column: str, value: Any) -> Any:
     if value is None:
         return None
+    if column == "content_sha256":
+        if isinstance(value, str):
+            return bytes.fromhex(value)
+        raise SnapshotValidationError("content_sha256 must be a 64-character hex string")
     if column in JSON_COLUMNS:
         return Json(value)
     if column in DATE_COLUMNS:
@@ -652,6 +667,10 @@ def _validate_complete_fk_graph(payloads: dict[str, list[dict[str, Any]]]) -> No
     ao = {int(r["id"]) for r in payloads["accrual_obligations"]}
     se = {int(r["id"]) for r in payloads["settlement_events"]}
 
+    batch_ids: set[int] | None = None
+    if "import_batches" in payloads:
+        batch_ids = {int(r["id"]) for r in payloads["import_batches"]}
+
     chq: set[int] = set()
     if "cheques" in payloads:
         chq = {int(r["id"]) for r in payloads["cheques"]}
@@ -682,6 +701,11 @@ def _validate_complete_fk_graph(payloads: dict[str, list[dict[str, Any]]]) -> No
         if cid is not None and int(cid) not in chq:
             raise SnapshotValidationError(
                 f"journal_entries[{i}] cheque_id={cid} has no matching row in cheques.json"
+            )
+        ib = row.get("import_batch_id")
+        if ib is not None and batch_ids is not None and int(ib) not in batch_ids:
+            raise SnapshotValidationError(
+                f"journal_entries[{i}] import_batch_id={ib} has no matching row in import_batches.json"
             )
 
     if "journal_entry_review_messages" in payloads:
@@ -808,6 +832,11 @@ def _validate_financial_fks(
     ao = {int(r["id"]) for r in payloads["accrual_obligations"]}
     se = {int(r["id"]) for r in payloads["settlement_events"]}
 
+    batch_snap: set[int] = set()
+    if "import_batches" in payloads:
+        batch_snap = {int(r["id"]) for r in payloads["import_batches"]}
+    batch_db = _existing_ids(conn, "import_batches")
+
     for i, row in enumerate(payloads["journal_entries"]):
         ap = row.get("accrual_plan_id")
         if ap is not None and int(ap) not in plan_db:
@@ -821,6 +850,15 @@ def _validate_financial_fks(
             raise SnapshotValidationError(
                 f"journal_entries[{i}] cheque_id={cid} has no matching row in cheques.json"
             )
+        ib = row.get("import_batch_id")
+        if ib is not None:
+            bid = int(ib)
+            if bid not in batch_snap and bid not in batch_db:
+                raise SnapshotValidationError(
+                    f"journal_entries[{i}] import_batch_id={ib} not found in import_batches.json "
+                    "or in the target database (import configuration first, or include the batch "
+                    "in the financial snapshot)."
+                )
 
     if "journal_entry_review_messages" in payloads:
         for i, row in enumerate(payloads["journal_entry_review_messages"]):
@@ -1087,6 +1125,7 @@ def _resync_serials(conn: Connection) -> None:
         "accrual_plans",
         "cel_rule_sets",
         "cheques",
+        "import_batches",
         "journal_entries",
         "journal_entry_review_messages",
         "journal_lines",

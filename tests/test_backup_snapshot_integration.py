@@ -244,6 +244,48 @@ def test_complete_export_round_trip_restores_row_counts(
             assert Decimal(str(cur.fetchone()["s"])) == Decimal("0")
 
 
+def test_complete_round_trip_preserves_import_batches_and_journal_link(
+    integration_db_url: str,
+    ledger_service: LedgerService,
+) -> None:
+    """#138: import_batches ride in complete exports and restore journal_entries.import_batch_id."""
+    _seed_minimal_ledger(ledger_service)
+    digest = bytes.fromhex("aa" * 32)
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        with conn.transaction():
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO import_batches (basename, content_sha256) VALUES (%s, %s) RETURNING id",
+                    ("statement.csv", digest),
+                )
+                batch_id = int(cur.fetchone()["id"])
+                cur.execute(
+                    "UPDATE journal_entries SET import_batch_id = %s "
+                    "WHERE id = (SELECT MIN(id) FROM journal_entries)",
+                    (batch_id,),
+                )
+        with conn.cursor() as cur:
+            cur.execute("SELECT import_batch_id FROM journal_entries ORDER BY id LIMIT 1")
+            assert int(cur.fetchone()["import_batch_id"]) == batch_id
+        before = snapshot_table_counts(conn)
+        assert before["import_batches"] == 1
+        zip_bytes = export_complete_snapshot(conn)
+
+    _truncate_all_data(integration_db_url)
+
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        import_complete_snapshot(conn, zip_bytes)
+        after = snapshot_table_counts(conn)
+        assert after["import_batches"] == 1
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT import_batch_id FROM journal_entries ORDER BY id LIMIT 1",
+            )
+            restored = cur.fetchone()["import_batch_id"]
+            assert restored is not None
+            assert int(restored) == batch_id
+
+
 def test_complete_export_round_trip_restores_attachment_blob(
     integration_db_url: str,
     ledger_service: LedgerService,
@@ -656,6 +698,61 @@ def test_financial_import_rejects_missing_account_reference(
     with connect(integration_db_url, row_factory=dict_row) as conn, pytest.raises(
         SnapshotValidationError,
         match="not found in target database",
+    ):
+        import_snapshot(conn, bad_fin, restore_mode="abort")
+
+
+def test_financial_import_rejects_import_batch_id_missing_everywhere(
+    integration_db_url: str,
+    ledger_service: LedgerService,
+) -> None:
+    """#138: import_batch_id must appear in import_batches.json or already exist in the DB."""
+    _seed_minimal_ledger(ledger_service)
+    digest = bytes.fromhex("dd" * 32)
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        with conn.transaction():
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO import_batches (basename, content_sha256) VALUES (%s, %s) RETURNING id",
+                    ("batch-for-link.csv", digest),
+                )
+                batch_id = int(cur.fetchone()["id"])
+                cur.execute(
+                    "UPDATE journal_entries SET import_batch_id = %s "
+                    "WHERE id = (SELECT MIN(id) FROM journal_entries)",
+                    (batch_id,),
+                )
+        config_zip = export_snapshot(conn, "configuration")
+        fin_zip = export_snapshot(conn, "financial")
+
+    _truncate_all_data(integration_db_url)
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        import_snapshot(conn, config_zip, restore_mode="abort")
+
+    zin = zipfile.ZipFile(io.BytesIO(fin_zip))
+    try:
+        meta = json.loads(zin.read("metadata.json").decode("utf-8"))
+        members = {
+            n: zin.read(n) for n in zin.namelist() if not n.endswith("/") and n != "metadata.json"
+        }
+    finally:
+        zin.close()
+    entries = json.loads(members["journal_entries.json"].decode("utf-8"))
+    entries[0]["import_batch_id"] = 999999
+    members["journal_entries.json"] = json.dumps(
+        entries,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    bad_fin = _rezip_table_members_with_metadata(
+        members,
+        {k: v for k, v in meta.items() if k != "member_manifest"},
+    )
+
+    with connect(integration_db_url, row_factory=dict_row) as conn, pytest.raises(
+        SnapshotValidationError,
+        match="import_batch_id",
     ):
         import_snapshot(conn, bad_fin, restore_mode="abort")
 
