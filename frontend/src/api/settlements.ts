@@ -13,6 +13,8 @@ export interface LedgerSettings {
   default_cheque_debit_account_id: number | null;
   /** Maximum journal attachment upload size in bytes (default 5 MiB). PATCH may use a string with `k` or `M` suffix. */
   max_attachment_upload_bytes: number;
+  /** Maximum cheques in one post-dated series (#141). */
+  max_cheque_series_count: number;
   updated_at: string;
 }
 

@@ -5,7 +5,13 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from tallybadger.api.routes.ledger import get_ledger_service
-from tallybadger.ledger.models import ChequeCreate, ChequeOut, ChequeUpdate
+from tallybadger.ledger.models import (
+    ChequeCreate,
+    ChequeOut,
+    ChequeSeriesCreate,
+    ChequeSeriesPreviewOut,
+    ChequeUpdate,
+)
 from tallybadger.ledger.service import (
     LedgerConflictError,
     LedgerNotFoundError,
@@ -25,6 +31,30 @@ def list_cheques(
     service: LedgerService = Depends(get_ledger_service),
 ) -> list[ChequeOut]:
     return service.list_cheques(list_status=list_status)
+
+
+@router.post("/cheques/series/preview", response_model=ChequeSeriesPreviewOut)
+def preview_cheque_series(
+    payload: ChequeSeriesCreate,
+    service: LedgerService = Depends(get_ledger_service),
+) -> ChequeSeriesPreviewOut:
+    try:
+        return service.preview_cheque_series(payload)
+    except LedgerValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/cheques/series", response_model=list[ChequeOut], status_code=status.HTTP_201_CREATED)
+def create_cheque_series(
+    payload: ChequeSeriesCreate,
+    service: LedgerService = Depends(get_ledger_service),
+) -> list[ChequeOut]:
+    try:
+        return service.create_cheque_series(payload)
+    except LedgerConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except LedgerValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.post("/cheques", response_model=ChequeOut, status_code=status.HTTP_201_CREATED)
