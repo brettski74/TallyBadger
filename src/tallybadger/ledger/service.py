@@ -586,7 +586,13 @@ class LedgerService:
                 "(teach the template new tricks first).",
             )
         cur.execute(
-            "SELECT 1 FROM settlement_events WHERE cash_account_id = %s LIMIT 1",
+            """
+            SELECT 1
+            FROM settlement_allocations sa
+            INNER JOIN journal_lines jl ON jl.entry_id = sa.entry_id
+            WHERE jl.account_id = %s
+            LIMIT 1
+            """,
             (account_id,),
         )
         if cur.fetchone():
@@ -1124,32 +1130,18 @@ class LedgerService:
                         )
                         touched_entry_ids = {entry_id}
 
-                    cur.execute(
-                        """
-                        INSERT INTO settlement_events (party_id, settlement_type, event_date, amount, cash_account_id, entry_id, note)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s)
-                        RETURNING id
-                        """,
-                        (
-                            payload.party_id,
-                            payload.settlement_type,
-                            payload.event_date,
-                            payload.amount,
-                            payload.cash_account_id,
-                            entry_id,
-                            payload.note,
-                        ),
-                    )
-                    event_id = cur.fetchone()["id"]
+                    allocation_ids: list[int] = []
                     for obligation in obligations:
                         alloc_amt = allocation_by_id[obligation["id"]]
                         cur.execute(
                             """
-                            INSERT INTO settlement_allocations (settlement_event_id, obligation_id, amount)
+                            INSERT INTO settlement_allocations (entry_id, obligation_id, amount)
                             VALUES (%s, %s, %s)
+                            RETURNING id
                             """,
-                            (event_id, obligation["id"], alloc_amt),
+                            (entry_id, obligation["id"], alloc_amt),
                         )
+                        allocation_ids.append(int(cur.fetchone()["id"]))
                         open_after = Decimal(obligation["open_amount"]) - alloc_amt
                         new_status = "settled" if open_after == Decimal("0") else "partially_settled"
                         cur.execute(
@@ -1182,8 +1174,8 @@ class LedgerService:
                     for eid in touched_entry_ids:
                         self._assert_entry_balanced(cur, eid)
         return SettlementOut(
-            event_id=event_id,
             entry_id=entry_id,
+            allocation_ids=allocation_ids,
             allocated_amount=allocated_total,
             unapplied_amount=payload.amount - allocated_total,
         )
@@ -2357,60 +2349,45 @@ class LedgerService:
         batch_entry_ids: set[int],
         settings: dict,
     ) -> None:
+        if not batch_entry_ids:
+            return
         cur.execute(
             """
-            SELECT DISTINCT se.id
-            FROM settlement_events se
-            INNER JOIN settlement_allocations sa ON sa.settlement_event_id = se.id
-            INNER JOIN accrual_obligations ao ON ao.id = sa.obligation_id
-            WHERE ao.source_entry_id = ANY(%s::bigint[])
-               OR ao.source_line_id IN (
-                   SELECT jl.id FROM journal_lines jl
-                   WHERE jl.entry_id = ANY(%s::bigint[])
-               )
-            ORDER BY se.id DESC
+            SELECT DISTINCT sa.entry_id
+            FROM settlement_allocations sa
+            WHERE sa.entry_id = ANY(%s::bigint[])
+            ORDER BY sa.entry_id DESC
             """,
-            (list(batch_entry_ids), list(batch_entry_ids)),
+            (list(batch_entry_ids),),
         )
         for row in cur.fetchall():
-            self._reverse_one_settlement_event_for_import_unload(
+            self._reverse_settlement_entry_for_import_unload(
                 cur,
-                int(row["id"]),
+                int(row["entry_id"]),
                 batch_entry_ids,
                 settings,
             )
 
-    def _reverse_one_settlement_event_for_import_unload(
+    def _reverse_settlement_entry_for_import_unload(
         self,
         cur: Any,
-        settlement_event_id: int,
+        entry_id: int,
         batch_entry_ids: set[int],
         settings: dict,
     ) -> None:
         cur.execute(
             """
-            SELECT id, party_id, settlement_type, event_date, amount, cash_account_id, entry_id
-            FROM settlement_events
-            WHERE id = %s
-            """,
-            (settlement_event_id,),
-        )
-        ev = cur.fetchone()
-        if not ev:
-            return
-        cur.execute(
-            """
-            SELECT obligation_id, amount
+            SELECT id, obligation_id, amount
             FROM settlement_allocations
-            WHERE settlement_event_id = %s
+            WHERE entry_id = %s
             ORDER BY id ASC
             """,
-            (settlement_event_id,),
+            (entry_id,),
         )
         alloc_rows = cur.fetchall()
         if not alloc_rows:
-            cur.execute("DELETE FROM settlement_events WHERE id = %s", (settlement_event_id,))
             return
+
         obligation_ids = [int(r["obligation_id"]) for r in alloc_rows]
         allocation_by_id = {int(r["obligation_id"]): Decimal(r["amount"]) for r in alloc_rows}
         cur.execute(
@@ -2436,30 +2413,51 @@ class LedgerService:
         if len(obligations) != len(obligation_ids):
             raise LedgerValidationError("settlement references missing obligation rows during import unload")
 
-        st = ev["settlement_type"]
-        entry_id = int(ev["entry_id"])
-        event_date = ev["event_date"]
+        settlement_type = self._settlement_type_from_obligations(obligations)
+        cur.execute(
+            """
+            SELECT entry_date, accrual_plan_id, import_batch_id
+            FROM journal_entries
+            WHERE id = %s
+            """,
+            (entry_id,),
+        )
+        entry_header = cur.fetchone()
+        if not entry_header:
+            raise LedgerValidationError(f"settlement entry {entry_id} missing during import unload")
+        event_date = entry_header["entry_date"]
+        party_id = int(obligations[0]["party_id"])
+        cash_account_id, cash_amount = self._cash_line_for_settlement_entry(
+            cur,
+            entry_id,
+            party_id,
+            settlement_type,
+        )
         allocated_total = sum(allocation_by_id.values(), Decimal("0"))
 
-        if st == "payment":
-            cur.execute("DELETE FROM settlement_events WHERE id = %s", (settlement_event_id,))
-            cur.execute("DELETE FROM journal_entries WHERE id = %s", (entry_id,))
-            return
+        self._restore_obligations_after_settlement_unload(cur, obligations, allocation_by_id)
+        cur.execute("DELETE FROM settlement_allocations WHERE entry_id = %s", (entry_id,))
 
-        if st != "receipt":
-            raise LedgerValidationError(f"unsupported settlement_type {st!r} during import unload")
+        if settlement_type == "payment":
+            self._finalize_settlement_entry_after_import_unload(
+                cur,
+                entry_id,
+                entry_header,
+                batch_entry_ids,
+            )
+            return
 
         collapse = self._receipt_allocations_all_same_accrual_day(obligations, allocation_by_id, event_date)
 
         if collapse:
-            unapplied = Decimal(ev["amount"]) - allocated_total
+            unapplied = cash_amount - allocated_total
             ur_id = settings.get("unearned_revenue_account_id")
             if unapplied > Decimal("0") and ur_id is not None:
                 self._reverse_append_cash_unearned(
                     cur,
                     entry_id,
-                    int(ev["party_id"]),
-                    int(ev["cash_account_id"]),
+                    party_id,
+                    cash_account_id,
                     int(ur_id),
                     unapplied,
                 )
@@ -2472,10 +2470,15 @@ class LedgerService:
                     cur,
                     ob,
                     amt,
-                    int(ev["cash_account_id"]),
+                    cash_account_id,
                     int(ar_id),
                 )
-            cur.execute("DELETE FROM settlement_events WHERE id = %s", (settlement_event_id,))
+            self._finalize_settlement_entry_after_import_unload(
+                cur,
+                entry_id,
+                entry_header,
+                batch_entry_ids,
+            )
             return
 
         for ob in reversed(obligations):
@@ -2484,9 +2487,103 @@ class LedgerService:
             if sd is not None and sd > event_date and amt > Decimal("0"):
                 self._reverse_early_receipt_line_reclassification(cur, ob, amt, settings)
 
-        cur.execute("DELETE FROM settlement_events WHERE id = %s", (settlement_event_id,))
-        if entry_id not in batch_entry_ids:
-            cur.execute("DELETE FROM journal_entries WHERE id = %s", (entry_id,))
+        self._finalize_settlement_entry_after_import_unload(
+            cur,
+            entry_id,
+            entry_header,
+            batch_entry_ids,
+        )
+
+    @staticmethod
+    def _settlement_type_from_obligations(obligations: list[dict]) -> str:
+        types = {str(ob["obligation_type"]) for ob in obligations}
+        if types == {"receivable"}:
+            return "receipt"
+        if types == {"payable"}:
+            return "payment"
+        raise LedgerValidationError(
+            f"cannot derive settlement type from mixed obligation types: {sorted(types)!r}"
+        )
+
+    @staticmethod
+    def _cash_line_for_settlement_entry(
+        cur: Any,
+        entry_id: int,
+        party_id: int,
+        settlement_type: str,
+    ) -> tuple[int, Decimal]:
+        cur.execute(
+            """
+            SELECT account_id, amount
+            FROM journal_lines
+            WHERE entry_id = %s AND party_id = %s
+            ORDER BY id ASC
+            """,
+            (entry_id, party_id),
+        )
+        for row in cur.fetchall():
+            amount = Decimal(row["amount"])
+            if settlement_type == "receipt" and amount > Decimal("0"):
+                return int(row["account_id"]), amount
+            if settlement_type == "payment" and amount < Decimal("0"):
+                return int(row["account_id"]), -amount
+        raise LedgerValidationError(
+            f"cannot locate cash line on settlement entry {entry_id} during import unload"
+        )
+
+    @staticmethod
+    def _restore_obligations_after_settlement_unload(
+        cur: Any,
+        obligations: list[dict],
+        allocation_by_id: dict[int, Decimal],
+    ) -> None:
+        for ob in obligations:
+            oid = int(ob["id"])
+            alloc_amt = allocation_by_id.get(oid, Decimal("0"))
+            if alloc_amt <= Decimal("0"):
+                continue
+            open_after = Decimal(ob["open_amount"]) + alloc_amt
+            original = Decimal(ob["original_amount"])
+            if open_after > original:
+                raise LedgerValidationError(
+                    f"obligation {oid} would exceed original_amount during settlement unload"
+                )
+            if open_after == original:
+                new_status = "open"
+            elif open_after == Decimal("0"):
+                new_status = "settled"
+            else:
+                new_status = "partially_settled"
+            cur.execute(
+                """
+                UPDATE accrual_obligations
+                SET open_amount = %s, status = %s, updated_at = NOW()
+                WHERE id = %s
+                """,
+                (open_after, new_status, oid),
+            )
+
+    @staticmethod
+    def _finalize_settlement_entry_after_import_unload(
+        cur: Any,
+        entry_id: int,
+        entry_header: dict,
+        batch_entry_ids: set[int],
+    ) -> None:
+        if entry_header.get("accrual_plan_id") is not None:
+            if entry_header.get("import_batch_id") is not None:
+                cur.execute(
+                    """
+                    UPDATE journal_entries
+                    SET import_batch_id = NULL, updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (entry_id,),
+                )
+            return
+        if entry_id in batch_entry_ids:
+            return
+        cur.execute("DELETE FROM journal_entries WHERE id = %s", (entry_id,))
 
     @staticmethod
     def _reverse_append_cash_unearned(

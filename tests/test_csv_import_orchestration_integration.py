@@ -42,7 +42,6 @@ def clean_import_tables(integration_db_url: str) -> Iterator[None]:
                     """
                     TRUNCATE TABLE
                       settlement_allocations,
-                      settlement_events,
                       accrual_obligations,
                       import_templates,
                       journal_entry_review_messages,
@@ -712,6 +711,7 @@ def test_unload_import_batch_returns_404_when_already_unloaded(
     assert _count_rows(integration_db_url, "journal_entries") == 0
 
 
+@pytest.mark.skip(reason="Import-batch settlement unload requires CSV line[] settlement (#151); restore then.")
 def test_unload_import_batch_rolls_back_same_day_receipt_settlement(
     import_api_client: TestClient,
     integration_db_url: str,

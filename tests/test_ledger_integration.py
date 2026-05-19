@@ -701,6 +701,7 @@ def test_same_day_full_receipt_collapses_into_accrual_entry(
 
     assert _journal_entry_count(integration_db_url) == 1
     assert result.entry_id == accrual_entry_id
+    assert len(result.allocation_ids) == 1
 
     entry = ledger_service.get_entry(accrual_entry_id)
     assert not any(line.account_id == ar.id for line in entry.lines)

@@ -40,7 +40,9 @@ from tallybadger.backup.snapshot import (
     financial_tables_for_format,
     import_complete_snapshot,
     import_snapshot,
+    snapshot_includes_attachment_tables,
     snapshot_table_counts,
+    tables_for_import,
 )
 from tallybadger.db_migrations import apply_sql_migrations
 from tallybadger.ledger.models import AccountCreate, JournalEntryWrite, JournalLineIn, PartyCreate
@@ -59,7 +61,6 @@ def _truncate_all_data(integration_db_url: str) -> None:
                       journal_entry_filter_presets,
                       import_templates,
                       settlement_allocations,
-                      settlement_events,
                       accrual_obligations,
                       journal_lines,
                       journal_entry_review_messages,
@@ -162,6 +163,45 @@ def _replace_metadata_only(zip_bytes: bytes, **meta_patch: object) -> bytes:
     finally:
         zin.close()
     return out.getvalue()
+
+
+def _repack_snapshot_for_format(
+    zip_bytes: bytes,
+    format_version: str,
+    *,
+    export_type: str = "complete",
+) -> bytes:
+    """Rebuild a current-schema export ZIP for an older ``format_version`` member matrix."""
+    zin = zipfile.ZipFile(io.BytesIO(zip_bytes))
+    try:
+        meta = json.loads(zin.read("metadata.json").decode("utf-8"))
+        table_members: dict[str, bytes] = {}
+        for name in zin.namelist():
+            if name.endswith("/") or name == "metadata.json":
+                continue
+            table_members[name] = zin.read(name)
+
+        required_tables = tables_for_import(export_type, format_version)
+        cleaned: dict[str, bytes] = {}
+        for table in required_tables:
+            path = f"{table}.json"
+            cleaned[path] = table_members.get(path, b"[]")
+
+        if snapshot_includes_attachment_tables(format_version):
+            for path, data in table_members.items():
+                if path.startswith("attachments/"):
+                    cleaned[path] = data
+
+        meta_out = {
+            k: v
+            for k, v in meta.items()
+            if k not in ("member_manifest", "format_version", "export_type")
+        }
+        meta_out["format_version"] = format_version
+        meta_out["export_type"] = export_type
+        return _rezip_table_members_with_metadata(cleaned, meta_out)
+    finally:
+        zin.close()
 
 
 def _seed_minimal_ledger(ledger_service: LedgerService) -> None:
@@ -338,15 +378,15 @@ def test_import_format_v1_0_0_complete_without_attachment_members(
     """Archives from releases that only knew ``format_version`` 1.0.0 must still import (#80)."""
     import tallybadger.backup.snapshot as snap
 
-    monkeypatch.setattr(snap, "FORMAT_VERSION_HISTORY", ("1.0.0",))
     _seed_minimal_ledger(ledger_service)
     with connect(integration_db_url, row_factory=dict_row) as conn:
-        zip_v1 = export_complete_snapshot(conn)
+        zip_v1 = _repack_snapshot_for_format(export_complete_snapshot(conn), "1.0.0")
 
     meta = json.loads(zipfile.ZipFile(io.BytesIO(zip_v1)).read("metadata.json"))
     assert meta["format_version"] == "1.0.0"
     znames = {n for n in zipfile.ZipFile(io.BytesIO(zip_v1)).namelist() if not n.endswith("/")}
     assert "attachments.json" not in znames
+    assert "settlement_events.json" in znames
 
     monkeypatch.setattr(snap, "FORMAT_VERSION_HISTORY", ("1.0.0", "1.1.0"))
 
@@ -433,14 +473,14 @@ def test_import_accepts_prior_format_version_in_history(
     """Import accepts format_version strings in the last four FORMAT_VERSION_HISTORY entries."""
     import tallybadger.backup.snapshot as snap
 
-    monkeypatch.setattr(snap, "FORMAT_VERSION_HISTORY", ("0.9.0", "1.0.0"))
-
     _truncate_all_data(integration_db_url)
     _ensure_ledger_settings(integration_db_url)
     with connect(integration_db_url, row_factory=dict_row) as conn:
-        zip_bytes = export_complete_snapshot(conn)
+        zip_bytes = _repack_snapshot_for_format(export_complete_snapshot(conn), "1.0.0")
     meta = json.loads(zipfile.ZipFile(io.BytesIO(zip_bytes)).read("metadata.json"))
     assert meta["format_version"] == "1.0.0"
+
+    monkeypatch.setattr(snap, "FORMAT_VERSION_HISTORY", ("0.9.0", "1.0.0"))
 
     older = _replace_metadata_only(zip_bytes, format_version="0.9.0")
 
@@ -448,6 +488,27 @@ def test_import_accepts_prior_format_version_in_history(
 
     with connect(integration_db_url, row_factory=dict_row) as conn:
         import_complete_snapshot(conn, older)
+
+
+def test_import_accepts_format_one_five_zero_settlement_events_archive(
+    integration_db_url: str,
+    ledger_service: LedgerService,
+) -> None:
+    """Archives with settlement_events.json (< 1.6.0) normalize to allocations-only on import (#153)."""
+    _seed_minimal_ledger(ledger_service)
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        zip_bytes = export_complete_snapshot(conn)
+    legacy = _repack_snapshot_for_format(zip_bytes, "1.5.0")
+    zf = zipfile.ZipFile(io.BytesIO(legacy))
+    assert "settlement_events.json" in zf.namelist()
+    assert "settlement_allocations.json" in zf.namelist()
+    assert json.loads(zf.read("metadata.json").decode("utf-8"))["format_version"] == "1.5.0"
+
+    _truncate_all_data(integration_db_url)
+
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        import_complete_snapshot(conn, legacy)
+        assert snapshot_table_counts(conn)["settlement_allocations"] == 0
 
 
 def test_import_rejects_schema_version_mismatch(integration_db_url: str) -> None:

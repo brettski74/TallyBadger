@@ -65,6 +65,7 @@ flowchart LR
 
 | Topic | Document |
 |-------|----------|
+| Journal / obligation / settlement / import-batch ER and unload scope | [docs/ledger-data-model.md](docs/ledger-data-model.md) |
 | Snapshot ZIP layout, `format_version`, export modes | [docs/backup-snapshot-format.md](docs/backup-snapshot-format.md) |
 | Import rules engine scope and API | [docs/import-rules-engine.md](docs/import-rules-engine.md) |
 | CEL helpers and functions | [docs/cel-function-reference.md](docs/cel-function-reference.md) |

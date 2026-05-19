@@ -506,8 +506,8 @@ class SettlementWrite(BaseModel):
 
 
 class SettlementOut(BaseModel):
-    event_id: int
     entry_id: int
+    allocation_ids: list[int]
     allocated_amount: Decimal
     unapplied_amount: Decimal
 
