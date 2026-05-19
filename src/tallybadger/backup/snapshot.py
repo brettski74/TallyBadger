@@ -33,6 +33,7 @@ FORMAT_VERSION_HISTORY: tuple[str, ...] = (
     "1.3.0",
     "1.4.0",
     "1.5.0",
+    "1.6.0",
 )
 
 
@@ -105,6 +106,11 @@ def snapshot_includes_import_batches(format_version: str) -> bool:
     return _format_version_tuple(format_version) >= (1, 5, 0)
 
 
+def snapshot_includes_settlement_events(format_version: str) -> bool:
+    """``settlement_events.json`` applies for ``format_version`` < 1.6.0 (removed in #153)."""
+    return _format_version_tuple(format_version) < (1, 6, 0)
+
+
 def configuration_tables_for_format(format_version: str) -> tuple[str, ...]:
     """Configuration snapshot members for ``format_version`` (base ± preset sidecars)."""
     parts: list[str] = list(CONFIGURATION_TABLES_BASE)
@@ -135,10 +141,11 @@ def financial_tables_core(format_version: str) -> tuple[str, ...]:
         [
             "journal_lines",
             "accrual_obligations",
-            "settlement_events",
-            "settlement_allocations",
         ],
     )
+    if snapshot_includes_settlement_events(format_version):
+        parts.append("settlement_events")
+    parts.append("settlement_allocations")
     return tuple(parts)
 
 
@@ -317,7 +324,6 @@ def _truncate_complete_scope(conn: Connection) -> None:
               journal_entry_filter_presets,
               import_templates,
               settlement_allocations,
-              settlement_events,
               accrual_obligations,
               journal_lines,
               journal_entry_review_messages,
@@ -655,7 +661,93 @@ def _validate_configuration_fks(
         )
 
 
-def _validate_complete_fk_graph(payloads: dict[str, list[dict[str, Any]]]) -> None:
+def _normalize_legacy_settlement_payloads(
+    payloads: dict[str, list[dict[str, Any]]],
+    format_version: str,
+) -> None:
+    """Convert pre-1.6.0 settlement_events + allocations into allocations-only rows."""
+    if not snapshot_includes_settlement_events(format_version):
+        return
+    events = {int(r["id"]): r for r in payloads.get("settlement_events", [])}
+    normalized: list[dict[str, Any]] = []
+    for row in payloads.get("settlement_allocations", []):
+        ev = events.get(int(row["settlement_event_id"]))
+        if ev is None:
+            raise SnapshotValidationError(
+                f"settlement_allocations id={row.get('id')} references missing settlement_event_id"
+            )
+        nr = {k: v for k, v in row.items() if k != "settlement_event_id"}
+        nr["entry_id"] = int(ev["entry_id"])
+        normalized.append(nr)
+    payloads["settlement_allocations"] = normalized
+    payloads.pop("settlement_events", None)
+
+
+def _validate_settlement_allocations_fks(
+    payloads: dict[str, list[dict[str, Any]]],
+    *,
+    je: set[int],
+    ao: set[int],
+    format_version: str,
+    archive_label: str = "journal_entries.json",
+    obligation_label: str = "accrual_obligations.json",
+) -> None:
+    legacy = snapshot_includes_settlement_events(format_version)
+    se: set[int] = set()
+    if legacy:
+        se = {int(r["id"]) for r in payloads.get("settlement_events", [])}
+
+    for i, row in enumerate(payloads.get("settlement_allocations", [])):
+        if legacy:
+            if int(row["settlement_event_id"]) not in se:
+                raise SnapshotValidationError(
+                    f"settlement_allocations[{i}] settlement_event_id={row['settlement_event_id']} "
+                    "has no matching row in settlement_events.json"
+                )
+        else:
+            if int(row["entry_id"]) not in je:
+                raise SnapshotValidationError(
+                    f"settlement_allocations[{i}] entry_id={row['entry_id']} "
+                    f"has no matching row in {archive_label}"
+                )
+        if int(row["obligation_id"]) not in ao:
+            raise SnapshotValidationError(
+                f"settlement_allocations[{i}] obligation_id={row['obligation_id']} "
+                f"has no matching row in {obligation_label}"
+            )
+
+
+def _validate_legacy_settlement_events_fks(
+    payloads: dict[str, list[dict[str, Any]]],
+    *,
+    acct: set[int],
+    party: set[int],
+    je: set[int],
+    party_scope_label: str = "parties.json",
+    account_scope_label: str = "accounts.json",
+) -> None:
+    for i, row in enumerate(payloads.get("settlement_events", [])):
+        if int(row["party_id"]) not in party:
+            raise SnapshotValidationError(
+                f"settlement_events[{i}] party_id={row['party_id']} "
+                f"has no matching row in {party_scope_label}"
+            )
+        if int(row["cash_account_id"]) not in acct:
+            raise SnapshotValidationError(
+                f"settlement_events[{i}] cash_account_id={row['cash_account_id']} "
+                f"has no matching row in {account_scope_label}"
+            )
+        if int(row["entry_id"]) not in je:
+            raise SnapshotValidationError(
+                f"settlement_events[{i}] entry_id={row['entry_id']} "
+                "has no matching row in journal_entries.json"
+            )
+
+
+def _validate_complete_fk_graph(
+    payloads: dict[str, list[dict[str, Any]]],
+    format_version: str,
+) -> None:
     """All FK targets appear in this archive (complete export)."""
     _validate_configuration_fks(payloads)
 
@@ -665,7 +757,6 @@ def _validate_complete_fk_graph(payloads: dict[str, list[dict[str, Any]]]) -> No
     je = {int(r["id"]) for r in payloads["journal_entries"]}
     jl = {int(r["id"]) for r in payloads["journal_lines"]}
     ao = {int(r["id"]) for r in payloads["accrual_obligations"]}
-    se = {int(r["id"]) for r in payloads["settlement_events"]}
 
     batch_ids: set[int] | None = None
     if "import_batches" in payloads:
@@ -755,33 +846,20 @@ def _validate_complete_fk_graph(payloads: dict[str, list[dict[str, Any]]]) -> No
                 "has no matching row in journal_lines.json"
             )
 
-    for i, row in enumerate(payloads["settlement_events"]):
-        if int(row["party_id"]) not in party:
-            raise SnapshotValidationError(
-                f"settlement_events[{i}] party_id={row['party_id']} has no matching row in parties.json"
-            )
-        if int(row["cash_account_id"]) not in acct:
-            raise SnapshotValidationError(
-                f"settlement_events[{i}] cash_account_id={row['cash_account_id']} "
-                "has no matching row in accounts.json"
-            )
-        if int(row["entry_id"]) not in je:
-            raise SnapshotValidationError(
-                f"settlement_events[{i}] entry_id={row['entry_id']} "
-                "has no matching row in journal_entries.json"
-            )
+    if snapshot_includes_settlement_events(format_version):
+        _validate_legacy_settlement_events_fks(
+            payloads,
+            acct=acct,
+            party=party,
+            je=je,
+        )
 
-    for i, row in enumerate(payloads["settlement_allocations"]):
-        if int(row["settlement_event_id"]) not in se:
-            raise SnapshotValidationError(
-                f"settlement_allocations[{i}] settlement_event_id={row['settlement_event_id']} "
-                "has no matching row in settlement_events.json"
-            )
-        if int(row["obligation_id"]) not in ao:
-            raise SnapshotValidationError(
-                f"settlement_allocations[{i}] obligation_id={row['obligation_id']} "
-                "has no matching row in accrual_obligations.json"
-            )
+    _validate_settlement_allocations_fks(
+        payloads,
+        je=je,
+        ao=ao,
+        format_version=format_version,
+    )
 
     if "journal_entry_attachments" in payloads:
         att_ids = {int(r["id"]) for r in payloads["attachments"]}
@@ -803,6 +881,7 @@ def _validate_complete_fk_graph(payloads: dict[str, list[dict[str, Any]]]) -> No
 def _validate_financial_fks(
     conn: Connection,
     payloads: dict[str, list[dict[str, Any]]],
+    format_version: str,
 ) -> None:
     """Financial rows reference configuration entities that must already exist in the target DB."""
     acct_db = _existing_ids(conn, "accounts")
@@ -830,7 +909,6 @@ def _validate_financial_fks(
     je = {int(r["id"]) for r in payloads["journal_entries"]}
     jl = {int(r["id"]) for r in payloads["journal_lines"]}
     ao = {int(r["id"]) for r in payloads["accrual_obligations"]}
-    se = {int(r["id"]) for r in payloads["settlement_events"]}
 
     batch_snap: set[int] = set()
     if "import_batches" in payloads:
@@ -909,32 +987,24 @@ def _validate_financial_fks(
                 "has no matching row in journal_lines.json"
             )
 
-    for i, row in enumerate(payloads["settlement_events"]):
-        if int(row["party_id"]) not in party_db:
-            raise SnapshotValidationError(
-                f"settlement_events[{i}] party_id={row['party_id']} not found in target database."
-            )
-        if int(row["cash_account_id"]) not in acct_db:
-            raise SnapshotValidationError(
-                f"settlement_events[{i}] cash_account_id={row['cash_account_id']} not found in target database."
-            )
-        if int(row["entry_id"]) not in je:
-            raise SnapshotValidationError(
-                f"settlement_events[{i}] entry_id={row['entry_id']} "
-                "has no matching row in journal_entries.json"
-            )
+    if snapshot_includes_settlement_events(format_version):
+        _validate_legacy_settlement_events_fks(
+            payloads,
+            acct=acct_db,
+            party=party_db,
+            je=je,
+            party_scope_label="target database",
+            account_scope_label="target database",
+        )
 
-    for i, row in enumerate(payloads["settlement_allocations"]):
-        if int(row["settlement_event_id"]) not in se:
-            raise SnapshotValidationError(
-                f"settlement_allocations[{i}] settlement_event_id={row['settlement_event_id']} "
-                "has no matching row in settlement_events.json"
-            )
-        if int(row["obligation_id"]) not in ao:
-            raise SnapshotValidationError(
-                f"settlement_allocations[{i}] obligation_id={row['obligation_id']} "
-                "has no matching row in accrual_obligations.json"
-            )
+    _validate_settlement_allocations_fks(
+        payloads,
+        je=je,
+        ao=ao,
+        format_version=format_version,
+        archive_label="journal_entries.json",
+        obligation_label="accrual_obligations.json",
+    )
 
     if "journal_entry_attachments" in payloads:
         att_ids = {int(r["id"]) for r in payloads["attachments"]}
@@ -1057,11 +1127,14 @@ def import_snapshot(
     _validate_payloads_for_tables(tables, payloads)
 
     if export_type == "complete":
-        _validate_complete_fk_graph(payloads)
+        _validate_complete_fk_graph(payloads, fmt)
     elif export_type == "configuration":
         _validate_configuration_fks(payloads)
     else:
-        _validate_financial_fks(conn, payloads)
+        _validate_financial_fks(conn, payloads, fmt)
+
+    _normalize_legacy_settlement_payloads(payloads, fmt)
+    insert_tables = tuple(t for t in tables if t != "settlement_events")
 
     with conn.transaction():
         # Foreign keys on snapshot tables are DEFERRABLE INITIALLY IMMEDIATE (migration 015).
@@ -1073,9 +1146,9 @@ def import_snapshot(
         if mode == "erase_reload":
             _truncate_complete_scope(conn)
         elif mode == "overwrite":
-            _delete_incoming_ids_for_overwrite(conn, tables, payloads)
+            _delete_incoming_ids_for_overwrite(conn, insert_tables, payloads)
 
-        for table in tables:
+        for table in insert_tables:
             rows = [_prepare_row(table, r) for r in payloads[table]]
             if table == "attachments":
                 for row in rows:
@@ -1130,7 +1203,6 @@ def _resync_serials(conn: Connection) -> None:
         "journal_entry_review_messages",
         "journal_lines",
         "accrual_obligations",
-        "settlement_events",
         "settlement_allocations",
         "attachments",
         "journal_entry_attachments",

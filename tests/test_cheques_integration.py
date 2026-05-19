@@ -52,7 +52,6 @@ def clean_cheque_tables(integration_db_url: str) -> Iterator[None]:
                       cheques,
                       accrual_obligations,
                       settlement_allocations,
-                      settlement_events,
                       party_match_patterns,
                       accrual_plans,
                       parties,

@@ -1,6 +1,6 @@
 # TallyBadger backup snapshot format
 
-This document defines the **versioned ZIP snapshot** used for database backup and restore. It stays aligned with **`format_version`** in `metadata.json` (current export: **1.5.0**; prior archives remain importable per the version window in **[STYLE.md](../STYLE.md)**).
+This document defines the **versioned ZIP snapshot** used for database backup and restore. It stays aligned with **`format_version`** in `metadata.json` (current export: **1.6.0**; prior archives remain importable per the version window in **[STYLE.md](../STYLE.md)**).
 
 Parent product spec: GitHub issue [#16](https://github.com/brettski74/TallyBadger/issues/16). Slice 1 ([#67](https://github.com/brettski74/TallyBadger/issues/67)) shipped **complete** export/import; slice 2 ([#68](https://github.com/brettski74/TallyBadger/issues/68)) adds **`configuration`** and **`financial`** modes with scoped validation and duplicate policies.
 
@@ -51,7 +51,7 @@ The set of data members (excluding `metadata.json`) must match **exactly** the m
 
 ### `financial`
 
-**Includes:** `journal_entries`, `journal_lines`, `accrual_obligations`, `settlement_events`, `settlement_allocations`, from **`format_version` 1.3.0** also `cheques` (loaded **before** `journal_entries` so `journal_entries.cheque_id` can resolve), from **1.5.0** also `import_batches` (loaded after `cheques` when present, and **before** `journal_entries` so `import_batch_id` can resolve), from **1.2.0** also `journal_entry_review_messages`, and from **1.1.0** also `attachments`, `journal_entry_attachments`, plus **`attachments/*`** blob members listed in `member_manifest`.
+**Includes:** `journal_entries`, `journal_lines`, `accrual_obligations`, `settlement_allocations`, from **`format_version` 1.3.0** also `cheques` (loaded **before** `journal_entries` so `journal_entries.cheque_id` can resolve), from **1.5.0** also `import_batches` (loaded after `cheques` when present, and **before** `journal_entries` so `import_batch_id` can resolve), from **1.2.0** also `journal_entry_review_messages`, and from **1.1.0** also `attachments`, `journal_entry_attachments`, plus **`attachments/*`** blob members listed in `member_manifest`. From **1.6.0**, **`settlement_events.json` is removed** — each row in `settlement_allocations.json` carries **`entry_id`** (FK to `journal_entries`). Archives with **`format_version` < 1.6.0** still include `settlement_events.json`; import normalizes them into allocations-only rows ([#153](https://github.com/brettski74/TallyBadger/issues/153)).
 
 **Excludes:** all configuration tables.
 
@@ -77,8 +77,8 @@ Order for the **full** set (partial archives load only the files present, in thi
 10. `journal_entry_review_messages.json` — **1.2.0** `complete` / `financial` only.
 11. `journal_lines.json`
 12. `accrual_obligations.json`
-13. `settlement_events.json`
-14. `settlement_allocations.json`
+13. `settlement_events.json` — **only for `format_version` < 1.6.0** (import converts to allocations with `entry_id`).
+14. `settlement_allocations.json` — from **1.6.0**, each row includes **`entry_id`**; older archives use `settlement_event_id` instead.
 15. `attachments.json` — **1.1.0** `complete` / `financial` only (metadata columns; `blob` is filled from manifest-listed `attachments/*` members).
 16. `journal_entry_attachments.json` — **1.1.0** `complete` / `financial` only.
 17. `import_templates.json`
@@ -171,6 +171,10 @@ settlement_allocations.json
 **`export_type: financial`**, **`format_version` 1.5.0** — same members as **1.4.0** `financial`, plus **`import_batches.json`** (after `cheques.json` when cheques are in scope, before `journal_entries.json`).
 
 **`export_type: complete`**, **1.5.0** — union of **1.5.0** `financial` members and **1.4.0** `configuration` members (including `journal_entry_filter_presets.json`).
+
+**`export_type: financial`**, **`format_version` 1.6.0** — same members as **1.5.0** `financial`, but **`settlement_events.json` is omitted**; `settlement_allocations.json` rows include **`entry_id`**.
+
+**`export_type: complete`**, **1.6.0** — union of **1.6.0** `financial` members and **1.4.0** `configuration` members (including `journal_entry_filter_presets.json`).
 
 Example `accounts.json` snippet:
 
