@@ -569,6 +569,7 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
     createFormRef,
     editFormRef,
     editingId,
+    createDialogActive: createDialogOpen,
     canSubmitCreate,
     canSubmitEdit,
     createSubmitting: formBusy || seriesPreviewLoading,

@@ -728,9 +728,9 @@ describe("ChequesSection #132 — keyboard shortcuts", () => {
     await waitFor(() => {
       expect(screen.getByRole("button", { name: /create series \(ctrl\+s\)/i })).toBeEnabled();
     });
-    const createButton = screen.getByRole("button", { name: /create series \(ctrl\+s\)/i });
-    createButton.focus();
-    fireEvent.keyDown(createButton, { key: "s", code: "KeyS", ctrlKey: true, bubbles: true });
+    // Preview unmounts the Preview button; focus often lands on body, not the submit control.
+    document.body.focus();
+    fireEvent.keyDown(document.body, { key: "s", code: "KeyS", ctrlKey: true, bubbles: true });
 
     await waitFor(() => {
       expect(fetchMock.mock.calls.some((c) => String(c[0]).includes("/cheques/series") && c[1]?.method === "POST")).toBe(
