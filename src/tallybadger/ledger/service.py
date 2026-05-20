@@ -995,6 +995,37 @@ class LedgerService:
                 rows = cur.fetchall()
         return [AccrualObligationOut.model_validate(row) for row in rows]
 
+    def list_obligations_for_import_settlement(
+        self,
+        *,
+        party_id: int,
+        target_account_id: int,
+        obligation_type: Literal["receivable", "payable"],
+    ) -> list[AccrualObligationOut]:
+        """Open obligations for CSV auto-settlement: party, plan target account, FIFO (#152)."""
+        with self._connection_factory() as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(
+                    """
+                    SELECT ao.id, ao.party_id, ao.accrual_plan_id, ao.source_entry_id,
+                           je.entry_date AS source_entry_date,
+                           je.summary AS source_entry_summary,
+                           ao.source_line_id, ao.obligation_type, ao.status,
+                           ao.original_amount, ao.open_amount, ao.created_at, ao.updated_at
+                    FROM accrual_obligations ao
+                    INNER JOIN accrual_plans ap ON ap.id = ao.accrual_plan_id
+                    LEFT JOIN journal_entries je ON je.id = ao.source_entry_id
+                    WHERE ao.party_id = %s
+                      AND ao.obligation_type = %s
+                      AND ap.target_account_id = %s
+                      AND ao.status IN ('open', 'partially_settled')
+                    ORDER BY je.entry_date ASC NULLS LAST, ao.id ASC
+                    """,
+                    (party_id, obligation_type, target_account_id),
+                )
+                rows = cur.fetchall()
+        return [AccrualObligationOut.model_validate(row) for row in rows]
+
     def update_obligation_status(
         self, obligation_id: int, payload: ObligationStatusUpdate
     ) -> AccrualObligationOut:
