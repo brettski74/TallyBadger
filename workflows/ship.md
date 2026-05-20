@@ -26,4 +26,5 @@ Use this workflow for **user-led acceptance testing** after implementation exist
 - Work on one issue at a time and review the solution with the user before implementing it.
 - Design and implement tests before implementing to solution to any reported issues.
 - Commit any unsaved prior work before starting work on a new issue.
+- Acceptance test is generally run against the local dev instance, running locally in the current workspace.
 
