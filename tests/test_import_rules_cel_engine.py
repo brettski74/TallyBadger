@@ -762,6 +762,70 @@ def test_cel_match_date_invalid_params() -> None:
         evaluate_cel(rs2, {"d": "2026-04-10"})
 
 
+def test_cel_merge_empty_list() -> None:
+    rs = CelRuleSet(rules=[CelRule(expression='{"set": merge([])}')])
+    out = evaluate_cel(rs, {})
+    assert out.attributes == {}
+
+
+def test_cel_merge_single_map() -> None:
+    rs = CelRuleSet(
+        rules=[CelRule(expression='{"set": merge([{"a": 1, "b": "x"}])}')],
+    )
+    out = evaluate_cel(rs, {})
+    assert out.attributes == {"a": 1, "b": "x"}
+
+
+def test_cel_merge_later_map_wins_on_clash() -> None:
+    rs = CelRuleSet(
+        rules=[
+            CelRule(
+                expression=(
+                    '{"set": merge([{"summary": "old", "amount": 1}, '
+                    '{"summary": "new", "settlement": "receipt"}])}'
+                ),
+            ),
+        ],
+    )
+    out = evaluate_cel(rs, {})
+    assert out.attributes["summary"] == "new"
+    assert out.attributes["amount"] == 1
+    assert out.attributes["settlement"] == "receipt"
+
+
+def test_cel_merge_non_map_element_errors() -> None:
+    rs = CelRuleSet(rules=[CelRule(expression='{"set": merge([{"a": 1}, 2])}')])
+    with pytest.raises(ImportRulesCelError, match="merge.*index 1"):
+        evaluate_cel(rs, {})
+
+
+def test_cel_nvl_first_non_null_wins() -> None:
+    rs = CelRuleSet(
+        rules=[CelRule(expression='{"set":{"party": nvl([attr["payee"], "Pamela Person"])}}')],
+    )
+    out = evaluate_cel(rs, {"payee": "Bob"})
+    assert out.attributes["party"] == "Bob"
+
+
+def test_cel_nvl_skips_nulls() -> None:
+    rs = CelRuleSet(
+        rules=[CelRule(expression='{"set":{"party": nvl([null, attr["payee"], "Pamela Person"])}}')],
+    )
+    out = evaluate_cel(rs, {"payee": "Bob"})
+    assert out.attributes["party"] == "Bob"
+    out2 = evaluate_cel(rs, {"payee": None})
+    assert out2.attributes["party"] == "Pamela Person"
+
+
+def test_cel_nvl_all_null_or_empty() -> None:
+    rs = CelRuleSet(rules=[CelRule(expression='{"set":{"x": nvl([null, null])}}')])
+    out = evaluate_cel(rs, {})
+    assert out.attributes["x"] is None
+    rs2 = CelRuleSet(rules=[CelRule(expression='{"set":{"x": nvl([])}}')])
+    out2 = evaluate_cel(rs2, {})
+    assert out2.attributes["x"] is None
+
+
 def test_cel_cheque_match_sets_bag_and_omits_empty_review_messages() -> None:
     cr = _account_row(id=10, name="Operating", type="asset")
     dr = _account_row(id=20, name="Rent Expense", type="expense")

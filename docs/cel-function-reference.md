@@ -1,6 +1,6 @@
 # CEL function reference (import rules)
 
-This document is the **authoritative reference** for **custom functions** available in **CEL** expressions used by the import CEL rule path (`evaluate_cel`, CSV execute with a CEL rule set, `POST /import-rules/cel/evaluate`). It is maintained alongside GitHub issues **[#46](https://github.com/brettski74/TallyBadger/issues/46)** (party-aware functions + party data model), **[#50](https://github.com/brettski74/TallyBadger/issues/50)** (generic attribute helpers), **[#57](https://github.com/brettski74/TallyBadger/issues/57)** (`unset()` for removing keys from the `set` map / attribute bag), **[#59](https://github.com/brettski74/TallyBadger/issues/59)** (`debug()` for rule diagnostics), and **[#92](https://github.com/brettski74/TallyBadger/issues/92)** (`cheque()` register lookup).
+This document is the **authoritative reference** for **custom functions** available in **CEL** expressions used by the import CEL rule path (`evaluate_cel`, CSV execute with a CEL rule set, `POST /import-rules/cel/evaluate`). It is maintained alongside GitHub issues **[#46](https://github.com/brettski74/TallyBadger/issues/46)** (party-aware functions + party data model), **[#50](https://github.com/brettski74/TallyBadger/issues/50)** (generic attribute helpers), **[#57](https://github.com/brettski74/TallyBadger/issues/57)** (`unset()` for removing keys from the `set` map / attribute bag), **[#59](https://github.com/brettski74/TallyBadger/issues/59)** (`debug()` for rule diagnostics), **[#92](https://github.com/brettski74/TallyBadger/issues/92)** (`cheque()` register lookup), and **[#149](https://github.com/brettski74/TallyBadger/issues/149)** (`merge()` / `nvl()` for composing `set` payloads).
 
 **Related:** [Import rules engine](import-rules-engine.md) ([#8](https://github.com/brettski74/TallyBadger/issues/8), [#94](https://github.com/brettski74/TallyBadger/issues/94)) — CEL rule model, `attributes` / `match` activation map, capture gating, CSV and API surfaces (plus a repository note on unused matcher/action code).
 
@@ -21,6 +21,7 @@ When **`POST /imports/csv/execute`** includes **`default_import_account_id`**, t
 | **#57** | Shipped in [#57](https://github.com/brettski74/TallyBadger/issues/57); `unset()` and `set` map removal semantics. |
 | **#59** | Shipped in [#59](https://github.com/brettski74/TallyBadger/issues/59); `debug(x)` and API `debug` arrays. |
 | **#92** | Shipped in [#92](https://github.com/brettski74/TallyBadger/issues/92); `cheque()` open-register lookup and CSV `cheque-id` wiring. |
+| **#149** | Shipped in [#149](https://github.com/brettski74/TallyBadger/issues/149); `merge()` and `nvl()` for composing attribute updates. |
 
 ---
 
@@ -217,6 +218,39 @@ These functions are registered on the same CEL **`Environment`** as **`party`** 
 - **Examples:** **2026-04-10:** `match_date(d, 8, 2)` → **`true`**; `match_date(d, 8, 1)` → **`false`**.
 - **Errors:** Invalid **`n`** / **`t`**, or unparseable **`d`** → evaluation error.
 
+### `merge(maps) -> map` (**#149**)
+
+- **Argument `maps`:** A CEL **list** of **map** / object values.
+- **Returns:** A single CEL **map** containing **all keys** from every input map, processed in **list order**. On duplicate keys, **later maps win**.
+- **Empty list:** Returns an **empty map** (no keys).
+- **Errors:** Argument is not a list → evaluation error. Any list element that is not a map/object → **`ImportRulesCelError`** (includes the list index).
+
+CEL map **`+`** is not used for merging; authors call **`merge([...])`** instead.
+
+### Example
+
+```cel
+{"set": merge([
+  {"summary": "Pamela rent", "amount": attr["amt"]},
+  {"settlement": "receipt", "cr-party": "Pamela Person"}
+])}
+```
+
+### `nvl(list) -> value` (**#149**)
+
+- **Argument `list`:** A CEL **list** of values (any type).
+- **Returns:** The **first element that is not `null`**, scanning left to right. If the list is **empty** or every element is **`null`**, returns **`null`**.
+- **Errors:** Argument is not a list → evaluation error.
+- **Eager evaluation:** CEL evaluates **every** list element before calling **`nvl`**. A missing map key (e.g. **`attr["payee"]`** when **`payee`** is absent) is a **reference error**, not **`null`** — use a key that exists with value **`null`**, or branch with **`defined("payee")`** before indexing.
+
+Useful for defaulting attribute values when earlier expressions or bag lookups may be **`null`**.
+
+### Example
+
+```cel
+{"set": {"cr-party": nvl([attr["payee"], "Pamela Person"])}}
+```
+
 ---
 
 ## Changelog (maintenance)
@@ -235,5 +269,6 @@ These functions are registered on the same CEL **`Environment`** as **`party`** 
 | *#92 follow-up* | CSV execute seeds **`default-account`** from **`default_import_account_id`** before rules run (skips if the bag already defines **`default-account`**). |
 | *#92 follow-up* | **`cheque`** amount mismatch review compares **absolute** magnitudes (signed CSV outflow vs positive register). |
 | *#92 follow-up* | Amount mismatch review text formats both figures as **USD** (**`$`**, comma thousands, two decimals). |
+| *#149 ship* | **`merge(maps)`** — fold maps in list order (later keys win); **`nvl(list)`** — first non-`null` element. |
 
 Update this table whenever functions are added or signatures/semantics change.

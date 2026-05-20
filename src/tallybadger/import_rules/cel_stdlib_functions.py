@@ -202,6 +202,25 @@ def build_stdlib_cel_functions(
         high = min(dim, n_day + tol)
         return celtypes.BoolType(low <= dom <= high)
 
+    def merge_fn(maps: Any) -> Result:
+        if not isinstance(maps, celtypes.ListType):
+            raise ImportRulesCelError(f"merge: expected list, got {type(maps).__name__}")
+        merged: dict[str, Any] = {}
+        for i, item in enumerate(list(maps)):
+            keyed = _map_to_str_keyed_cel_values(item)
+            if keyed is None:
+                raise ImportRulesCelError(f"merge: expected map at index {i}, got {type(item).__name__}")
+            merged.update(keyed)
+        return celtypes.MapType({celtypes.StringType(k): v for k, v in merged.items()})
+
+    def nvl_fn(values: Any) -> Result:
+        if not isinstance(values, celtypes.ListType):
+            raise ImportRulesCelError(f"nvl: expected list, got {type(values).__name__}")
+        for item in list(values):
+            if item is not None:
+                return item
+        return None
+
     return {
         "abs": cel_abs,
         "day": day,
@@ -210,4 +229,6 @@ def build_stdlib_cel_functions(
         "defined": defined_fn,
         "account_type": account_type_fn,
         "match_date": match_date_fn,
+        "merge": merge_fn,
+        "nvl": nvl_fn,
     }
