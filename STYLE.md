@@ -59,6 +59,7 @@ This pairs with schema work so portable paths (clone → migrate → seed) stay 
 - **Backend** ([`src/tallybadger/`](src/tallybadger/), [`tests/`](tests/)): use **pytest** (`TestClient` for HTTP, plain functions for domain). Use the **`integration`** marker when a live **PostgreSQL** instance is required (`make test` / `make test-integration`).
 - **Frontend:** non-trivial UI changes should include **automated tests** (Vitest; add e2e/smoke when that stack exists). Until UI surface is large, API tests may carry more weight—see [ARCH.md](ARCH.md).
 - **Design for testability:** keep ledger and domain rules testable **without HTTP** where practical; inject config, DB, or session dependencies; avoid hidden globals that block assertions.
+- Wherever possible, design and implement tests before implementing application code changes.
 
 ## Git, branches, and pull requests
 
@@ -100,6 +101,10 @@ For implementation to be complete:
 - Tests must have been added or updated to adequately test new functionality or fixed bugs.
 - All tests have been run. You must run them yourself, not ask the user to do it for you. You can use the test and frontend-test targets in the Makefile for this.
 - All tests must be run. This includes the integration tests. Everything that is needed to execute them is installed. If you have issues with Docker or other components, you need to try to diagnose/fix the problem and continue.
+- Targeted testing only is never sufficient. Really! I want you to run all available automated tests before considering any feature or bugfix and they must all pass before you are done.
+- It doesn't matter whether a test was failing prior to implementing the current feature or bugfix. All tests passing is **still** a requirement to consider a bugfix or feature done.
+- It doesn't matter if the current bugfix or feature only involves back end or only involves front end changes. You still need to run **all** tests before you are done.
+- If it's not already clear, you need to run all tests and they must all pass before you are done, regardless of whether you think it's useful or not.
 
 ## Consistency checklist (default self-review)
 
@@ -110,6 +115,7 @@ Use this table when preparing a PR; extend it as the repo evolves.
 | **Database schema / domain model** | Migrations or persisted shapes change | `make dbclean` (or equivalent); `sql/` migrations; run **`make export-dev-seed`** and commit `sql/dev_seed.sql` when default seed data must reflect the model. Update **STYLE.md** for process changes; **ARCH.md** only if boundaries or lifecycle change. |
 | **Inactive object handling** | Adding or changing validation around `is_active` on accounts, parties, or any future table with the flag | Apply the default contract from **Inactive objects (`is_active`)** above (new associations rejected, existing preserved, validate on change only); add tests for both the "blocked on change" and "allowed on re-affirm / unrelated edit" cases; update that section in **STYLE.md** if the per-ticket flow needs a stricter rule. |
 | **Backup / snapshot / import** | New or changed tables, FKs, or snapshot semantics | Snapshot/import code paths; integration tests; [docs/backup-snapshot-format.md](docs/backup-snapshot-format.md); bump **`format_version`** when required by the format rules. |
+| **UI Conventions** | Standard Keyboard Shortcuts | Ctrl+S - save shortcut. For forms that have a **Save** button or something else save-like that applies current form state to the database, Ctrl+S keyboard acts the same as if clicking that button. Ctrl+Shift+D - discard shortcut. For forms that have a discard, cancel or similar button that discards current changes and possibly closes the form, pressing Ctrl+Shift+D acts the same as if clicking that button. These keyboard shortcuts should be implemented on any appropriate forms for consistency throughout the application. |
 | **Public API or stable JSON** | Routes or response shapes consumed by clients | Contract/API tests; docs that promise the shape; **STYLE.md** if testing or contract expectations change. |
 | **Architecture vs style / delivery** | Boundaries, trust, integrations, lifecycle vs day-to-day conventions | **ARCH.md** for boundaries/lifecycle; **STYLE.md** for conventions, testing bar, or PR hygiene. **`.cursor/rules/`** only for **wiring** (pointers, tool constraints)—not duplicate policy text. |
 | **Feature-level domain docs** | Subtle or cross-cutting behaviour | Extend the relevant file under `docs/`; link from **ARCH.md** when it helps navigation. |
