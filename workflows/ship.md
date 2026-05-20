@@ -23,4 +23,7 @@ Use this workflow for **user-led acceptance testing** after implementation exist
 - UAT is not the place to silently broaden scope; capture product decisions in comments or run **refine.md** when the specification must change.
 - If a gap is purely operational (data, config), document it in comments and fix procedures or README as appropriate without changing the issue’s acceptance story unless the user asks.
 - The user may initiate this workflow with just `!wk-ship #<number>` (see **STYLE.md**). This does not signal anything more than they are about to start performing UAT.
+- Work on one issue at a time and review the solution with the user before implementing it.
+- Design and implement tests before implementing to solution to any reported issues.
+- Commit any unsaved prior work before starting work on a new issue.
 
