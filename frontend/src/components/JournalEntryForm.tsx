@@ -204,6 +204,8 @@ export function JournalEntryForm({
   const [dismissingId, setDismissingId] = useState<number | null>(null);
   const formRef = useRef<HTMLFormElement | null>(null);
   const handleSubmitForShortcutRef = useRef<() => Promise<void>>(async () => {});
+  const onCancelForShortcutRef = useRef(onCancel);
+  onCancelForShortcutRef.current = onCancel;
   const isMac = isMacLikeUserAgent();
 
   const loadedAccountIdByLineKey = useMemo(() => {
@@ -362,14 +364,25 @@ export function JournalEntryForm({
       }
       const saveChord =
         (e.key === "s" || e.key === "S") && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey;
-      if (!saveChord) {
+      const discardChord =
+        (e.key === "d" || e.key === "D") && (e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey;
+
+      if (saveChord) {
+        if (submitting || !balanced) {
+          return;
+        }
+        e.preventDefault();
+        void handleSubmitForShortcutRef.current();
         return;
       }
-      if (submitting || !balanced) {
-        return;
+
+      if (discardChord) {
+        if (submitting) {
+          return;
+        }
+        e.preventDefault();
+        onCancelForShortcutRef.current();
       }
-      e.preventDefault();
-      void handleSubmitForShortcutRef.current();
     };
     document.addEventListener("keydown", onKeyDown, true);
     return () => document.removeEventListener("keydown", onKeyDown, true);

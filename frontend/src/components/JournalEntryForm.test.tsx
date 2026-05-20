@@ -302,6 +302,131 @@ describe("JournalEntryForm", () => {
     });
   });
 
+  it("invokes onCancel when Ctrl+Shift+D is pressed while focus is inside the form", () => {
+    const onCancel = vi.fn();
+    render(
+      <JournalEntryForm
+        mode="create"
+        accounts={accounts}
+        parties={parties}
+        initialEntryDate="2026-04-20"
+        initialSummary="Rent accrual"
+        initialDescription=""
+        reviewMessages={[]}
+        initialLines={null}
+        onSubmit={vi.fn()}
+        onCancel={onCancel}
+      />,
+    );
+
+    const summaryInput = screen.getByLabelText("Entry summary");
+    summaryInput.focus();
+    fireEvent.keyDown(summaryInput, {
+      key: "d",
+      code: "KeyD",
+      ctrlKey: true,
+      shiftKey: true,
+      bubbles: true,
+    });
+
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("invokes onCancel with Ctrl+Shift+D when the entry is unbalanced", () => {
+    const onCancel = vi.fn();
+    render(
+      <JournalEntryForm
+        mode="create"
+        accounts={accounts}
+        parties={parties}
+        initialEntryDate="2026-04-20"
+        initialSummary="Unbalanced"
+        initialDescription=""
+        reviewMessages={[]}
+        initialLines={null}
+        onSubmit={vi.fn()}
+        onCancel={onCancel}
+      />,
+    );
+
+    const summaryInput = screen.getByLabelText("Entry summary");
+    summaryInput.focus();
+    fireEvent.keyDown(summaryInput, {
+      key: "d",
+      code: "KeyD",
+      ctrlKey: true,
+      shiftKey: true,
+      bubbles: true,
+    });
+
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not invoke onCancel when Ctrl+Shift+D is pressed with focus outside the form", () => {
+    const onCancel = vi.fn();
+    render(
+      <div>
+        <JournalEntryForm
+          mode="create"
+          accounts={accounts}
+          parties={parties}
+          initialEntryDate="2026-04-20"
+          initialSummary="Rent accrual"
+          initialDescription=""
+          reviewMessages={[]}
+          initialLines={null}
+          onSubmit={vi.fn()}
+          onCancel={onCancel}
+        />
+        <button type="button">Outside</button>
+      </div>,
+    );
+
+    screen.getByRole("button", { name: "Outside" }).focus();
+    fireEvent.keyDown(document.activeElement ?? document.body, {
+      key: "d",
+      code: "KeyD",
+      ctrlKey: true,
+      shiftKey: true,
+      bubbles: true,
+    });
+
+    expect(onCancel).not.toHaveBeenCalled();
+  });
+
+  it("invokes onCancel when Meta+Shift+D is pressed while focus is inside the form", () => {
+    const onCancel = vi.fn();
+    render(
+      <JournalEntryForm
+        mode="edit"
+        accounts={accounts}
+        parties={parties}
+        initialEntryDate="2026-03-01"
+        initialSummary="Monthly rent"
+        initialDescription=""
+        reviewMessages={[]}
+        initialLines={[
+          { key: "jl-1", account_id: 1, party_id: "", amount: "40" },
+          { key: "jl-2", account_id: 2, party_id: "", amount: "-40" },
+        ]}
+        onSubmit={vi.fn()}
+        onCancel={onCancel}
+      />,
+    );
+
+    const summaryInput = screen.getByLabelText("Entry summary");
+    summaryInput.focus();
+    fireEvent.keyDown(summaryInput, {
+      key: "d",
+      code: "KeyD",
+      metaKey: true,
+      shiftKey: true,
+      bubbles: true,
+    });
+
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
   it("does not list inactive accounts unless they appear on loaded lines", () => {
     render(
       <JournalEntryForm
