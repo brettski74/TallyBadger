@@ -1,12 +1,46 @@
 import { type RefObject, useEffect, useRef } from "react";
 
-export function isTargetAssociatedWithForm(target: Node, form: HTMLFormElement | null): boolean {
+/**
+ * True when `target` belongs to this form for keyboard shortcut purposes.
+ *
+ * `HTMLFormElement.contains()` is false for nodes inside **open shadow roots** even when the
+ * shadow host sits in the form (e.g. Chromium date inputs), so we walk `composedPath` / shadow
+ * hosts and still honour the `form=""` association on controls outside the subtree.
+ */
+export function isTargetAssociatedWithForm(
+  target: Node,
+  form: HTMLFormElement | null,
+  event?: Event,
+): boolean {
   if (!form) {
     return false;
   }
+
+  if (event && typeof event.composedPath === "function") {
+    for (const n of event.composedPath()) {
+      if (n === form) {
+        return true;
+      }
+    }
+  }
+
+  let node: Node | null = target;
+  while (node) {
+    if (node === form) {
+      return true;
+    }
+    const root = node.getRootNode();
+    if (root instanceof ShadowRoot) {
+      node = root.host;
+    } else {
+      node = node.parentNode;
+    }
+  }
+
   if (form.contains(target)) {
     return true;
   }
+
   if (
     target instanceof HTMLInputElement ||
     target instanceof HTMLSelectElement ||
@@ -15,6 +49,7 @@ export function isTargetAssociatedWithForm(target: Node, form: HTMLFormElement |
   ) {
     return target.form === form;
   }
+
   return false;
 }
 
@@ -63,8 +98,8 @@ export function useFormSaveDiscardShortcuts(opts: FormSaveDiscardShortcutOptions
 
       const createEl = o.createFormRef.current;
       const editEl = o.editFormRef.current;
-      const inCreate = isTargetAssociatedWithForm(target, createEl);
-      const inEdit = isTargetAssociatedWithForm(target, editEl);
+      const inCreate = isTargetAssociatedWithForm(target, createEl, e);
+      const inEdit = isTargetAssociatedWithForm(target, editEl, e);
       const inlineCreate = o.inlineCreateActive === true;
 
       const saveChord =

@@ -133,6 +133,47 @@ function formatConfirmCurrency(amount: number): string {
   }).format(amount);
 }
 
+/**
+ * Full-page journal form: shortcuts should work when focus never moved into a control (body / root)
+ * or is still on the main tab strip, while avoiding top-level HTML dialog elements that are not
+ * nested inside this form (e.g. attachments rendered on document body).
+ */
+function shouldHandleJournalFormKeyboardShortcuts(form: HTMLFormElement | null, e: KeyboardEvent): boolean {
+  if (!form) {
+    return false;
+  }
+  const target = e.target;
+  if (!(target instanceof Node)) {
+    return false;
+  }
+  if (isTargetAssociatedWithForm(target, form, e)) {
+    return true;
+  }
+
+  const ae = document.activeElement;
+  if (ae instanceof HTMLElement) {
+    const openDialog = ae.closest("dialog[open]");
+    if (openDialog instanceof HTMLDialogElement && !form.contains(openDialog)) {
+      return false;
+    }
+  }
+
+  if (
+    target === document.body ||
+    target === document.documentElement ||
+    ae === document.body ||
+    ae === document.documentElement
+  ) {
+    return true;
+  }
+
+  if (ae instanceof HTMLElement && ae.closest(".app-nav")) {
+    return true;
+  }
+
+  return false;
+}
+
 export function isBalanced(lines: LineDraft[]): boolean {
   const material = materialJournalLines(lines);
   if (material.length < 2) {
@@ -204,6 +245,8 @@ export function JournalEntryForm({
   const [dismissingId, setDismissingId] = useState<number | null>(null);
   const formRef = useRef<HTMLFormElement | null>(null);
   const handleSubmitForShortcutRef = useRef<() => Promise<void>>(async () => {});
+  const onCancelForShortcutRef = useRef(onCancel);
+  onCancelForShortcutRef.current = onCancel;
   const isMac = isMacLikeUserAgent();
 
   const loadedAccountIdByLineKey = useMemo(() => {
@@ -357,19 +400,30 @@ export function JournalEntryForm({
       if (!(target instanceof Node)) {
         return;
       }
-      if (!isTargetAssociatedWithForm(target, formRef.current)) {
+      if (!shouldHandleJournalFormKeyboardShortcuts(formRef.current, e)) {
         return;
       }
       const saveChord =
         (e.key === "s" || e.key === "S") && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey;
-      if (!saveChord) {
+      const discardChord =
+        (e.key === "d" || e.key === "D") && (e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey;
+
+      if (saveChord) {
+        if (submitting || !balanced) {
+          return;
+        }
+        e.preventDefault();
+        void handleSubmitForShortcutRef.current();
         return;
       }
-      if (submitting || !balanced) {
-        return;
+
+      if (discardChord) {
+        if (submitting) {
+          return;
+        }
+        e.preventDefault();
+        onCancelForShortcutRef.current();
       }
-      e.preventDefault();
-      void handleSubmitForShortcutRef.current();
     };
     document.addEventListener("keydown", onKeyDown, true);
     return () => document.removeEventListener("keydown", onKeyDown, true);
