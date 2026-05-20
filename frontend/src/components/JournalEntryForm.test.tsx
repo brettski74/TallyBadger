@@ -362,6 +362,114 @@ describe("JournalEntryForm", () => {
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
 
+  it("invokes onCancel when Ctrl+Shift+D is pressed from an input inside a shadow root in the form", () => {
+    const onCancel = vi.fn();
+    const { container } = render(
+      <JournalEntryForm
+        mode="edit"
+        accounts={accounts}
+        parties={parties}
+        initialEntryDate="2026-03-01"
+        initialSummary="Monthly rent"
+        initialDescription=""
+        reviewMessages={[]}
+        initialLines={[
+          { key: "jl-1", account_id: 1, party_id: "", amount: "40" },
+          { key: "jl-2", account_id: 2, party_id: "", amount: "-40" },
+        ]}
+        onSubmit={vi.fn()}
+        onCancel={onCancel}
+      />,
+    );
+
+    const form = container.querySelector("form");
+    expect(form).toBeTruthy();
+    const host = document.createElement("div");
+    form!.appendChild(host);
+    const shadow = host.attachShadow({ mode: "open" });
+    const inner = document.createElement("input");
+    shadow.appendChild(inner);
+    inner.focus();
+
+    fireEvent.keyDown(inner, {
+      key: "d",
+      code: "KeyD",
+      ctrlKey: true,
+      shiftKey: true,
+      bubbles: true,
+    });
+
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("invokes onCancel when Ctrl+Shift+D is pressed with keydown target document.body (no field focused)", () => {
+    const onCancel = vi.fn();
+    render(
+      <JournalEntryForm
+        mode="edit"
+        accounts={accounts}
+        parties={parties}
+        initialEntryDate="2026-03-01"
+        initialSummary="Monthly rent"
+        initialDescription=""
+        reviewMessages={[]}
+        initialLines={[
+          { key: "jl-1", account_id: 1, party_id: "", amount: "40" },
+          { key: "jl-2", account_id: 2, party_id: "", amount: "-40" },
+        ]}
+        onSubmit={vi.fn()}
+        onCancel={onCancel}
+      />,
+    );
+
+    fireEvent.keyDown(document.body, {
+      key: "d",
+      code: "KeyD",
+      ctrlKey: true,
+      shiftKey: true,
+      bubbles: true,
+    });
+
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("invokes onCancel when Ctrl+Shift+D is pressed while focus is on main tab nav", () => {
+    const onCancel = vi.fn();
+    render(
+      <>
+        <nav className="app-nav" aria-label="Main">
+          <button type="button">Journal</button>
+        </nav>
+        <JournalEntryForm
+          mode="edit"
+          accounts={accounts}
+          parties={parties}
+          initialEntryDate="2026-03-01"
+          initialSummary="Monthly rent"
+          initialDescription=""
+          reviewMessages={[]}
+          initialLines={[
+            { key: "jl-1", account_id: 1, party_id: "", amount: "40" },
+            { key: "jl-2", account_id: 2, party_id: "", amount: "-40" },
+          ]}
+          onSubmit={vi.fn()}
+          onCancel={onCancel}
+        />
+      </>,
+    );
+
+    screen.getByRole("button", { name: "Journal" }).focus();
+    fireEvent.keyDown(document.activeElement ?? document.body, {
+      key: "d",
+      code: "KeyD",
+      ctrlKey: true,
+      shiftKey: true,
+      bubbles: true,
+    });
+
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
   it("does not invoke onCancel when Ctrl+Shift+D is pressed with focus outside the form", () => {
     const onCancel = vi.fn();
     render(
