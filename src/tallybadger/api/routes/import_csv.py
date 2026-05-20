@@ -233,30 +233,28 @@ def _require_string(bag: dict[str, Any], key: str) -> str:
     return text
 
 
-def _optional_cheque_id_from_bag(bag: dict[str, Any]) -> int | None:
-    """Read ``cheque-id`` from the attribute bag (CEL / column mapping); ``None`` when absent."""
-    raw = bag.get("cheque-id")
+def _optional_positive_int_from_value(raw: Any, *, field: str) -> int | None:
     if raw is None or raw == "":
         return None
     if isinstance(raw, bool):
-        raise ValueError("cheque-id must be an integer")
+        raise ValueError(f"{field} must be an integer")
     if isinstance(raw, int):
         if raw <= 0:
-            raise ValueError("cheque-id must be positive")
+            raise ValueError(f"{field} must be positive")
         return raw
     if isinstance(raw, float):
         if not raw.is_integer():
-            raise ValueError("cheque-id must be an integer")
+            raise ValueError(f"{field} must be an integer")
         n = int(raw)
         if n <= 0:
-            raise ValueError("cheque-id must be positive")
+            raise ValueError(f"{field} must be positive")
         return n
     if isinstance(raw, Decimal):
         if raw % 1 != 0:
-            raise ValueError("cheque-id must be an integer")
+            raise ValueError(f"{field} must be an integer")
         n = int(raw)
         if n <= 0:
-            raise ValueError("cheque-id must be positive")
+            raise ValueError(f"{field} must be positive")
         return n
     if isinstance(raw, str):
         s = raw.strip()
@@ -265,11 +263,16 @@ def _optional_cheque_id_from_bag(bag: dict[str, Any]) -> int | None:
         try:
             n = int(s)
         except ValueError as exc:
-            raise ValueError(f"invalid cheque-id: {raw!r}") from exc
+            raise ValueError(f"invalid {field}: {raw!r}") from exc
         if n <= 0:
-            raise ValueError("cheque-id must be positive")
+            raise ValueError(f"{field} must be positive")
         return n
-    raise ValueError(f"cheque-id has unsupported type: {type(raw).__name__}")
+    raise ValueError(f"{field} has unsupported type: {type(raw).__name__}")
+
+
+def _optional_cheque_id_from_bag(bag: dict[str, Any]) -> int | None:
+    """Read ``cheque-id`` from the attribute bag (CEL / column mapping); ``None`` when absent."""
+    return _optional_positive_int_from_value(bag.get("cheque-id"), field="cheque-id")
 
 
 def _resolve_unallocated_account_name(
@@ -403,6 +406,12 @@ def _build_lines_from_array(
         if account_name not in account_ids:
             raise ValueError(f"unknown account '{account_name}'")
         amount = _to_decimal_any(item.get("amount"), field=f"line[{idx}].amount")
+        obligation_id = _optional_positive_int_from_value(
+            item.get("obligation-id"),
+            field=f"line[{idx}].obligation-id",
+        )
+        if obligation_id is not None and amount.copy_abs() == Decimal("0"):
+            raise ValueError(f"line[{idx}] amount must be non-zero when obligation-id is set")
         if amount == Decimal("0"):
             raise ValueError(f"line[{idx}] amount must be non-zero")
         party_name = str(item.get("party")).strip() if item.get("party") is not None else ""
@@ -413,6 +422,7 @@ def _build_lines_from_array(
                 account_id=account_ids[account_name],
                 party_id=party_ids.get(party_name) if party_name else None,
                 amount=amount,
+                obligation_id=obligation_id,
             ),
         )
         total += amount
@@ -603,18 +613,24 @@ def execute_csv_import(
             cel_msgs = []
 
         try:
-            pending_entries.append(
-                _bag_to_journal_entry(
-                    bag,
-                    account_ids,
-                    party_ids,
-                    ledger_settings=ledger_settings,
-                    accounts_by_id=accounts_by_id,
-                    cel_review_messages=cel_msgs,
-                    default_import_account_id=payload.default_import_account_id,
-                    default_import_normal_balance=payload.default_import_normal_balance,
-                ),
+            entry = _bag_to_journal_entry(
+                bag,
+                account_ids,
+                party_ids,
+                ledger_settings=ledger_settings,
+                accounts_by_id=accounts_by_id,
+                cel_review_messages=cel_msgs,
+                default_import_account_id=payload.default_import_account_id,
+                default_import_normal_balance=payload.default_import_normal_balance,
             )
+            try:
+                ledger_service.validate_import_entry_settlements(entry)
+            except LedgerValidationError as exc:
+                row_errors.append(
+                    CsvImportRowError(row_number=idx, errors=[str(exc)], debug=row_debug),
+                )
+                continue
+            pending_entries.append(entry)
             pending_row_debug.append(row_debug)
         except (ValueError, LedgerValidationError) as exc:
             row_errors.append(

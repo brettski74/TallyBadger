@@ -711,7 +711,6 @@ def test_unload_import_batch_returns_404_when_already_unloaded(
     assert _count_rows(integration_db_url, "journal_entries") == 0
 
 
-@pytest.mark.skip(reason="Import-batch settlement unload requires CSV line[] settlement (#151); restore then.")
 def test_unload_import_batch_rolls_back_same_day_receipt_settlement(
     import_api_client: TestClient,
     integration_db_url: str,
@@ -725,8 +724,8 @@ def test_unload_import_batch_rolls_back_same_day_receipt_settlement(
 
     accounts = import_api_client.get("/accounts").json()
     by_name = {a["name"]: a["id"] for a in accounts}
-    cash_id = by_name["Cash"]
     ar_id = by_name["Accounts Receivable"]
+    rent_id = by_name["Rent Revenue"]
 
     pr = import_api_client.post(
         "/parties",
@@ -743,74 +742,76 @@ def test_unload_import_batch_rolls_back_same_day_receipt_settlement(
         == 200
     )
 
+    plan = import_api_client.post(
+        "/accrual-plans",
+        json={
+            "name": "July unload rent",
+            "direction": "revenue",
+            "party_id": party_id,
+            "target_account_id": rent_id,
+            "bridge_account_id": ar_id,
+            "frequency": "monthly_day",
+            "start_date": "2026-07-01",
+            "end_date": "2026-07-31",
+            "amount": "500.00",
+            "summary_template": "{plan}",
+            "day_of_month": 1,
+        },
+    )
+    assert plan.status_code == 201, plan.text
+    obligation_id = import_api_client.get(f"/obligations/{party_id}").json()[0]["id"]
+
+    rule_set = {
+        "name": "same-day settle lines",
+        "rule_set": {
+            "rules": [
+                {
+                    "sort_order": 10,
+                    "expression": (
+                        '{"set":{"line":['
+                        '{"account":"Cash","amount":attributes["amt"],"party":"Tenant Unload"},'
+                        '{"account":"Accounts Receivable","amount":-attributes["amt"],'
+                        '"party":"Tenant Unload","obligation-id":'
+                        + str(obligation_id)
+                        + "}]}}"
+                    ),
+                },
+            ],
+        },
+    }
+    rs = import_api_client.post("/import-rules/cel/rule-sets", json=rule_set)
+    assert rs.status_code == 201, rs.text
+    rule_set_id = rs.json()["id"]
+
     ex = import_api_client.post(
         "/imports/csv/execute",
         json={
-            "csv_text": (
-                "date,summary,dr,cr,amount\n"
-                "2026-07-01,July rent due,Accounts Receivable,Rent Revenue,500.00\n"
-            ),
+            "csv_text": "date,summary,amt\n2026-07-01,July rent receipt,500.00\n",
             "basename": "settle-then-unload.csv",
             "has_header_row": True,
             "columns": [
                 {"attribute_name": "date", "data_type": "date", "date_format": "YYYY-MM-DD"},
                 {"attribute_name": "summary", "data_type": "string"},
-                {"attribute_name": "dr-account", "data_type": "string"},
-                {"attribute_name": "cr-account", "data_type": "string"},
-                {"attribute_name": "amount", "data_type": "numeric"},
+                {"attribute_name": "amt", "data_type": "numeric"},
             ],
+            "cel_rule_set_id": rule_set_id,
         },
     )
     assert ex.status_code == 200, ex.text
     batch_id = ex.json()["import_batch_id"]
-    entry_id = ex.json()["entries"][0]["id"]
-
-    with connect(integration_db_url, row_factory=dict_row) as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT jl.id
-                FROM journal_lines jl
-                WHERE jl.entry_id = %s AND jl.account_id = %s
-                """,
-                (entry_id, ar_id),
-            )
-            ar_line_id = int(cur.fetchone()["id"])
-            cur.execute(
-                """
-                INSERT INTO accrual_obligations (
-                    party_id, accrual_plan_id, source_entry_id, source_line_id,
-                    obligation_type, status, original_amount, open_amount
-                )
-                VALUES (%s, NULL, %s, %s, 'receivable', 'open', %s, %s)
-                RETURNING id
-                """,
-                (party_id, entry_id, ar_line_id, Decimal("500"), Decimal("500")),
-            )
-            obligation_id = int(cur.fetchone()["id"])
-        conn.commit()
-
-    st = import_api_client.post(
-        "/settlements",
-        json={
-            "party_id": party_id,
-            "settlement_type": "receipt",
-            "event_date": "2026-07-01",
-            "amount": "500.00",
-            "cash_account_id": cash_id,
-            "allocations": [{"obligation_id": obligation_id, "amount": "500.00"}],
-            "note": "same-day unload test",
-        },
-    )
-    assert st.status_code == 201, st.text
-    assert _count_rows(integration_db_url, "settlement_events") == 1
+    assert _count_rows(integration_db_url, "journal_entries") == 1
+    assert _count_rows(integration_db_url, "settlement_allocations") == 1
 
     du = import_api_client.delete(f"/import-batches/{batch_id}")
     assert du.status_code == 204, du.text
     assert _count_rows(integration_db_url, "import_batches") == 0
-    assert _count_rows(integration_db_url, "journal_entries") == 0
-    assert _count_rows(integration_db_url, "settlement_events") == 0
-    assert _count_rows(integration_db_url, "accrual_obligations") == 0
+    assert _count_rows(integration_db_url, "journal_entries") == 1
+    assert _count_rows(integration_db_url, "settlement_allocations") == 0
+
+    obligations = import_api_client.get(f"/obligations/{party_id}").json()
+    assert len(obligations) == 1
+    assert obligations[0]["status"] == "open"
+    assert Decimal(obligations[0]["open_amount"]) == Decimal("500.00")
 
 
 def test_import_batches_is_latest_loaded_import_two_batches(

@@ -86,6 +86,8 @@ class JournalLineIn(BaseModel):
     account_id: int = Field(gt=0)
     party_id: int | None = Field(default=None, gt=0)
     amount: Decimal
+    obligation_id: int | None = Field(default=None, gt=0)
+    """When set (CSV ``line[]`` ``obligation-id``), ``abs(amount)`` is applied to this obligation."""
 
 
 class JournalLineOut(BaseModel):
