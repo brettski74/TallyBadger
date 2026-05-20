@@ -8,26 +8,6 @@ This document describes the **import rules path that exists in production for ba
 
 ---
 
-## Repository note: matcher/action engine (not used by CSV import)
-
-The tree still contains an **older** rules model: **ordered rules** made of **matchers** (e.g. regex, equals) and **actions** (e.g. `set_attribute`, `append_to_attribute`, `stop`, `drop_row`, `require_review`). That path is **not** called from **`POST /imports/csv/execute`**; CSV import uses **`evaluate_cel`** only.
-
-**Inventory (for a future cleanup / usage audit — not part of [#94](https://github.com/brettski74/TallyBadger/issues/94)):**
-
-| Location | Role |
-|----------|------|
-| [`src/tallybadger/import_rules/models.py`](../src/tallybadger/import_rules/models.py) | Pydantic types: `RuleSet`, `Rule`, matcher and action discriminated unions, `EvaluationResult`, `TraceEvent`. |
-| [`src/tallybadger/import_rules/engine.py`](../src/tallybadger/import_rules/engine.py) | `evaluate(rule_set: RuleSet, attributes: dict[str, Any]) -> EvaluationResult` — runs matcher/action rules in sort order. |
-| [`src/tallybadger/api/routes/import_rules.py`](../src/tallybadger/api/routes/import_rules.py) | **`POST /import-rules/evaluate`** — stateless JSON API wrapping `evaluate`. Still **mounted** from [`main.py`](../src/tallybadger/main.py). |
-| [`src/tallybadger/import_rules/errors.py`](../src/tallybadger/import_rules/errors.py) | `ImportRulesError` (matcher path) and `ImportRulesCelError` (CEL path). |
-| [`src/tallybadger/import_rules/__init__.py`](../src/tallybadger/import_rules/__init__.py) | Public re-exports of **both** `evaluate` and `evaluate_cel`, plus matcher and CEL model types. |
-| [`tests/test_import_rules_engine.py`](../tests/test_import_rules_engine.py) | Unit tests for `evaluate`. |
-| [`tests/test_import_rules_api.py`](../tests/test_import_rules_api.py) | HTTP tests for **`POST /import-rules/evaluate`**. |
-
-**Known usage today:** tests and the **`POST /import-rules/evaluate`** endpoint only (no import pipeline integration). Removing or consolidating this code would require a deliberate decision, client impact check, and test updates.
-
----
-
 ## End-to-end flow (CSV)
 
 1. Client sends **`POST /imports/csv/execute`** with CSV text, column → attribute mapping, optional **`cel_rule_set_id`**, and template options.
@@ -264,7 +244,6 @@ CSV execute posts rows **in file order inside one database transaction**: each r
 |----------|------|
 | **`POST /import-rules/cel/evaluate`** | Run a **`CelRuleSet`** from the request body against **`attributes`**; optional **`debug`** in response. |
 | **`POST /imports/csv/execute`** | Import CSV; optional **`cel_rule_set_id`** loads a stored set and runs **`evaluate_cel`** per row. |
-| **`POST /import-rules/evaluate`** | Matcher/action **`evaluate`** only — see [repository note](#repository-note-matcheraction-engine-not-used-by-csv-import) above. **Not** part of the CSV pipeline. |
 
 ---
 
@@ -274,6 +253,8 @@ CSV execute posts rows **in file order inside one database transaction**: each r
 |------|---------|
 | [`cel_engine.py`](../src/tallybadger/import_rules/cel_engine.py) | **`evaluate_cel`**, capture gating, payload handling, trace/debug. |
 | [`cel_models.py`](../src/tallybadger/import_rules/cel_models.py) | `CelRuleSet`, `CelRule`, `CelRegexCapture`, `CelEvaluationResult`, `CelTraceEvent`, `CelDebugEvent`. |
+| [`errors.py`](../src/tallybadger/import_rules/errors.py) | `ImportRulesCelError` for CEL configuration and evaluation failures. |
+| [`__init__.py`](../src/tallybadger/import_rules/__init__.py) | Public re-exports of **`evaluate_cel`** and CEL model types. |
 | [`import_rules_cel.py`](../src/tallybadger/api/routes/import_rules_cel.py) | **`POST /import-rules/cel/evaluate`**. |
 | [`import_csv.py`](../src/tallybadger/api/routes/import_csv.py) | **`POST /imports/csv/execute`**, bag → journal, CEL integration. |
 | [`cel_party_functions.py`](../src/tallybadger/import_rules/cel_party_functions.py), [`cel_stdlib_functions.py`](../src/tallybadger/import_rules/cel_stdlib_functions.py), [`cel_cheque_functions.py`](../src/tallybadger/import_rules/cel_cheque_functions.py) | Registered CEL functions. |
@@ -298,3 +279,4 @@ CSV execute posts rows **in file order inside one database transaction**: each r
 - [#89](https://github.com/brettski74/TallyBadger/issues/89) — review message contract (accumulation, bag stripping).
 - [#92](https://github.com/brettski74/TallyBadger/issues/92) — `cheque()` and CSV cheque wiring.
 - [#94](https://github.com/brettski74/TallyBadger/issues/94) — this documentation rewrite.
+- [#104](https://github.com/brettski74/TallyBadger/issues/104) — removal of the unused matcher/action engine and **`POST /import-rules/evaluate`**; CEL-only import rules surface.
