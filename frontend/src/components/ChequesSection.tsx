@@ -2,6 +2,14 @@ import { FormEvent, Fragment, MouseEvent, useCallback, useEffect, useMemo, useRe
 import { FilePlus2, RefreshCcw } from "lucide-react";
 
 import type { Account } from "../api/accounts";
+import { useFormSaveDiscardShortcuts } from "../hooks/useFormSaveDiscardShortcuts";
+import {
+  discardActionTooltip,
+  discardAriaKeyShortcuts,
+  saveActionTooltip,
+  saveAriaKeyShortcuts,
+} from "../lib/keyboardHints";
+import { isMacLikeUserAgent } from "../lib/platformKeyboard";
 import {
   type Cheque,
   type ChequeIncrementUnit,
@@ -135,6 +143,10 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
   const [seriesPreview, setSeriesPreview] = useState<ChequeSeriesPreview | null>(null);
   const [seriesPreviewLoading, setSeriesPreviewLoading] = useState(false);
   const [createDialogView, setCreateDialogView] = useState<"form" | "preview">("form");
+
+  const createFormRef = useRef<HTMLFormElement>(null);
+  const editFormRef = useRef<HTMLFormElement>(null);
+  const isMac = useMemo(() => isMacLikeUserAgent(), []);
 
   const eligibleCreditAccounts = useMemo(
     () =>
@@ -511,6 +523,73 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
     selected ? selected.debit_account_id : null,
   );
   const cleared = selected?.status === "cleared";
+  const editingId = !isCreating && selected ? selected.id : null;
+
+  const chequeFieldsValid = useMemo(() => {
+    const normalizedAmount = parseChequeAmount(amount);
+    return Boolean(
+      creditId && debitId && summary.trim() && chequeNumber && issueDate && normalizedAmount,
+    );
+  }, [amount, chequeNumber, creditId, debitId, issueDate, summary]);
+
+  const canSubmitEdit = chequeFieldsValid && !cleared && editingId != null;
+  const canSubmitCreate = useMemo(() => {
+    if (!createDialogOpen) {
+      return false;
+    }
+    if (createDialogView === "preview") {
+      return Boolean(seriesPreview && !seriesHasConflict);
+    }
+    if (seriesEnabled) {
+      return buildSeriesPayload() != null;
+    }
+    return chequeFieldsValid;
+  }, [
+    chequeFieldsValid,
+    createDialogOpen,
+    createDialogView,
+    seriesEnabled,
+    seriesHasConflict,
+    seriesPreview,
+    amount,
+    chequeNumber,
+    creditId,
+    debitId,
+    incrementN,
+    incrementUnit,
+    issueDate,
+    partyId,
+    seriesCount,
+    seriesEndDate,
+    seriesStopMode,
+    summary,
+  ]);
+
+  useFormSaveDiscardShortcuts({
+    createFormRef,
+    editFormRef,
+    editingId,
+    canSubmitCreate,
+    canSubmitEdit,
+    createSubmitting: formBusy || seriesPreviewLoading,
+    editSubmitting: formBusy,
+    requestCreateSubmit: () => {
+      if (createDialogView === "preview") {
+        createFormRef.current?.requestSubmit();
+      } else if (seriesEnabled) {
+        void handleShowSeriesPreview();
+      } else {
+        createFormRef.current?.requestSubmit();
+      }
+    },
+    requestEditSubmit: () => {
+      editFormRef.current?.requestSubmit();
+    },
+    requestEditDiscard: () => {
+      // Edit discard is out of scope for #132.
+    },
+    requestCreateDiscard: closeCreateDialog,
+  });
 
   function clearSeriesPreview() {
     setSeriesPreview(null);
@@ -948,7 +1027,7 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
             )}
           </p>
 
-          <form noValidate onSubmit={(e) => void handleSave(e)}>
+          <form ref={editFormRef} noValidate onSubmit={(e) => void handleSave(e)}>
             {renderChequeFields({
               issueDateLabel: "Issue date",
               startingNumberLabel: "Cheque number",
@@ -957,7 +1036,13 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
             {formError && <p className="error-text">{formError}</p>}
 
             <div className="dialog-actions">
-              <button type="submit" disabled={formBusy || cleared}>
+              <button
+                type="submit"
+                disabled={formBusy || cleared}
+                title={saveActionTooltip(isMac)}
+                aria-label={isMac ? "Save changes (⌘+S)" : "Save changes (Ctrl+S)"}
+                aria-keyshortcuts={saveAriaKeyShortcuts(isMac)}
+              >
                 Save changes
               </button>
               {canVoidOrReopen && savedCheque.status === "open" && (
@@ -983,6 +1068,7 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
         onClose={closeCreateDialog}
       >
         <form
+          ref={createFormRef}
           method="dialog"
           className="cheque-dialog-inner"
           noValidate
@@ -1011,7 +1097,14 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
               {formError && <p className="error-text">{formError}</p>}
 
               <div className="dialog-actions">
-                <button type="button" className="button-secondary" onClick={closeCreateDialog}>
+                <button
+                  type="button"
+                  className="button-secondary"
+                  onClick={closeCreateDialog}
+                  title={discardActionTooltip(isMac)}
+                  aria-label={discardActionTooltip(isMac)}
+                  aria-keyshortcuts={discardAriaKeyShortcuts(isMac)}
+                >
                   Cancel
                 </button>
                 {seriesEnabled ? (
@@ -1023,7 +1116,13 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
                     {seriesPreviewLoading ? "Previewing…" : "Preview"}
                   </button>
                 ) : (
-                  <button type="submit" disabled={formBusy}>
+                  <button
+                    type="submit"
+                    disabled={formBusy}
+                    title={saveActionTooltip(isMac)}
+                    aria-label={isMac ? "Create cheque (⌘+S)" : "Create cheque (Ctrl+S)"}
+                    aria-keyshortcuts={saveAriaKeyShortcuts(isMac)}
+                  >
                     Create cheque
                   </button>
                 )}
@@ -1036,7 +1135,14 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
               {formError && <p className="error-text">{formError}</p>}
 
               <div className="dialog-actions">
-                <button type="button" className="button-secondary" onClick={closeCreateDialog}>
+                <button
+                  type="button"
+                  className="button-secondary"
+                  onClick={closeCreateDialog}
+                  title={discardActionTooltip(isMac)}
+                  aria-label={discardActionTooltip(isMac)}
+                  aria-keyshortcuts={discardAriaKeyShortcuts(isMac)}
+                >
                   Cancel
                 </button>
                 <button
@@ -1052,6 +1158,9 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
                 <button
                   type="submit"
                   disabled={formBusy || seriesHasConflict || !seriesPreview}
+                  title={saveActionTooltip(isMac)}
+                  aria-label={isMac ? "Create series (⌘+S)" : "Create series (Ctrl+S)"}
+                  aria-keyshortcuts={saveAriaKeyShortcuts(isMac)}
                 >
                   Create series
                 </button>
