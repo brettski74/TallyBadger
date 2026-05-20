@@ -2,7 +2,7 @@
 
 This document describes the **import rules path that exists in production for bank CSV import**: **CEL** expressions, optional **ordered regex captures**, **`evaluate_cel`**, persisted **CEL rule sets**, and the HTTP routes that invoke them. Use **OpenAPI** at **`/docs`** for request and response schemas.
 
-**Related:** [CEL function reference](cel-function-reference.md) — custom helpers (`debug()`, `unset()`, `party()`, `cheque()`, …). **[ARCH.md](../ARCH.md)** — where CSV import sits in the system (trust boundaries, high-level flow).
+**Related:** [CEL function reference](cel-function-reference.md) — custom helpers (`debug()`, `unset()`, `party()`, `cheque()`, `merge()`, `nvl()`, …). **[ARCH.md](../ARCH.md)** — where CSV import sits in the system (trust boundaries, high-level flow).
 
 **Frontend:** the SPA **Import rules** tab runs **`CelRuleSetsSection`** ([`frontend/src/components/CelRuleSetsSection.tsx`](../frontend/src/components/CelRuleSetsSection.tsx)) — create, edit, and delete persisted CEL rule sets (name, rule order, captures, expressions). CSV import can attach a rule set by id. Authors can still use **`/docs`** or **`POST /import-rules/cel/evaluate`** for ad-hoc evaluation without saving.
 

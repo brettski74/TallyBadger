@@ -103,6 +103,28 @@ def test_cel_evaluate_endpoint_account_type_reads_list_accounts() -> None:
         app.dependency_overrides.pop(get_ledger_service, None)
 
 
+def test_cel_evaluate_endpoint_merge_and_nvl(cel_evaluate_client: TestClient) -> None:
+    body = {
+        "attributes": {"amt": 50},
+        "rule_set": {
+            "rules": [
+                {
+                    "expression": (
+                        '{"set": merge([{"summary": "rent", "amount": attributes["amt"]}, '
+                        '{"cr-party": nvl([null, "Pamela Person"])}])}'
+                    ),
+                },
+            ],
+        },
+    }
+    r = cel_evaluate_client.post("/import-rules/cel/evaluate", json=body)
+    assert r.status_code == 200
+    attrs = r.json()["attributes"]
+    assert attrs["summary"] == "rent"
+    assert attrs["amount"] == 50
+    assert attrs["cr-party"] == "Pamela Person"
+
+
 def test_cel_evaluate_endpoint_bad_control_type_422(cel_evaluate_client: TestClient) -> None:
     body = {
         "attributes": {},
