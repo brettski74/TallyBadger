@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseCsv } from "./csvParse";
+import { csvFileRowNumber, parseCsv } from "./csvParse";
 
 describe("parseCsv", () => {
   it("returns empty array for empty input", () => {
@@ -27,5 +27,17 @@ describe("parseCsv", () => {
       ["a", "b"],
       ["c", ""],
     ]);
+  });
+});
+
+describe("csvFileRowNumber", () => {
+  it("matches file line when the first row is a header", () => {
+    expect(csvFileRowNumber(0, true)).toBe(2);
+    expect(csvFileRowNumber(24, true)).toBe(26);
+  });
+
+  it("matches file line when every row is data", () => {
+    expect(csvFileRowNumber(0, false)).toBe(1);
+    expect(csvFileRowNumber(24, false)).toBe(25);
   });
 });

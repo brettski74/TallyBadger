@@ -54,7 +54,7 @@ Each record is an object with:
 |-------|----------------|--------|
 | **`rule`** | always | Rule label: `rule.name` if set, otherwise `rule[{index}]` (same as trace `_rule_label`). |
 | **`value`** | always | JSON-friendly snapshot of the argument after serialization. |
-| **`row_number`** | CSV execute only | **1-based** index of the **data** row (same numbering as CSV row validation errors). Omitted on **`POST /import-rules/cel/evaluate`** (no import row). |
+| **`row_number`** | CSV execute only | **1-based line number in the source CSV file** (same numbering as CSV row validation errors and the import preview table). When the file has a header row, the first imported data row is **2**. Omitted on **`POST /import-rules/cel/evaluate`** (no import row). |
 
 ### Where `debug` appears in API JSON
 

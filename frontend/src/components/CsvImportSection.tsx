@@ -22,7 +22,7 @@ import {
   unloadImportBatch,
   type ImportBatchListItem,
 } from "../api/importBatches";
-import { parseCsv } from "../lib/csvParse";
+import { csvFileRowNumber, parseCsv } from "../lib/csvParse";
 import { readFileAsText } from "../lib/readFileAsText";
 
 type Step = "start" | "preview";
@@ -841,7 +841,7 @@ export function CsvImportSection({ accounts, onImportSucceeded }: CsvImportSecti
                 <tbody>
                   {previewRows.map((row, rowIndex) => (
                     <tr key={rowIndex}>
-                      <th scope="row">Row {rowIndex + 1}</th>
+                      <th scope="row">Row {csvFileRowNumber(rowIndex, hasHeaderRow)}</th>
                       {columns.map((_, colIndex) => (
                         <td key={colIndex}>{row[colIndex] ?? ""}</td>
                       ))}

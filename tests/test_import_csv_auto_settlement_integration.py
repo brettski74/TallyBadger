@@ -368,7 +368,46 @@ def test_auto_settlement_failed_preconditions_simple_post_and_review(
     assert r.status_code == 200, r.text
     entry = r.json()["entries"][0]
     assert entry["requires_review"] is True
-    assert any("preconditions" in m["message"].lower() for m in entry["review_messages"])
+    assert any("cr-party" in m["message"] for m in entry["review_messages"])
+
+
+def test_auto_settlement_second_row_after_first_closes_obligation_posts_with_review(
+    import_api_client: TestClient,
+    integration_db_url: str,
+) -> None:
+    """Second auto-settlement row sees the first row's allocation; no duplicate settle in one import."""
+    ctx = _setup_rent_receipt_context(import_api_client)
+    rule_set_id = _create_settlement_rule_set(import_api_client)
+    payload = {
+        "csv_text": (
+            "date,summary,amount\n"
+            "2026-07-15,Pamela rent,1500.00\n"
+            "2026-07-16,Pamela rent again,1500.00\n"
+        ),
+        "basename": "dup-obligation.csv",
+        "has_header_row": True,
+        "columns": [
+            {"attribute_name": "date", "data_type": "date", "date_format": "YYYY-MM-DD"},
+            {"attribute_name": "summary", "data_type": "string"},
+            {"attribute_name": "amount", "data_type": "numeric"},
+        ],
+        "cel_rule_set_id": rule_set_id,
+        "default_import_account_id": ctx["cash_id"],
+        "default_import_normal_balance": "debit",
+    }
+    r = import_api_client.post("/imports/csv/execute", json=payload)
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["posted_entries"] == 2
+    assert _count_rows(integration_db_url, "settlement_allocations") == 1
+    first, second = data["entries"]
+    assert not first["requires_review"]
+    assert second["requires_review"] is True
+    assert any(
+        "obligations" in m["message"].lower() for m in second["review_messages"]
+    )
+    obligations = import_api_client.get(f"/obligations/{ctx['party_id']}").json()
+    assert obligations == []
 
 
 def test_auto_settlement_unset_uses_simple_path(

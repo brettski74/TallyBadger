@@ -115,6 +115,26 @@ describe("CsvImportSection", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Choose a CSV file first.");
   });
 
+  it("preview row labels use file line numbers when a header row is present", async () => {
+    mockListEndpoints();
+    vi.mocked(readFileAsText).mockResolvedValue("h1,h2\na,b\nc,d\n");
+
+    render(<CsvImportSection accounts={EMPTY_ACCOUNTS} />);
+    await screen.findByLabelText("CSV file");
+
+    const file = new File(["dummy"], "two-data.csv", { type: "text/csv" });
+    await userEvent.upload(screen.getByLabelText("CSV file"), file);
+    await userEvent.click(screen.getByRole("button", { name: "Continue to preview" }));
+
+    const headerCheckbox = await screen.findByLabelText("First row is a header");
+    await userEvent.click(headerCheckbox);
+    expect(headerCheckbox).toBeChecked();
+
+    expect(screen.getByRole("rowheader", { name: "Row 2" })).toBeInTheDocument();
+    expect(screen.getByRole("rowheader", { name: "Row 3" })).toBeInTheDocument();
+    expect(screen.queryByRole("rowheader", { name: "Row 1" })).not.toBeInTheDocument();
+  });
+
   it("opens preview with defaults and respects preview row limit", async () => {
     mockListEndpoints();
     const body = "c1,c2\n" + Array.from({ length: 30 }, (_, i) => `${i},v`).join("\n");

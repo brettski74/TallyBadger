@@ -14,6 +14,7 @@ from tallybadger.api.routes.import_csv import (
     _build_lines_from_array,
     _convert_cell,
     _fifo_allocate,
+    _check_auto_settlement_preconditions,
     _maybe_apply_auto_settlement,
     _parse_settlement_attr,
 )
@@ -24,9 +25,30 @@ from tallybadger.ledger.models import (
     JournalLineOut,
     LedgerSettingsOut,
 )
+from tallybadger.ledger.service import LedgerImportBatchEntryError, LedgerValidationError
 from tallybadger.import_rules.cel_models import CelRule, CelRuleSet
 from tallybadger.import_templates.models import ImportTemplateColumn
 from tallybadger.main import app
+
+
+def _mock_open_import_batch(
+    ledger: MagicMock,
+    *,
+    batch_id: int = 1,
+    insert_entries: list[JournalEntryOut] | None = None,
+    insert_side_effect: object | None = None,
+) -> MagicMock:
+    posting = MagicMock()
+    posting.batch_id = batch_id
+    if insert_side_effect is not None:
+        posting.insert_entry.side_effect = insert_side_effect
+    elif insert_entries is not None:
+        posting.insert_entry.side_effect = insert_entries
+    cm = MagicMock()
+    cm.__enter__.return_value = posting
+    cm.__exit__.return_value = None
+    ledger.open_import_batch.return_value = cm
+    return posting
 
 
 def _blank_ledger_settings() -> LedgerSettingsOut:
@@ -360,7 +382,7 @@ def test_execute_csv_debug_only_on_entries_that_used_debug() -> None:
             ),
         ],
     )
-    ledger.create_import_batch_with_entries.return_value = (1, [e1, e2])
+    _mock_open_import_batch(ledger, batch_id=1, insert_entries=[e1, e2])
     from tallybadger.api.routes.import_csv import get_cel_rule_set_service, get_ledger_service
     from tallybadger.main import app
 
@@ -387,6 +409,73 @@ def test_execute_csv_debug_only_on_entries_that_used_debug() -> None:
         assert ent0["debug"][0]["value"] == 100
         assert ent0["debug"][0]["row_number"] == 2
         assert "debug" not in ent1
+    finally:
+        app.dependency_overrides.pop(get_ledger_service, None)
+        app.dependency_overrides.pop(get_cel_rule_set_service, None)
+
+
+def test_execute_csv_batch_settlement_failure_maps_to_row_number() -> None:
+    """Batch posting errors (e.g. duplicate obligation settle) return row_errors with row_number."""
+    now = datetime.now(tz=timezone.utc)
+    cash = AccountOut(id=1, name="Cash", type="asset", is_active=True, created_at=now, updated_at=now)
+    rent = AccountOut(id=2, name="Rent Income", type="revenue", is_active=True, created_at=now, updated_at=now)
+    ledger = MagicMock()
+    ledger.list_accounts.return_value = [cash, rent]
+    ledger.list_parties.return_value = []
+    ledger.list_cheques.return_value = []
+    ledger.get_ledger_settings.return_value = _blank_ledger_settings()
+    je_ok = JournalEntryOut(
+        id=1,
+        entry_date=date(2026, 1, 1),
+        summary="A",
+        description=None,
+        requires_review=False,
+        cheque_id=None,
+        created_at=now,
+        updated_at=now,
+        lines=[],
+    )
+    _mock_open_import_batch(
+        ledger,
+        insert_side_effect=[
+            je_ok,
+            LedgerValidationError(
+                "cannot settle obligation 9: already settled "
+                "(settled/reconciled obligations cannot be settled again)",
+            ),
+        ],
+    )
+    expr = (
+        '{"set":{"dr-account":"Cash", "cr-account":"Rent Income", "amount": attributes["amount"], '
+        '"date": attributes["date"], "summary": attributes["summary"]}}'
+    )
+    cel_svc = MagicMock()
+    cel_svc.get_rule_set.return_value = MagicMock(
+        rule_set=CelRuleSet(rules=[CelRule(sort_order=10, expression=expr)]),
+    )
+    from tallybadger.api.routes.import_csv import get_cel_rule_set_service, get_ledger_service
+    from tallybadger.main import app
+
+    app.dependency_overrides[get_ledger_service] = lambda: ledger
+    app.dependency_overrides[get_cel_rule_set_service] = lambda: cel_svc
+    try:
+        client = TestClient(app)
+        payload = {
+            "csv_text": "date,summary,amount\n2026-01-01,A,100\n2026-01-02,B,100\n",
+            "basename": "dup-settle.csv",
+            "has_header_row": True,
+            "columns": [
+                {"attribute_name": "date", "data_type": "date", "date_format": "YYYY-MM-DD"},
+                {"attribute_name": "summary", "data_type": "string", "date_format": None},
+                {"attribute_name": "amount", "data_type": "numeric", "date_format": None},
+            ],
+            "cel_rule_set_id": 1,
+        }
+        r = client.post("/imports/csv/execute", json=payload)
+        assert r.status_code == 422, r.text
+        detail = r.json()["detail"]
+        assert detail["row_errors"][0]["row_number"] == 3
+        assert "obligation 9" in detail["row_errors"][0]["errors"][0]
     finally:
         app.dependency_overrides.pop(get_ledger_service, None)
         app.dependency_overrides.pop(get_cel_rule_set_service, None)
@@ -449,7 +538,7 @@ def test_execute_csv_seeds_default_account_for_cel_from_template() -> None:
             ),
         ],
     )
-    ledger.create_import_batch_with_entries.return_value = (2, [je])
+    _mock_open_import_batch(ledger, batch_id=2, insert_entries=[je])
     from tallybadger.api.routes.import_csv import get_cel_rule_set_service, get_ledger_service
     from tallybadger.main import app
 
@@ -560,6 +649,83 @@ def test_build_lines_from_array_rejects_invalid_obligation_id() -> None:
 def test_parse_settlement_attr_rejects_invalid() -> None:
     with pytest.raises(ValueError, match="receipt"):
         _parse_settlement_attr({"settlement": "invoice"})
+
+
+def test_check_auto_settlement_preconditions_reports_each_failure() -> None:
+    now = datetime.now(tz=timezone.utc)
+    cash = AccountOut(id=1, name="Cash", type="asset", is_active=True, created_at=now, updated_at=now)
+    rent = AccountOut(id=2, name="Rent Revenue", type="revenue", is_active=True, created_at=now, updated_at=now)
+    ar = AccountOut(id=3, name="Accounts Receivable", type="asset", is_active=True, created_at=now, updated_at=now)
+    settings = LedgerSettingsOut(
+        accounts_receivable_account_id=3,
+        accounts_payable_account_id=None,
+        unearned_revenue_account_id=None,
+        unallocated_debits_account_id=None,
+        unallocated_credits_account_id=None,
+        default_cheque_credit_account_id=None,
+        default_cheque_debit_account_id=None,
+        max_attachment_upload_bytes=5242880,
+        max_cheque_series_count=60,
+        updated_at=now,
+    )
+    bag = {
+        "settlement": "receipt",
+        "amount": "100.00",
+        "date": date(2026, 7, 1),
+        "summary": "Rent",
+        "cr-account": "Rent Revenue",
+        "dr-account": "Cash",
+    }
+    pre = _check_auto_settlement_preconditions(
+        bag,
+        "receipt",
+        account_ids={"Cash": 1, "Rent Revenue": 2, "Accounts Receivable": 3},
+        party_ids={"Pamela": 9},
+        accounts_by_id={1: cash, 2: rent, 3: ar},
+        ledger_settings=settings,
+    )
+    assert not pre.ok
+    assert len(pre.failures) == 1
+    assert "cr-party" in pre.failures[0]
+
+
+def test_check_auto_settlement_preconditions_cash_account_type() -> None:
+    now = datetime.now(tz=timezone.utc)
+    expense = AccountOut(
+        id=1, name="Misc Expense", type="expense", is_active=True, created_at=now, updated_at=now,
+    )
+    rent = AccountOut(id=2, name="Rent Revenue", type="revenue", is_active=True, created_at=now, updated_at=now)
+    ar = AccountOut(id=3, name="Accounts Receivable", type="asset", is_active=True, created_at=now, updated_at=now)
+    settings = LedgerSettingsOut(
+        accounts_receivable_account_id=3,
+        accounts_payable_account_id=None,
+        unearned_revenue_account_id=None,
+        unallocated_debits_account_id=None,
+        unallocated_credits_account_id=None,
+        default_cheque_credit_account_id=None,
+        default_cheque_debit_account_id=None,
+        max_attachment_upload_bytes=5242880,
+        max_cheque_series_count=60,
+        updated_at=now,
+    )
+    bag = {
+        "amount": "100.00",
+        "date": date(2026, 7, 1),
+        "summary": "Rent",
+        "cr-party": "Pamela",
+        "cr-account": "Rent Revenue",
+        "dr-account": "Misc Expense",
+    }
+    pre = _check_auto_settlement_preconditions(
+        bag,
+        "receipt",
+        account_ids={"Misc Expense": 1, "Rent Revenue": 2, "Accounts Receivable": 3},
+        party_ids={"Pamela": 9},
+        accounts_by_id={1: expense, 2: rent, 3: ar},
+        ledger_settings=settings,
+    )
+    assert not pre.ok
+    assert any("Misc Expense" in msg and "expense" in msg for msg in pre.failures)
 
 
 def test_maybe_apply_auto_settlement_rejects_line_array() -> None:

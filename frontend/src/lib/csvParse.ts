@@ -91,3 +91,11 @@ function rectangularize(rows: string[][]): string[][] {
     return next;
   });
 }
+
+/**
+ * 1-based line number in the source CSV file for a data row (0-based index among imported data rows).
+ * Matches API ``row_errors`` / CEL ``debug.row_number`` (line 1 = first row of the file).
+ */
+export function csvFileRowNumber(dataRowIndex: number, hasHeaderRow: boolean): number {
+  return dataRowIndex + (hasHeaderRow ? 2 : 1);
+}
