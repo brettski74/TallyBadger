@@ -123,7 +123,7 @@ flowchart TB
 | Origin | Typical `journal_entries` marker | Creates `accrual_obligations`? |
 |--------|----------------------------------|--------------------------------|
 | **Accrual plan** (`create_accrual_plan`) | `accrual_plan_id` | **Yes** — one per scheduled accrual on the bridge (A/R or A/P) line. |
-| **CSV import** (`create_import_batch_with_entries`) | `import_batch_id` | **No** in production today — bank rows post cash / expense / revenue style entries. Obligation settlement from CSV is [#151](https://github.com/brettski74/TallyBadger/issues/151). |
+| **CSV import** (`create_import_batch_with_entries`) | `import_batch_id` | **No** for plain cash/expense/revenue rows. **Yes** when **`line[]`** includes **`obligation-id`** — see [#151](https://github.com/brettski74/TallyBadger/issues/151). |
 
 An obligation belongs to the **accrual subledger** (`accrual_obligations` + its `source_entry_id` accrual JE). A batch is only the set of journal entries tagged with that batch's `import_batch_id`.
 
@@ -153,7 +153,7 @@ sequenceDiagram
     API->>AO: reduce open_amount, update status
 ```
 
-**Manual vs future CSV:** same `settlement_allocations` / obligation updates. The difference is how the allocation list is supplied and whether `record_settlement` creates the settlement JE or reuses the import row's journal entry ([#151](https://github.com/brettski74/TallyBadger/issues/151)).
+**Manual vs CSV `line[]`:** same `settlement_allocations` / obligation updates. Manual **`POST /settlements`** may create a settlement journal entry or collapse into an accrual entry; CSV import supplies GL via **`line[]`** and reuses that entry (or collapses when eligible) ([#151](https://github.com/brettski74/TallyBadger/issues/151)).
 
 ---
 

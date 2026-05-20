@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
-from tallybadger.api.routes.import_csv import _bag_to_journal_entry, _convert_cell
+from tallybadger.api.routes.import_csv import _bag_to_journal_entry, _build_lines_from_array, _convert_cell
 from tallybadger.ledger.models import AccountOut, JournalEntryOut, JournalLineOut, LedgerSettingsOut
 from tallybadger.import_rules.cel_models import CelRule, CelRuleSet
 from tallybadger.import_templates.models import ImportTemplateColumn
@@ -504,3 +504,41 @@ def test_execute_csv_reports_all_row_errors(import_execute_client: TestClient) -
     assert rows[2]
     assert rows[3]
     assert len(detail["row_errors"]) == 2
+
+
+def test_build_lines_from_array_parses_obligation_id() -> None:
+    account_ids = {"Cash": 1, "Accounts Receivable": 2}
+    party_ids = {"Tenant": 10}
+    lines = _build_lines_from_array(
+        {
+            "line": [
+                {"account": "Cash", "amount": "500.00", "party": "Tenant"},
+                {
+                    "account": "Accounts Receivable",
+                    "amount": "-500.00",
+                    "party": "Tenant",
+                    "obligation-id": "42",
+                },
+            ],
+        },
+        account_ids,
+        party_ids,
+    )
+    assert len(lines) == 2
+    assert lines[0].obligation_id is None
+    assert lines[1].obligation_id == 42
+    assert lines[1].amount == Decimal("-500.00")
+
+
+def test_build_lines_from_array_rejects_invalid_obligation_id() -> None:
+    with pytest.raises(ValueError, match="obligation-id"):
+        _build_lines_from_array(
+            {
+                "line": [
+                    {"account": "Cash", "amount": "100.00"},
+                    {"account": "Accounts Receivable", "amount": "-100.00", "obligation-id": "nope"},
+                ],
+            },
+            {"Cash": 1, "Accounts Receivable": 2},
+            {},
+        )

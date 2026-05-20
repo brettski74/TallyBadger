@@ -147,6 +147,58 @@ Exact wording and conditions are defined in **`_bag_to_journal_entry`** and **`_
 
 ---
 
+## `line[]` journal lines and obligation settlement ([#151](https://github.com/brettski74/TallyBadger/issues/151))
+
+CEL rules (or column mapping) may set a **`line`** attribute: a list of maps that become journal lines. Each map:
+
+| Key | Required | Meaning |
+|-----|----------|--------|
+| `account` | yes | Account name (must exist and be active) |
+| `amount` | yes | Signed GL amount; all lines must balance to zero |
+| `party` | no | Party name |
+| `obligation-id` | no | When set, **`|amount|`** is applied to that `accrual_obligations.id` |
+
+Rules:
+
+- **`obligation-id` absent** — normal journal line only (e.g. cash leg).
+- **`obligation-id` present** — settlement required; applied amount = **`|amount|`** (must be &gt; 0).
+- **Partial:** `|amount| &lt; open_amount` on that obligation → obligation becomes `partially_settled`; a separate import journal entry is posted.
+- **Full:** `|amount| == open_amount`.
+- **Multi-obligation:** multiple lines, each with its own id.
+- **Remainder / overpay:** lines **without** `obligation-id` (e.g. unearned or revenue) — prevents exact same-day collapse when present alongside a full obligation line.
+
+Receipt settlements use the **accounts receivable** bridge (negative amount on A/R); payments use **accounts payable** (positive amount on A/P). Row validation rejects unknown obligations, duplicate ids on one entry, amounts exceeding `open_amount`, party mismatch, and wrong bridge account or sign.
+
+Posting (in `create_import_batch_with_entries`, same transaction as the journal insert):
+
+1. Collect **`obligation-id`** lines and build allocations with amount **`|amount|`**.
+2. **Exact same-day collapse** (import-only, stricter than manual “same accrual day”): exactly one obligation line, full pay, row **`date`** equals accrual **`entry_date`**, and the import row is exactly **cash + bridge reduction** (two lines). The accrual journal entry is rewritten in place, stamped with **`import_batch_id`**, and **`settlement_allocations`** point at that accrual entry — no separate import JE.
+3. Otherwise: insert the import journal entry from **`line[]`**, insert **`settlement_allocations`** with `entry_id` = that JE, apply early-receipt reclassification when applicable, and update obligation balances.
+
+**Import batch unload** reverses allocations whose `entry_id` belongs to the batch (including collapsed accrual entries), restores obligation `open_amount`, and clears **`import_batch_id`** on plan accrual entries. See [ledger data model](ledger-data-model.md#import-batch-unload--discovery-and-scope).
+
+Example (full receipt, separate JE — catch-up date):
+
+```json
+"line": [
+  {"account": "Cash", "amount": "1500.00", "party": "Pamela Tenant"},
+  {"account": "Accounts Receivable", "amount": "-1500.00", "party": "Pamela Tenant", "obligation-id": 42}
+]
+```
+
+Example (exact same-day collapse — only cash + one obligation line, date matches accrual):
+
+```json
+"line": [
+  {"account": "Cash", "amount": "500.00", "party": "Tenant Unload"},
+  {"account": "Accounts Receivable", "amount": "-500.00", "party": "Tenant Unload", "obligation-id": 7}
+]
+```
+
+The optional top-level **`settlement`** auto-build attribute ([#152](https://github.com/brettski74/TallyBadger/issues/152)) is **not** required when authors supply **`line[]`** with **`obligation-id`**.
+
+---
+
 ## HTTP quick reference
 
 | Endpoint | Role |
