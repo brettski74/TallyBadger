@@ -199,6 +199,63 @@ The optional top-level **`settlement`** auto-build attribute ([#152](https://git
 
 ---
 
+## `settlement` auto-build attribute ([#152](https://github.com/brettski74/TallyBadger/issues/152))
+
+After CEL and **import default account** resolution, the CSV path may set **`settlement`** to **`receipt`** or **`payment`**. The engine matches open obligations, allocates **FIFO** (`source_entry_date`, then `id`), synthesizes **`line[]`** (cash + A/R or A/P bridges with **`obligation-id`**), and posts through the [#151](https://github.com/brettski74/TallyBadger/issues/151) import settlement path.
+
+| `settlement` | Behaviour |
+|--------------|-----------|
+| `receipt` | Auto-build receivable settlement `line[]` |
+| `payment` | Auto-build payable settlement `line[]` |
+| unset / null | No auto-settlement (unchanged) |
+
+### Mutual exclusion
+
+If **`settlement`** is `receipt` or `payment` **and** the bag already has **`line[]`** → row **422** (*settlement cannot be used together with line[]*).
+
+### Preconditions (else simple journal + review)
+
+**Receipt:** `cr-party`, `cr-account` (P&amp;L hint, e.g. Rent Revenue); `dr-account` is **asset** or **liability** (cash/bank); `amount`, `date`, `summary`; accounts receivable configured in ledger settings.
+
+**Payment:** `dr-party`, `dr-account` (P&amp;L hint); `cr-account` is **asset** or **liability**; `amount`, `date`, `summary`; accounts payable configured.
+
+Both `dr-account` and `cr-account` must be present after import defaults (no unallocated suspense fallback for the settlement attempt).
+
+### FIFO matching
+
+Open obligations for the party where the accrual plan **`target_account_id`** equals the P&amp;L hint account (`cr-account` for receipts, `dr-account` for payments), type **receivable** or **payable**, ordered by accrual **`source_entry_date`** then **`id`**.
+
+### Auto-built outcomes
+
+| Case | Behaviour |
+|------|-----------|
+| Fully allocated | Cash + bridge lines only |
+| Receipt overpay / no more obligations | Remainder on **`cr-account`** (P&amp;L hint) + **review** (not unearned revenue) |
+| Payment overpay | Remainder on **`dr-account`** + **review** |
+| No matching obligations | Simple journal from bag + **review** |
+| Preconditions fail | Simple journal + **review** |
+
+Review messages are merged with CEL **`review_messages`** and other import review reasons.
+
+### Authoring example (Pamela rent receipt)
+
+```cel
+{
+  "set": {
+    "settlement": "receipt",
+    "summary": "Pamela rent",
+    "amount": attr["amt"],
+    "date": attr["date"],
+    "cr-account": "Rent Revenue",
+    "cr-party": "Pamela Person"
+  }
+}
+```
+
+(`dr-account` comes from the template **`default_import_account_id`** — e.g. chequing — before matching.)
+
+---
+
 ## HTTP quick reference
 
 | Endpoint | Role |

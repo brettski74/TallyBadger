@@ -9,6 +9,7 @@ import re
 from pathlib import PurePath
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
+from dataclasses import dataclass
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -25,11 +26,13 @@ from tallybadger.import_rules.errors import ImportRulesCelError
 from tallybadger.import_templates.models import ImportTemplateColumn
 from tallybadger.ledger.models import (
     AccountOut,
+    AccrualObligationOut,
     ImportBatchListItem,
     JournalEntryOut,
     JournalEntryWrite,
     JournalLineIn,
     LedgerSettingsOut,
+    SettlementType,
 )
 from tallybadger.ledger.service import (
     LedgerDuplicateImportContentError,
@@ -299,6 +302,307 @@ def _resolve_unallocated_account_name(
     return acct.name
 
 
+_CASH_SIDE_ACCOUNT_TYPES = frozenset({"asset", "liability"})
+
+
+def _parse_settlement_attr(bag: dict[str, Any]) -> SettlementType | None:
+    raw = bag.get("settlement")
+    if raw is None or raw == "":
+        return None
+    value = str(raw).strip().lower()
+    if not value:
+        return None
+    if value in ("receipt", "payment"):
+        return value  # type: ignore[return-value]
+    raise ValueError("settlement must be 'receipt', 'payment', or unset")
+
+
+def _account_name_from_bag(bag: dict[str, Any], key: str) -> str:
+    raw = bag.get(key)
+    if raw is None:
+        return ""
+    return str(raw).strip()
+
+
+def _party_name_from_bag(bag: dict[str, Any], key: str) -> str:
+    return _account_name_from_bag(bag, key)
+
+
+def _apply_import_default_accounts(
+    bag: dict[str, Any],
+    *,
+    accounts_by_id: dict[int, AccountOut],
+    signed_amount: Decimal,
+    default_import_account_id: int | None,
+    default_import_normal_balance: str | None,
+) -> None:
+    if default_import_account_id is None:
+        return
+    default_name = _default_import_account_name(default_import_account_id, accounts_by_id)
+    if default_import_normal_balance in ("debit", "credit"):
+        normal = default_import_normal_balance
+    else:
+        normal = _infer_normal_from_account_type(
+            accounts_by_id[default_import_account_id].type,
+        )
+    debit_normal = normal == "debit"
+    default_on_debit = (signed_amount > Decimal("0")) == debit_normal
+    if default_on_debit and not _account_name_from_bag(bag, "dr-account"):
+        bag["dr-account"] = default_name
+    elif not default_on_debit and not _account_name_from_bag(bag, "cr-account"):
+        bag["cr-account"] = default_name
+
+
+def _account_name_by_id(account_id: int, accounts_by_id: dict[int, AccountOut]) -> str | None:
+    acct = accounts_by_id.get(account_id)
+    if acct is None or not acct.is_active:
+        return None
+    return acct.name
+
+
+@dataclass(frozen=True)
+class _SettlementPreconditionResult:
+    ok: bool
+    settlement_type: SettlementType | None = None
+    party_name: str = ""
+    cash_account_name: str = ""
+    pl_account_name: str = ""
+    party_id: int | None = None
+    pl_account_id: int | None = None
+    cash_account_id: int | None = None
+
+
+def _check_auto_settlement_preconditions(
+    bag: dict[str, Any],
+    settlement_type: SettlementType,
+    *,
+    account_ids: dict[str, int],
+    party_ids: dict[str, int],
+    accounts_by_id: dict[int, AccountOut],
+    ledger_settings: LedgerSettingsOut,
+) -> _SettlementPreconditionResult:
+    if settlement_type == "receipt":
+        if ledger_settings.accounts_receivable_account_id is None:
+            return _SettlementPreconditionResult(ok=False)
+        party_name = _party_name_from_bag(bag, "cr-party")
+        pl_name = _account_name_from_bag(bag, "cr-account")
+        cash_name = _account_name_from_bag(bag, "dr-account")
+    else:
+        if ledger_settings.accounts_payable_account_id is None:
+            return _SettlementPreconditionResult(ok=False)
+        party_name = _party_name_from_bag(bag, "dr-party")
+        pl_name = _account_name_from_bag(bag, "dr-account")
+        cash_name = _account_name_from_bag(bag, "cr-account")
+
+    if not party_name or not pl_name or not cash_name:
+        return _SettlementPreconditionResult(ok=False)
+    if party_name not in party_ids:
+        return _SettlementPreconditionResult(ok=False)
+    if pl_name not in account_ids or cash_name not in account_ids:
+        return _SettlementPreconditionResult(ok=False)
+
+    cash_acct = accounts_by_id.get(account_ids[cash_name])
+    if cash_acct is None or cash_acct.type not in _CASH_SIDE_ACCOUNT_TYPES:
+        return _SettlementPreconditionResult(ok=False)
+
+    try:
+        _to_entry_date(bag.get("date"))
+        _require_string(bag, "summary")
+        amount = _to_decimal_any(bag.get("amount"), field="amount")
+        if amount == Decimal("0"):
+            return _SettlementPreconditionResult(ok=False)
+    except ValueError:
+        return _SettlementPreconditionResult(ok=False)
+
+    return _SettlementPreconditionResult(
+        ok=True,
+        settlement_type=settlement_type,
+        party_name=party_name,
+        cash_account_name=cash_name,
+        pl_account_name=pl_name,
+        party_id=party_ids[party_name],
+        pl_account_id=account_ids[pl_name],
+        cash_account_id=account_ids[cash_name],
+    )
+
+
+def _fifo_allocate(
+    obligations: list[AccrualObligationOut],
+    total: Decimal,
+) -> tuple[list[tuple[int, Decimal]], Decimal]:
+    remaining = total
+    allocations: list[tuple[int, Decimal]] = []
+    for obligation in obligations:
+        if remaining <= Decimal("0"):
+            break
+        open_amt = obligation.open_amount
+        if open_amt <= Decimal("0"):
+            continue
+        alloc = min(open_amt, remaining)
+        allocations.append((obligation.id, alloc))
+        remaining -= alloc
+    return allocations, remaining
+
+
+def _format_line_amount(amount: Decimal) -> str:
+    return format(amount, "f")
+
+
+def _build_auto_settlement_line_array(
+    *,
+    settlement_type: SettlementType,
+    pre: _SettlementPreconditionResult,
+    total: Decimal,
+    allocations: list[tuple[int, Decimal]],
+    remainder: Decimal,
+    bridge_account_name: str,
+) -> list[dict[str, Any]]:
+    party = pre.party_name
+    lines: list[dict[str, Any]] = []
+    if settlement_type == "receipt":
+        lines.append(
+            {
+                "account": pre.cash_account_name,
+                "amount": _format_line_amount(total),
+                "party": party,
+            },
+        )
+        for obligation_id, alloc in allocations:
+            lines.append(
+                {
+                    "account": bridge_account_name,
+                    "amount": _format_line_amount(-alloc),
+                    "party": party,
+                    "obligation-id": obligation_id,
+                },
+            )
+        if remainder > Decimal("0"):
+            lines.append(
+                {
+                    "account": pre.pl_account_name,
+                    "amount": _format_line_amount(-remainder),
+                    "party": party,
+                },
+            )
+    else:
+        lines.append(
+            {
+                "account": pre.cash_account_name,
+                "amount": _format_line_amount(-total),
+                "party": party,
+            },
+        )
+        for obligation_id, alloc in allocations:
+            lines.append(
+                {
+                    "account": bridge_account_name,
+                    "amount": _format_line_amount(alloc),
+                    "party": party,
+                    "obligation-id": obligation_id,
+                },
+            )
+        if remainder > Decimal("0"):
+            lines.append(
+                {
+                    "account": pre.pl_account_name,
+                    "amount": _format_line_amount(remainder),
+                    "party": party,
+                },
+            )
+    return lines
+
+
+def _maybe_apply_auto_settlement(
+    bag: dict[str, Any],
+    *,
+    ledger_service: LedgerService,
+    ledger_settings: LedgerSettingsOut,
+    account_ids: dict[str, int],
+    party_ids: dict[str, int],
+    accounts_by_id: dict[int, AccountOut],
+    default_import_account_id: int | None,
+    default_import_normal_balance: str | None,
+) -> list[str]:
+    """When ``settlement`` is receipt/payment, match obligations and synthesize ``line[]`` (#152)."""
+    settlement_type = _parse_settlement_attr(bag)
+    if settlement_type is None:
+        return []
+
+    if _has_nonempty_line_array(bag):
+        raise ValueError("settlement cannot be used together with line[]")
+
+    if not _has_simple_amount(bag):
+        return ["Auto-settlement preconditions were not met; posted as a simple journal entry."]
+
+    signed = _to_decimal_any(bag.get("amount"), field="amount")
+    if signed == Decimal("0"):
+        return ["Auto-settlement preconditions were not met; posted as a simple journal entry."]
+
+    _apply_import_default_accounts(
+        bag,
+        accounts_by_id=accounts_by_id,
+        signed_amount=signed,
+        default_import_account_id=default_import_account_id,
+        default_import_normal_balance=default_import_normal_balance,
+    )
+
+    pre = _check_auto_settlement_preconditions(
+        bag,
+        settlement_type,
+        account_ids=account_ids,
+        party_ids=party_ids,
+        accounts_by_id=accounts_by_id,
+        ledger_settings=ledger_settings,
+    )
+    if not pre.ok or pre.party_id is None or pre.pl_account_id is None:
+        return ["Auto-settlement preconditions were not met; posted as a simple journal entry."]
+
+    assert pre.settlement_type is not None
+    obligation_type = "receivable" if pre.settlement_type == "receipt" else "payable"
+    obligations = ledger_service.list_obligations_for_import_settlement(
+        party_id=pre.party_id,
+        target_account_id=pre.pl_account_id,
+        obligation_type=obligation_type,
+    )
+    if not obligations:
+        return ["Auto-settlement could not match open obligations; posted as a simple journal entry."]
+
+    total = abs(signed)
+    allocations, remainder = _fifo_allocate(obligations, total)
+    if not allocations:
+        return ["Auto-settlement could not match open obligations; posted as a simple journal entry."]
+
+    if pre.settlement_type == "receipt":
+        bridge_id = ledger_settings.accounts_receivable_account_id
+    else:
+        bridge_id = ledger_settings.accounts_payable_account_id
+    assert bridge_id is not None
+    bridge_name = _account_name_by_id(bridge_id, accounts_by_id)
+    if bridge_name is None:
+        return ["Auto-settlement preconditions were not met; posted as a simple journal entry."]
+
+    review_messages: list[str] = []
+    if remainder > Decimal("0"):
+        review_messages.append(
+            "Auto-settlement applied with an unallocated remainder on the P&L account.",
+        )
+
+    bag["line"] = _build_auto_settlement_line_array(
+        settlement_type=pre.settlement_type,
+        pre=pre,
+        total=total,
+        allocations=allocations,
+        remainder=remainder,
+        bridge_account_name=bridge_name,
+    )
+    bag.pop("amount", None)
+    bag.pop("dr-account", None)
+    bag.pop("cr-account", None)
+    bag.pop("dr-party", None)
+    bag.pop("cr-party", None)
+    return review_messages
+
+
 def _build_lines_from_simple(
     bag: dict[str, Any],
     account_ids: dict[str, int],
@@ -309,32 +613,23 @@ def _build_lines_from_simple(
     default_import_account_id: int | None = None,
     default_import_normal_balance: str | None = None,
 ) -> tuple[list[JournalLineIn], bool, bool, bool]:
-    dr = str(bag.get("dr-account") or "").strip()
-    cr = str(bag.get("cr-account") or "").strip()
+    dr = _account_name_from_bag(bag, "dr-account")
+    cr = _account_name_from_bag(bag, "cr-account")
 
     signed = _to_decimal_any(bag.get("amount"), field="amount")
     if signed == Decimal("0"):
         raise ValueError("amount must be non-zero")
     mag = abs(signed)
 
-    default_name: str | None = None
-    normal: str | None = None
-    if default_import_account_id is not None:
-        default_name = _default_import_account_name(default_import_account_id, accounts_by_id)
-        if default_import_normal_balance in ("debit", "credit"):
-            normal = default_import_normal_balance
-        else:
-            normal = _infer_normal_from_account_type(
-                accounts_by_id[default_import_account_id].type,
-            )
-
-    if default_name and normal:
-        debit_normal = normal == "debit"
-        default_on_debit = (signed > Decimal("0")) == debit_normal
-        if default_on_debit and not dr:
-            dr = default_name
-        elif not default_on_debit and not cr:
-            cr = default_name
+    _apply_import_default_accounts(
+        bag,
+        accounts_by_id=accounts_by_id,
+        signed_amount=signed,
+        default_import_account_id=default_import_account_id,
+        default_import_normal_balance=default_import_normal_balance,
+    )
+    dr = _account_name_from_bag(bag, "dr-account")
+    cr = _account_name_from_bag(bag, "cr-account")
 
     used_unalloc_dr = False
     used_unalloc_cr = False
@@ -613,13 +908,23 @@ def execute_csv_import(
             cel_msgs = []
 
         try:
+            auto_settlement_review = _maybe_apply_auto_settlement(
+                bag,
+                ledger_service=ledger_service,
+                ledger_settings=ledger_settings,
+                account_ids=account_ids,
+                party_ids=party_ids,
+                accounts_by_id=accounts_by_id,
+                default_import_account_id=payload.default_import_account_id,
+                default_import_normal_balance=payload.default_import_normal_balance,
+            )
             entry = _bag_to_journal_entry(
                 bag,
                 account_ids,
                 party_ids,
                 ledger_settings=ledger_settings,
                 accounts_by_id=accounts_by_id,
-                cel_review_messages=cel_msgs,
+                cel_review_messages=[*cel_msgs, *auto_settlement_review],
                 default_import_account_id=payload.default_import_account_id,
                 default_import_normal_balance=payload.default_import_normal_balance,
             )

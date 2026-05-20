@@ -9,8 +9,21 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
-from tallybadger.api.routes.import_csv import _bag_to_journal_entry, _build_lines_from_array, _convert_cell
-from tallybadger.ledger.models import AccountOut, JournalEntryOut, JournalLineOut, LedgerSettingsOut
+from tallybadger.api.routes.import_csv import (
+    _bag_to_journal_entry,
+    _build_lines_from_array,
+    _convert_cell,
+    _fifo_allocate,
+    _maybe_apply_auto_settlement,
+    _parse_settlement_attr,
+)
+from tallybadger.ledger.models import (
+    AccrualObligationOut,
+    AccountOut,
+    JournalEntryOut,
+    JournalLineOut,
+    LedgerSettingsOut,
+)
 from tallybadger.import_rules.cel_models import CelRule, CelRuleSet
 from tallybadger.import_templates.models import ImportTemplateColumn
 from tallybadger.main import app
@@ -542,3 +555,85 @@ def test_build_lines_from_array_rejects_invalid_obligation_id() -> None:
             {"Cash": 1, "Accounts Receivable": 2},
             {},
         )
+
+
+def test_parse_settlement_attr_rejects_invalid() -> None:
+    with pytest.raises(ValueError, match="receipt"):
+        _parse_settlement_attr({"settlement": "invoice"})
+
+
+def test_maybe_apply_auto_settlement_rejects_line_array() -> None:
+    now = datetime.now(tz=timezone.utc)
+    cash = AccountOut(id=1, name="Cash", type="asset", is_active=True, created_at=now, updated_at=now)
+    rent = AccountOut(id=2, name="Rent Revenue", type="revenue", is_active=True, created_at=now, updated_at=now)
+    ar = AccountOut(id=3, name="Accounts Receivable", type="asset", is_active=True, created_at=now, updated_at=now)
+    settings = LedgerSettingsOut(
+        accounts_receivable_account_id=3,
+        accounts_payable_account_id=None,
+        unearned_revenue_account_id=None,
+        unallocated_debits_account_id=None,
+        unallocated_credits_account_id=None,
+        default_cheque_credit_account_id=None,
+        default_cheque_debit_account_id=None,
+        max_attachment_upload_bytes=5242880,
+        max_cheque_series_count=60,
+        updated_at=now,
+    )
+    bag = {
+        "settlement": "receipt",
+        "line": [{"account": "Cash", "amount": "1.00"}],
+        "amount": "100.00",
+        "date": date(2026, 7, 1),
+        "summary": "x",
+    }
+    ledger = MagicMock()
+    with pytest.raises(ValueError, match="line\\[\\]"):
+        _maybe_apply_auto_settlement(
+            bag,
+            ledger_service=ledger,
+            ledger_settings=settings,
+            account_ids={"Cash": 1, "Rent Revenue": 2, "Accounts Receivable": 3},
+            party_ids={"Pamela": 9},
+            accounts_by_id={1: cash, 2: rent, 3: ar},
+            default_import_account_id=None,
+            default_import_normal_balance=None,
+        )
+
+
+def test_fifo_allocate_orders_by_remaining() -> None:
+    now = datetime.now(tz=timezone.utc)
+    obligations = [
+        AccrualObligationOut(
+            id=1,
+            party_id=1,
+            accrual_plan_id=1,
+            source_entry_id=10,
+            source_entry_date=date(2026, 7, 1),
+            source_entry_summary="a",
+            source_line_id=1,
+            obligation_type="receivable",
+            status="open",
+            original_amount=Decimal("500"),
+            open_amount=Decimal("500"),
+            created_at=now,
+            updated_at=now,
+        ),
+        AccrualObligationOut(
+            id=2,
+            party_id=1,
+            accrual_plan_id=1,
+            source_entry_id=11,
+            source_entry_date=date(2026, 8, 1),
+            source_entry_summary="b",
+            source_line_id=2,
+            obligation_type="receivable",
+            status="open",
+            original_amount=Decimal("800"),
+            open_amount=Decimal("800"),
+            created_at=now,
+            updated_at=now,
+        ),
+    ]
+    allocations, remainder = _fifo_allocate(obligations, Decimal("600"))
+    assert allocations == [(1, Decimal("500")), (2, Decimal("100"))]
+    assert remainder == Decimal("0")
