@@ -84,6 +84,25 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
     [accounts, direction],
   );
 
+  function validateForm(): string | null {
+    if (!name.trim()) {
+      return "Enter a plan name.";
+    }
+    if (!partyId) {
+      return "Select a party.";
+    }
+    if (!targetAccountId) {
+      return "Select a target account.";
+    }
+    if (!bridgeAccountId) {
+      return "Select a bridge account.";
+    }
+    if (!summaryTemplate.trim()) {
+      return "Enter a summary template.";
+    }
+    return null;
+  }
+
   function validateAccountGuardrail(): string | null {
     const target = accounts.find((a) => String(a.id) === targetAccountId);
     const bridge = accounts.find((a) => String(a.id) === bridgeAccountId);
@@ -138,6 +157,12 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
   async function handlePreview(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSubmitError(null);
+    const formError = validateForm();
+    if (formError) {
+      setSubmitError(formError);
+      setPreviewRows([]);
+      return;
+    }
     const guardrailError = validateAccountGuardrail();
     if (guardrailError) {
       setSubmitError(guardrailError);
@@ -158,6 +183,11 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
 
   async function handleCreatePlan() {
     setSubmitError(null);
+    const formError = validateForm();
+    if (formError) {
+      setSubmitError(formError);
+      return;
+    }
     const guardrailError = validateAccountGuardrail();
     if (guardrailError) {
       setSubmitError(guardrailError);

@@ -96,21 +96,36 @@ describe("AccrualPlansSection", () => {
 
     await waitFor(() => expect(screen.getByText("Rent Plan")).toBeInTheDocument());
   });
-});
 
-it("prevents preview when account types do not match direction", async () => {
-  vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }));
-  render(<AccrualPlansSection accounts={accounts} parties={parties} />);
-  const user = userEvent.setup();
+  it("shows a clear message when party is not selected on preview", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }));
+    render(<AccrualPlansSection accounts={accounts} parties={parties} />);
+    const user = userEvent.setup();
 
-  await user.type(screen.getByLabelText("Plan name"), "Bad Revenue Plan");
-  await user.selectOptions(screen.getByLabelText("Plan party"), "1");
-  await user.selectOptions(screen.getByLabelText("Target account"), "2");
-  await user.selectOptions(screen.getByLabelText("Bridge account"), "1");
-  await user.selectOptions(screen.getByLabelText("Plan direction"), "expense");
-  await user.click(screen.getByRole("button", { name: "Preview entries" }));
+    await user.type(screen.getByLabelText("Plan name"), "Rent Plan");
+    await user.selectOptions(screen.getByLabelText("Target account"), "2");
+    await user.selectOptions(screen.getByLabelText("Bridge account"), "1");
+    await user.click(screen.getByRole("button", { name: "Preview entries" }));
 
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Expense plans require an expense target account.",
-  );
+    expect(await screen.findByRole("alert")).toHaveTextContent("Select a party.");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(String(fetchSpy.mock.calls[0]?.[0])).not.toContain("/preview");
+  });
+
+  it("prevents preview when account types do not match direction", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }));
+    render(<AccrualPlansSection accounts={accounts} parties={parties} />);
+    const user = userEvent.setup();
+
+    await user.type(screen.getByLabelText("Plan name"), "Bad Revenue Plan");
+    await user.selectOptions(screen.getByLabelText("Plan party"), "1");
+    await user.selectOptions(screen.getByLabelText("Target account"), "2");
+    await user.selectOptions(screen.getByLabelText("Bridge account"), "1");
+    await user.selectOptions(screen.getByLabelText("Plan direction"), "expense");
+    await user.click(screen.getByRole("button", { name: "Preview entries" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Expense plans require an expense target account.",
+    );
+  });
 });

@@ -17,6 +17,36 @@ describe("messageFromErrorBody", () => {
     ).toBe("field required; invalid type");
   });
 
+  it("labels known fields and rewrites greater-than-zero messages", () => {
+    expect(
+      messageFromErrorBody({
+        detail: [
+          {
+            type: "greater_than",
+            loc: ["body", "party_id"],
+            msg: "Input should be greater than 0",
+            input: 0,
+          },
+        ],
+      }),
+    ).toBe("Select a party.");
+  });
+
+  it("prefixes other validation messages with field labels", () => {
+    expect(
+      messageFromErrorBody({
+        detail: [
+          {
+            type: "string_too_short",
+            loc: ["body", "name"],
+            msg: "String should have at least 1 character",
+            input: "",
+          },
+        ],
+      }),
+    ).toBe("Plan name: String should have at least 1 character");
+  });
+
   it("returns null for unknown shapes", () => {
     expect(messageFromErrorBody(null)).toBeNull();
     expect(messageFromErrorBody({})).toBeNull();
