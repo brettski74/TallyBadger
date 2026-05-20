@@ -45,7 +45,13 @@ from tallybadger.backup.snapshot import (
     tables_for_import,
 )
 from tallybadger.db_migrations import apply_sql_migrations
-from tallybadger.ledger.models import AccountCreate, JournalEntryWrite, JournalLineIn, PartyCreate
+from tallybadger.ledger.models import (
+    AccrualPlanCreate,
+    AccountCreate,
+    JournalEntryWrite,
+    JournalLineIn,
+    PartyCreate,
+)
 from tallybadger.ledger.service import LedgerService
 
 pytestmark = pytest.mark.integration
@@ -217,6 +223,30 @@ def _seed_minimal_ledger(ledger_service: LedgerService) -> None:
                 JournalLineIn(account_id=cash.id, amount=Decimal("250.00")),
                 JournalLineIn(account_id=rent.id, amount=Decimal("-250.00")),
             ],
+        )
+    )
+
+
+def _seed_ledger_with_accrual_plan(ledger_service: LedgerService) -> None:
+    """Chart + one accrual plan that posts journal entries and obligations (#157)."""
+    ar = ledger_service.create_account(AccountCreate(name="Accounts Receivable", type="asset"))
+    rent = ledger_service.create_account(AccountCreate(name="Rent Revenue", type="revenue"))
+    party = ledger_service.create_party(
+        PartyCreate(name="Tenant A", role="customer", is_active=True),
+    )
+    ledger_service.create_accrual_plan(
+        AccrualPlanCreate(
+            name="Rent Plan 2026",
+            direction="revenue",
+            party_id=party.id,
+            target_account_id=rent.id,
+            bridge_account_id=ar.id,
+            frequency="monthly_day",
+            start_date=date(2026, 1, 1),
+            end_date=date(2026, 2, 28),
+            amount=Decimal("1200.00"),
+            summary_template="{plan} {month}",
+            day_of_month=1,
         )
     )
 
@@ -720,6 +750,70 @@ def test_configuration_then_financial_two_step_import(
         import_snapshot(conn, config_zip, restore_mode="abort")
         import_snapshot(conn, fin_zip, restore_mode="abort")
         assert snapshot_table_counts(conn) == full_counts
+
+
+def test_financial_export_includes_accrual_plans(
+    integration_db_url: str,
+    ledger_service: LedgerService,
+) -> None:
+    """#157: accrual_plans ride in financial ZIPs (format_version 1.7.0+)."""
+    _seed_ledger_with_accrual_plan(ledger_service)
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        zip_bytes = export_snapshot(conn, "financial")
+    zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
+    names = {n for n in zf.namelist() if not n.endswith("/")}
+    meta = json.loads(zf.read("metadata.json").decode("utf-8"))
+    assert meta["format_version"] == export_format_version()
+    assert "accrual_plans.json" in names
+    plans = json.loads(zf.read("accrual_plans.json").decode("utf-8"))
+    assert len(plans) == 1
+    assert plans[0]["name"] == "Rent Plan 2026"
+
+
+def test_configuration_then_financial_preserves_accrual_plan_links(
+    integration_db_url: str,
+    ledger_service: LedgerService,
+) -> None:
+    """#157: two-step restore keeps plans with plan-linked journals and obligations."""
+    _seed_ledger_with_accrual_plan(ledger_service)
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        config_zip = export_snapshot(conn, "configuration")
+        fin_zip = export_snapshot(conn, "financial")
+        full_counts = snapshot_table_counts(conn)
+        assert full_counts["accrual_plans"] == 1
+        assert full_counts["journal_entries"] >= 2
+        assert full_counts["accrual_obligations"] >= 2
+
+    zf = zipfile.ZipFile(io.BytesIO(fin_zip))
+    assert "accrual_plans.json" in zf.namelist()
+    zf.close()
+
+    _truncate_all_data(integration_db_url)
+
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        import_snapshot(conn, config_zip, restore_mode="abort")
+        import_snapshot(conn, fin_zip, restore_mode="abort")
+        after = snapshot_table_counts(conn)
+
+    assert after == full_counts
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COUNT(*) AS c
+                FROM journal_entries
+                WHERE accrual_plan_id IS NOT NULL
+                """
+            )
+            assert int(cur.fetchone()["c"]) >= 2
+            cur.execute(
+                """
+                SELECT COUNT(*) AS c
+                FROM accrual_obligations
+                WHERE accrual_plan_id IS NOT NULL
+                """
+            )
+            assert int(cur.fetchone()["c"]) >= 2
 
 
 def test_financial_import_rejects_missing_account_reference(

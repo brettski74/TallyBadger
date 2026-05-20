@@ -5,12 +5,12 @@ import tallybadger.backup.snapshot as snapshot
 
 def test_supported_import_default_history() -> None:
     assert snapshot.supported_import_format_versions() == frozenset(
-        {"1.3.0", "1.4.0", "1.5.0", "1.6.0"}
+        {"1.4.0", "1.5.0", "1.6.0", "1.7.0"}
     )
 
 
-def test_export_format_version_is_one_six_zero() -> None:
-    assert snapshot.export_format_version() == "1.6.0"
+def test_export_format_version_is_one_seven_zero() -> None:
+    assert snapshot.export_format_version() == "1.7.0"
 
 
 def test_configuration_tables_for_format_gates_preset_table() -> None:
@@ -30,6 +30,20 @@ def test_financial_tables_drop_settlement_events_from_one_six_zero() -> None:
     assert "settlement_events" in snapshot.financial_tables_core("1.5.0")
     assert "settlement_events" not in snapshot.financial_tables_core("1.6.0")
     assert "settlement_allocations" in snapshot.financial_tables_core("1.6.0")
+
+
+def test_accrual_plans_in_configuration_before_one_seven_zero() -> None:
+    assert "accrual_plans" in snapshot.configuration_tables_for_format("1.6.0")
+    assert "accrual_plans" not in snapshot.configuration_tables_for_format("1.7.0")
+
+
+def test_accrual_plans_in_financial_from_one_seven_zero() -> None:
+    assert "accrual_plans" not in snapshot.financial_tables_core("1.6.0")
+    assert "accrual_plans" in snapshot.financial_tables_core("1.7.0")
+    fin = snapshot.financial_tables_core("1.7.0")
+    assert fin.index("accrual_plans") < fin.index("journal_entries")
+    if "import_batches" in fin:
+        assert fin.index("import_batches") < fin.index("accrual_plans")
 
 
 def test_supported_import_last_four_window() -> None:

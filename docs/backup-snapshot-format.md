@@ -1,6 +1,6 @@
 # TallyBadger backup snapshot format
 
-This document defines the **versioned ZIP snapshot** used for database backup and restore. It stays aligned with **`format_version`** in `metadata.json` (current export: **1.6.0**; prior archives remain importable per the version window in **[STYLE.md](../STYLE.md)**).
+This document defines the **versioned ZIP snapshot** used for database backup and restore. It stays aligned with **`format_version`** in `metadata.json` (current export: **1.7.0**; prior archives remain importable per the version window in **[STYLE.md](../STYLE.md)**).
 
 Parent product spec: GitHub issue [#16](https://github.com/brettski74/TallyBadger/issues/16). Slice 1 ([#67](https://github.com/brettski74/TallyBadger/issues/67)) shipped **complete** export/import; slice 2 ([#68](https://github.com/brettski74/TallyBadger/issues/68)) adds **`configuration`** and **`financial`** modes with scoped validation and duplicate policies.
 
@@ -43,19 +43,19 @@ The set of data members (excluding `metadata.json`) must match **exactly** the m
 
 ### `configuration`
 
-**Includes:** `accounts`, `parties`, `party_match_patterns`, `accrual_plans`, `ledger_settings`, `cel_rule_sets`, `import_templates`, and from **`format_version` 1.4.0** also `journal_entry_filter_presets`.
+**Includes:** `accounts`, `parties`, `party_match_patterns`, `ledger_settings`, `cel_rule_sets`, `import_templates`, and from **`format_version` 1.4.0** also `journal_entry_filter_presets`. For **`format_version` < 1.7.0**, `accrual_plans` is also included here ([#157](https://github.com/brettski74/TallyBadger/issues/157)).
 
-**Excludes:** `cheques`, `journal_entries`, `journal_lines`, `accrual_obligations`, `settlement_events`, `settlement_allocations`.
+**Excludes:** `cheques`, `journal_entries`, `journal_lines`, `accrual_obligations`, `settlement_events`, `settlement_allocations`. From **1.7.0**, `accrual_plans` (moved to `financial`).
 
-**Use:** chart of accounts, counterparties, accrual **plan** definitions, CEL / import templates, ledger settings, and named journal-entry list filter presets—without posted history or subledger balances.
+**Use:** chart of accounts, counterparties, CEL / import templates, ledger settings, and named journal-entry list filter presets—without posted history or subledger balances. Accrual **plans** and their posted entries ride together in **financial** / **complete** exports from **1.7.0** onward.
 
 ### `financial`
 
-**Includes:** `journal_entries`, `journal_lines`, `accrual_obligations`, `settlement_allocations`, from **`format_version` 1.3.0** also `cheques` (loaded **before** `journal_entries` so `journal_entries.cheque_id` can resolve), from **1.5.0** also `import_batches` (loaded after `cheques` when present, and **before** `journal_entries` so `import_batch_id` can resolve), from **1.2.0** also `journal_entry_review_messages`, and from **1.1.0** also `attachments`, `journal_entry_attachments`, plus **`attachments/*`** blob members listed in `member_manifest`. From **1.6.0**, **`settlement_events.json` is removed** — each row in `settlement_allocations.json` carries **`entry_id`** (FK to `journal_entries`). Archives with **`format_version` < 1.6.0** still include `settlement_events.json`; import normalizes them into allocations-only rows ([#153](https://github.com/brettski74/TallyBadger/issues/153)).
+**Includes:** `journal_entries`, `journal_lines`, `accrual_obligations`, `settlement_allocations`, from **`format_version` 1.3.0** also `cheques` (loaded **before** `journal_entries` so `journal_entries.cheque_id` can resolve), from **1.5.0** also `import_batches` (loaded after `cheques` when present, and **before** `journal_entries` so `import_batch_id` can resolve), from **1.7.0** also `accrual_plans` (loaded after `import_batches` when present, and **before** `journal_entries` so `journal_entries.accrual_plan_id` and `accrual_obligations.accrual_plan_id` can resolve), from **1.2.0** also `journal_entry_review_messages`, and from **1.1.0** also `attachments`, `journal_entry_attachments`, plus **`attachments/*`** blob members listed in `member_manifest`. From **1.6.0**, **`settlement_events.json` is removed** — each row in `settlement_allocations.json` carries **`entry_id`** (FK to `journal_entries`). Archives with **`format_version` < 1.6.0** still include `settlement_events.json`; import normalizes them into allocations-only rows ([#153](https://github.com/brettski74/TallyBadger/issues/153)).
 
-**Excludes:** all configuration tables.
+**Excludes:** configuration tables (`accounts`, `parties`, templates, settings, etc.). From **1.7.0**, `accrual_plans` is **not** excluded.
 
-**Use:** GL activity plus obligation and settlement subledgers. **Does not** embed accounts, parties, or plans; those rows must **already exist** in the target database (for example after a separate `configuration` import), or every foreign key into those tables must resolve to pre-existing rows.
+**Use:** GL activity, accrual plans (from **1.7.0**), obligation and settlement subledgers. **Does not** embed accounts or parties; those rows must **already exist** in the target database (for example after a separate `configuration` import), or every foreign key into those tables must resolve to pre-existing rows. From **1.7.0**, accrual plans referenced by journal entries and obligations are carried in the financial ZIP (same pattern as `import_batches` from **1.5.0**).
 
 ## Data members
 
@@ -68,7 +68,7 @@ Order for the **full** set (partial archives load only the files present, in thi
 1. `accounts.json`
 2. `parties.json`
 3. `party_match_patterns.json`
-4. `accrual_plans.json`
+4. `accrual_plans.json` — **`format_version` < 1.7.0** configuration / complete only; from **1.7.0** financial / complete only (after `import_batches` when present).
 5. `ledger_settings.json`
 6. `cel_rule_sets.json`
 7. `cheques.json` — **1.3.0** `complete` / `financial` only.
@@ -82,7 +82,7 @@ Order for the **full** set (partial archives load only the files present, in thi
 15. `attachments.json` — **1.1.0** `complete` / `financial` only (metadata columns; `blob` is filled from manifest-listed `attachments/*` members).
 16. `journal_entry_attachments.json` — **1.1.0** `complete` / `financial` only.
 17. `import_templates.json`
-18. `journal_entry_filter_presets.json` — **1.4.0** `complete` / `configuration` only. The row's `definition` is a JSON object that round-trips the journal-entry filter dimensions; embedded `account_ids`, `party_ids`, and `accrual_plan_ids` are validated against the archive's configuration members on import (an embedded id with no matching row in the archive aborts the import).
+18. `journal_entry_filter_presets.json` — **1.4.0** `complete` / `configuration` only. The row's `definition` is a JSON object that round-trips the journal-entry filter dimensions; embedded `account_ids` and `party_ids` are validated against the archive's configuration members on import. Embedded `accrual_plan_ids` are validated against `accrual_plans.json` when that file is in the archive (**< 1.7.0** configuration / complete, or **≥ 1.7.0** complete / financial); for **≥ 1.7.0** configuration-only imports, `accrual_plan_ids` must resolve to **existing** `accrual_plans` rows in the target database.
 
 `ledger_settings` is exported as an array (typically one row with `id = 1`). New nullable columns may be added by later migrations (for example `default_cheque_credit_account_id` / `default_cheque_debit_account_id` at schema `020_*` for cheque last-used defaults, [#105](https://github.com/brettski74/TallyBadger/issues/105)); when present they are emitted as JSON `null` or an `accounts.id` integer and are validated as account foreign keys on import. Older archives that omit them remain importable into newer databases — the columns default to `NULL`.
 
@@ -94,7 +94,7 @@ Imports run in a **single transaction** (atomic success or rollback). On entry, 
 
 1. **Integrity:** manifest paths, SHA-256 hashes, and ZIP membership (see [Integrity](#integrity)).
 2. **Shape:** every required table file for the `export_type` is present; each file is a JSON array of objects; columns coerced per [Type mapping](#type-mapping-postgresql--json--import).
-3. **In-archive FKs:** for `complete` snapshots, foreign keys must resolve within the ZIP. For `configuration`, only configuration-table FKs are checked (all targets are in the same archive). For `financial`, FKs must resolve to rows **in the financial JSON** (e.g. `entry_id` on lines) or to **existing rows in the target database** for configuration entities (`account_id`, `party_id`, `accrual_plan_id`, etc.). From **1.5.0**, non-null `journal_entries.import_batch_id` must reference a row in **`import_batches.json`** or an **existing** `import_batches` row in the target database (so a configuration-then-financial two-step restore can still resolve a batch carried only in the financial ZIP). If a referenced `account_id` is neither in the archive nor in the database, import aborts with an explicit error (no multi-archive orchestration in the product).
+3. **In-archive FKs:** for `complete` snapshots, foreign keys must resolve within the ZIP. For `configuration`, only configuration-table FKs are checked (all targets are in the same archive). For `financial`, FKs must resolve to rows **in the financial JSON** (e.g. `entry_id` on lines) or to **existing rows in the target database** for configuration entities (`account_id`, `party_id`, etc.). From **1.5.0**, non-null `journal_entries.import_batch_id` must reference a row in **`import_batches.json`** or an **existing** `import_batches` row in the target database. From **1.7.0**, non-null `accrual_plan_id` on journal entries and obligations must reference **`accrual_plans.json`** or an **existing** `accrual_plans` row in the target database (for archives **< 1.7.0**, plans are configuration-only and must already exist in the target DB). If a referenced `account_id` is neither in the archive nor in the database, import aborts with an explicit error (no multi-archive orchestration in the product).
 4. **Journal:** if `journal_lines.json` is present, per-`entry_id` amounts must sum to **zero**.
 5. **Restore mode** (API/UI **per import only** — not read from the ZIP):
    - **`abort` (default):** load in one transaction. The first failure from PostgreSQL (e.g. primary-key or unique violation, foreign-key violation) or from importer business rules (e.g. unbalanced journal) rolls back the whole import.
@@ -142,7 +142,6 @@ metadata.json
 accounts.json
 parties.json
 party_match_patterns.json
-accrual_plans.json
 ledger_settings.json
 cel_rule_sets.json
 import_templates.json
@@ -175,6 +174,12 @@ settlement_allocations.json
 **`export_type: financial`**, **`format_version` 1.6.0** — same members as **1.5.0** `financial`, but **`settlement_events.json` is omitted**; `settlement_allocations.json` rows include **`entry_id`**.
 
 **`export_type: complete`**, **1.6.0** — union of **1.6.0** `financial` members and **1.4.0** `configuration` members (including `journal_entry_filter_presets.json`).
+
+**`export_type: financial`**, **`format_version` 1.7.0** — same members as **1.6.0** `financial`, plus **`accrual_plans.json`** (after `import_batches.json` when present, before `journal_entries.json`).
+
+**`export_type: configuration`**, **`format_version` 1.7.0** — same members as **1.4.0** `configuration` but **without** `accrual_plans.json`.
+
+**`export_type: complete`**, **1.7.0** — union of **1.7.0** `financial` members and **1.7.0** `configuration` members (including `journal_entry_filter_presets.json`).
 
 Example `accounts.json` snippet:
 

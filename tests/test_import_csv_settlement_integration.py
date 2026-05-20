@@ -396,7 +396,8 @@ def test_csv_execute_second_row_cannot_resettle_obligation_settled_on_first_row(
         '{"set":{"date":attributes["date"],"summary":attributes["summary"],'
         '"line":[{"account":"Cash","amount":"1500.00","party":"Pamela Tenant"},'
         '{"account":"Accounts Receivable","amount":"-1500.00","party":"Pamela Tenant",'
-        f'"obligation-id":{obligation_id}}}]}}'
+        f'"obligation-id": {obligation_id}'
+        "}]}}"
     )
     rs = import_api_client.post(
         "/import-rules/cel/rule-sets",
@@ -423,6 +424,11 @@ def test_csv_execute_second_row_cannot_resettle_obligation_settled_on_first_row(
     r = import_api_client.post("/imports/csv/execute", json=payload)
     assert r.status_code == 422, r.text
     detail = r.json()["detail"]
-    assert detail["row_errors"][0]["row_number"] == 3
-    assert str(obligation_id) in detail["row_errors"][0]["errors"][0]
-    assert _count_rows(integration_db_url, "journal_entries") == 0
+    row_errors = {item["row_number"]: item for item in detail["row_errors"]}
+    assert 3 in row_errors, detail["row_errors"]
+    err = row_errors[3]
+    assert "already" in err["errors"][0].lower() and "settled" in err["errors"][0].lower()
+    assert str(obligation_id) in err["errors"][0]
+    # Batch rolls back the first row's receipt; accrual-plan journal from setup remains.
+    assert _count_rows(integration_db_url, "journal_entries") == 1
+    assert _count_rows(integration_db_url, "import_batches") == 0
