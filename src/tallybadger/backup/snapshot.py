@@ -34,6 +34,7 @@ FORMAT_VERSION_HISTORY: tuple[str, ...] = (
     "1.4.0",
     "1.5.0",
     "1.6.0",
+    "1.7.0",
 )
 
 
@@ -59,7 +60,6 @@ CONFIGURATION_TABLES_BASE: tuple[str, ...] = (
     "accounts",
     "parties",
     "party_match_patterns",
-    "accrual_plans",
     "ledger_settings",
     "cel_rule_sets",
     "import_templates",
@@ -111,9 +111,17 @@ def snapshot_includes_settlement_events(format_version: str) -> bool:
     return _format_version_tuple(format_version) < (1, 6, 0)
 
 
+def snapshot_includes_accrual_plans_in_financial(format_version: str) -> bool:
+    """``accrual_plans.json`` is a financial member for ``format_version`` ≥ 1.7.0 (#157)."""
+    return _format_version_tuple(format_version) >= (1, 7, 0)
+
+
 def configuration_tables_for_format(format_version: str) -> tuple[str, ...]:
     """Configuration snapshot members for ``format_version`` (base ± preset sidecars)."""
     parts: list[str] = list(CONFIGURATION_TABLES_BASE)
+    if not snapshot_includes_accrual_plans_in_financial(format_version):
+        idx = parts.index("party_match_patterns") + 1
+        parts.insert(idx, "accrual_plans")
     if snapshot_includes_filter_presets(format_version):
         parts.append(JOURNAL_ENTRY_FILTER_PRESET_TABLE)
     return tuple(parts)
@@ -134,6 +142,8 @@ def financial_tables_core(format_version: str) -> tuple[str, ...]:
         parts.append("cheques")
     if snapshot_includes_import_batches(format_version):
         parts.append("import_batches")
+    if snapshot_includes_accrual_plans_in_financial(format_version):
+        parts.append("accrual_plans")
     parts.append("journal_entries")
     if _format_version_tuple(format_version) >= (1, 2, 0):
         parts.append("journal_entry_review_messages")
@@ -584,11 +594,19 @@ def _validate_filter_preset_definitions_against_config(
 
 def _validate_configuration_fks(
     payloads: dict[str, list[dict[str, Any]]],
+    *,
+    conn: Connection | None = None,
 ) -> None:
     acct = {int(r["id"]) for r in payloads["accounts"]}
     party = {int(r["id"]) for r in payloads["parties"]}
-    plans = {int(r["id"]) for r in payloads["accrual_plans"]}
     cel = {int(r["id"]) for r in payloads["cel_rule_sets"]}
+
+    if "accrual_plans" in payloads:
+        plans = {int(r["id"]) for r in payloads["accrual_plans"]}
+    elif conn is not None:
+        plans = _existing_ids(conn, "accrual_plans")
+    else:
+        plans = set()
 
     for i, row in enumerate(payloads["party_match_patterns"]):
         pid = row.get("party_id")
@@ -605,7 +623,7 @@ def _validate_configuration_fks(
                     f"parties[{i}] {col}={v} has no matching row in accounts.json"
                 )
 
-    for i, row in enumerate(payloads["accrual_plans"]):
+    for i, row in enumerate(payloads.get("accrual_plans", [])):
         if int(row["party_id"]) not in party:
             raise SnapshotValidationError(
                 f"accrual_plans[{i}] party_id={row['party_id']} has no matching row in parties.json"
@@ -886,7 +904,26 @@ def _validate_financial_fks(
     """Financial rows reference configuration entities that must already exist in the target DB."""
     acct_db = _existing_ids(conn, "accounts")
     party_db = _existing_ids(conn, "parties")
-    plan_db = _existing_ids(conn, "accrual_plans")
+
+    plan_snap: set[int] = set()
+    if "accrual_plans" in payloads:
+        plan_snap = {int(r["id"]) for r in payloads["accrual_plans"]}
+        for i, row in enumerate(payloads["accrual_plans"]):
+            if int(row["party_id"]) not in party_db:
+                raise SnapshotValidationError(
+                    f"accrual_plans[{i}] party_id={row['party_id']} not found in target database."
+                )
+            if int(row["target_account_id"]) not in acct_db:
+                raise SnapshotValidationError(
+                    f"accrual_plans[{i}] target_account_id={row['target_account_id']} "
+                    "not found in target database."
+                )
+            if int(row["bridge_account_id"]) not in acct_db:
+                raise SnapshotValidationError(
+                    f"accrual_plans[{i}] bridge_account_id={row['bridge_account_id']} "
+                    "not found in target database."
+                )
+    plan_db = plan_snap | _existing_ids(conn, "accrual_plans")
 
     chq: set[int] = set()
     if "cheques" in payloads:
@@ -918,6 +955,12 @@ def _validate_financial_fks(
     for i, row in enumerate(payloads["journal_entries"]):
         ap = row.get("accrual_plan_id")
         if ap is not None and int(ap) not in plan_db:
+            if plan_snap and int(ap) not in plan_snap:
+                raise SnapshotValidationError(
+                    f"journal_entries[{i}] accrual_plan_id={ap} not found in accrual_plans.json "
+                    "or in the target database (import configuration first, or include the plan "
+                    "in the financial snapshot)."
+                )
             raise SnapshotValidationError(
                 f"journal_entries[{i}] accrual_plan_id={ap} not found in target database "
                 "(financial snapshots do not include accrual_plans; import configuration first "
@@ -971,6 +1014,11 @@ def _validate_financial_fks(
             )
         ap = row.get("accrual_plan_id")
         if ap is not None and int(ap) not in plan_db:
+            if plan_snap and int(ap) not in plan_snap:
+                raise SnapshotValidationError(
+                    f"accrual_obligations[{i}] accrual_plan_id={ap} not found in accrual_plans.json "
+                    "or in the target database."
+                )
             raise SnapshotValidationError(
                 f"accrual_obligations[{i}] accrual_plan_id={ap} not found in target database."
             )
@@ -1129,7 +1177,7 @@ def import_snapshot(
     if export_type == "complete":
         _validate_complete_fk_graph(payloads, fmt)
     elif export_type == "configuration":
-        _validate_configuration_fks(payloads)
+        _validate_configuration_fks(payloads, conn=conn)
     else:
         _validate_financial_fks(conn, payloads, fmt)
 

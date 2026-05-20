@@ -216,8 +216,8 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
           disabled={backupBusy}
         >
           <option value="complete">Complete — configuration + financial data</option>
-          <option value="configuration">Configuration — chart, parties, templates, settings (no ledger)</option>
-          <option value="financial">Financial — ledger, accrual obligations, settlements</option>
+          <option value="configuration">Configuration — chart, parties, templates, settings (no ledger or accrual plans)</option>
+          <option value="financial">Financial — ledger, accrual plans, obligations, settlements</option>
         </select>
       </label>
 
