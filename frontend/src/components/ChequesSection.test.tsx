@@ -427,7 +427,7 @@ describe("ChequesSection #141 — cheque series", () => {
     await waitFor(() => {
       expect(screen.getByText("Open cheque number already in use on this credit account")).toBeInTheDocument();
     });
-    expect(screen.getByRole("button", { name: "Create series" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /create series/i })).toBeDisabled();
 
     fetchMock.mockRestore();
   });
@@ -500,9 +500,9 @@ describe("ChequesSection #141 — cheque series", () => {
     await user.type(screen.getByLabelText(/^Amount/i), "50");
     await user.click(screen.getByRole("button", { name: "Preview" }));
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Create series" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: /create series/i })).toBeEnabled();
     });
-    await user.click(screen.getByRole("button", { name: "Create series" }));
+    await user.click(screen.getByRole("button", { name: /create series/i }));
 
     await waitFor(() => {
       expect(fetchMock.mock.calls.some((c) => String(c[0]).includes("/cheques/series") && c[1]?.method === "POST")).toBe(
@@ -511,5 +511,256 @@ describe("ChequesSection #141 — cheque series", () => {
     });
 
     fetchMock.mockRestore();
+  });
+});
+
+const openCheque = {
+  id: 7,
+  credit_account_id: 1,
+  debit_account_id: 2,
+  summary: "Open one",
+  cheque_number: 1,
+  issue_date: "2026-05-02",
+  cleared_date: null,
+  amount: "25.00",
+  party_id: null,
+  status: "open" as const,
+  created_at: "2026-04-01T00:00:00Z",
+  updated_at: "2026-04-01T00:00:00Z",
+};
+
+describe("ChequesSection #132 — keyboard shortcuts", () => {
+  it("saves the edit form when Ctrl+S is pressed while focus is inside the edit form", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.includes("/ledger-settings")) {
+        return new Response(JSON.stringify(defaultSettings()), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.includes("/cheques/7") && init?.method === "PATCH") {
+        return new Response(
+          JSON.stringify({ ...openCheque, summary: "Updated via keyboard" }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      return new Response(JSON.stringify([openCheque]), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    render(<ChequesSection accounts={accounts} parties={parties} />);
+
+    const user = userEvent.setup();
+    const table = await screen.findByRole("table");
+    await user.click(within(table).getByText("Open one"));
+    const summaryInput = screen.getByLabelText(/^Summary/i);
+    await user.clear(summaryInput);
+    await user.type(summaryInput, "Updated via keyboard");
+    summaryInput.focus();
+    fireEvent.keyDown(summaryInput, { key: "s", code: "KeyS", ctrlKey: true, bubbles: true });
+
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some((c) => String(c[0]).includes("/cheques/7") && c[1]?.method === "PATCH")).toBe(
+        true,
+      );
+    });
+
+    fetchMock.mockRestore();
+  });
+
+  it("creates a single cheque when Ctrl+S is pressed in the create dialog", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.includes("/ledger-settings")) {
+        return new Response(JSON.stringify(defaultSettings()), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.includes("/cheques") && !url.includes("/series") && init?.method === "POST") {
+        return new Response(
+          JSON.stringify({ ...openCheque, id: 99, summary: "Keyboard create" }),
+          { status: 201, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      return new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    render(<ChequesSection accounts={accounts} parties={parties} />);
+    const user = userEvent.setup();
+    await screen.findByRole("table");
+    await user.click(screen.getByRole("button", { name: "New cheque" }));
+    await user.selectOptions(screen.getByLabelText(/^Credit account/i), "1");
+    await user.selectOptions(screen.getByLabelText(/^Debit account/i), "2");
+    await user.type(screen.getByLabelText(/^Summary/i), "Keyboard create");
+    await user.type(screen.getByLabelText(/^Cheque number/i), "42");
+    fireEvent.change(screen.getByLabelText(/^Issue date/i), { target: { value: "2026-05-10" } });
+    const amountInput = screen.getByLabelText(/^Amount/i);
+    await user.type(amountInput, "100");
+    amountInput.focus();
+    fireEvent.keyDown(amountInput, { key: "s", code: "KeyS", ctrlKey: true, bubbles: true });
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(
+          (c) => String(c[0]).includes("/cheques") && !String(c[0]).includes("/series") && c[1]?.method === "POST",
+        ),
+      ).toBe(true);
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole("heading", { name: "New cheque" })).not.toBeInTheDocument();
+    });
+
+    fetchMock.mockRestore();
+  });
+
+  it("shows series preview when Ctrl+S is pressed on the series form view", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.includes("/ledger-settings")) {
+        return new Response(JSON.stringify(defaultSettings()), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.includes("/cheques/series/preview") && init?.method === "POST") {
+        return new Response(
+          JSON.stringify({
+            rows: [
+              {
+                cheque_number: 10,
+                issue_date: "2026-01-01",
+                amount: "50.00",
+                number_conflict: false,
+              },
+            ],
+            series_count: 1,
+            max_allowed: 60,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      return new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    render(<ChequesSection accounts={accounts} parties={parties} />);
+    const user = userEvent.setup();
+    await screen.findByRole("table");
+    await user.click(screen.getByRole("button", { name: "New cheque" }));
+    await user.click(screen.getByRole("checkbox", { name: /Create as series/i }));
+    await user.selectOptions(screen.getByLabelText(/^Credit account/i), "1");
+    await user.selectOptions(screen.getByLabelText(/^Debit account/i), "2");
+    await user.type(screen.getByLabelText(/^Summary/i), "Series");
+    await user.type(screen.getByLabelText(/Starting cheque number/i), "10");
+    fireEvent.change(screen.getByLabelText(/First issue date/i), { target: { value: "2026-01-01" } });
+    const amountInput = screen.getByLabelText(/^Amount/i);
+    await user.type(amountInput, "50");
+    amountInput.focus();
+    fireEvent.keyDown(amountInput, { key: "s", code: "KeyS", ctrlKey: true, bubbles: true });
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Preview cheque series" })).toBeInTheDocument();
+    });
+    expect(fetchMock.mock.calls.some((c) => String(c[0]).includes("/cheques/series/preview"))).toBe(true);
+
+    fetchMock.mockRestore();
+  });
+
+  it("creates a series when Ctrl+S is pressed on the preview view", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.includes("/ledger-settings")) {
+        return new Response(JSON.stringify(defaultSettings()), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.includes("/cheques/series/preview")) {
+        return new Response(
+          JSON.stringify({
+            rows: [
+              {
+                cheque_number: 10,
+                issue_date: "2026-01-01",
+                amount: "50.00",
+                number_conflict: false,
+              },
+            ],
+            series_count: 1,
+            max_allowed: 60,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (url.includes("/cheques/series") && init?.method === "POST") {
+        return new Response(JSON.stringify([{ ...openCheque, id: 50 }]), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    render(<ChequesSection accounts={accounts} parties={parties} />);
+    const user = userEvent.setup();
+    await screen.findByRole("table");
+    await user.click(screen.getByRole("button", { name: "New cheque" }));
+    await user.click(screen.getByRole("checkbox", { name: /Create as series/i }));
+    await user.selectOptions(screen.getByLabelText(/^Credit account/i), "1");
+    await user.selectOptions(screen.getByLabelText(/^Debit account/i), "2");
+    await user.type(screen.getByLabelText(/^Summary/i), "Series");
+    await user.type(screen.getByLabelText(/Starting cheque number/i), "10");
+    fireEvent.change(screen.getByLabelText(/First issue date/i), { target: { value: "2026-01-01" } });
+    await user.type(screen.getByLabelText(/^Amount/i), "50");
+    await user.click(screen.getByRole("button", { name: "Preview" }));
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /create series \(ctrl\+s\)/i })).toBeEnabled();
+    });
+    // Preview unmounts the Preview button; focus often lands on body, not the submit control.
+    document.body.focus();
+    fireEvent.keyDown(document.body, { key: "s", code: "KeyS", ctrlKey: true, bubbles: true });
+
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some((c) => String(c[0]).includes("/cheques/series") && c[1]?.method === "POST")).toBe(
+        true,
+      );
+    });
+
+    fetchMock.mockRestore();
+  });
+
+  it("closes the create dialog when Ctrl+Shift+D is pressed", async () => {
+    installFetchMock();
+
+    render(<ChequesSection accounts={accounts} parties={parties} />);
+    const user = userEvent.setup();
+    await screen.findByRole("table");
+    await user.click(screen.getByRole("button", { name: "New cheque" }));
+    await user.type(screen.getByLabelText(/^Summary/i), "Discard me");
+    const summaryInput = screen.getByLabelText(/^Summary/i);
+    summaryInput.focus();
+    fireEvent.keyDown(summaryInput, {
+      key: "d",
+      code: "KeyD",
+      ctrlKey: true,
+      shiftKey: true,
+      bubbles: true,
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("heading", { name: "New cheque" })).not.toBeInTheDocument();
+    });
   });
 });

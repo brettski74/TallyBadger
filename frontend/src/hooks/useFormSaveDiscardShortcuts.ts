@@ -36,12 +36,18 @@ export interface FormSaveDiscardShortcutOptions {
   requestEditDiscard: () => void;
   /** Invoked for Ctrl/Cmd+Shift+D while focused in the create form when `inlineCreateActive` is true. */
   requestCreateDiscard?: () => void;
+  /**
+   * When true and not editing, apply create save/discard chords even when focus is outside the
+   * create form (e.g. a modal `<dialog>` after a focused control unmounts on view change).
+   */
+  createDialogActive?: boolean;
 }
 
 /**
  * Save: Ctrl/Cmd+S when focus is inside the owning form (inline create, edit, or create card when not editing).
  * Discard: Ctrl/Cmd+Shift+D — edit discard while editing; optional create discard while inline create is active;
- * or optional `requestCreateDiscard` while focus is in `createFormRef` and `editingId` is null (single-form create flows such as CEL rule sets).
+ * optional `requestCreateDiscard` while focus is in `createFormRef` and `editingId` is null (single-form create flows such as CEL rule sets);
+ * or optional `createDialogActive` for modal create dialogs (Cheques) when focus is not inside the form.
  */
 export function useFormSaveDiscardShortcuts(opts: FormSaveDiscardShortcutOptions): void {
   const optsRef = useRef(opts);
@@ -77,6 +83,15 @@ export function useFormSaveDiscardShortcuts(opts: FormSaveDiscardShortcutOptions
         } else if (!inlineCreate && o.editingId == null && inCreate && !o.createSubmitting && o.canSubmitCreate) {
           e.preventDefault();
           o.requestCreateSubmit();
+        } else if (
+          !inlineCreate &&
+          o.editingId == null &&
+          o.createDialogActive &&
+          !o.createSubmitting &&
+          o.canSubmitCreate
+        ) {
+          e.preventDefault();
+          o.requestCreateSubmit();
         }
         return;
       }
@@ -92,6 +107,15 @@ export function useFormSaveDiscardShortcuts(opts: FormSaveDiscardShortcutOptions
           !inlineCreate &&
           o.editingId == null &&
           inCreate &&
+          !o.createSubmitting &&
+          o.requestCreateDiscard
+        ) {
+          e.preventDefault();
+          o.requestCreateDiscard();
+        } else if (
+          !inlineCreate &&
+          o.editingId == null &&
+          o.createDialogActive &&
           !o.createSubmitting &&
           o.requestCreateDiscard
         ) {

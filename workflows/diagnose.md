@@ -38,4 +38,6 @@ Use this workflow when starting work on a **bug**, **defect**, **regression**, o
 
 - Diagnosis ends with **documentation on the issue**, not merged code. While inside this workflow, avoid large product changes unless the user explicitly directs otherwise (tiny reproducibility spikes may still be discussed case by case).
 - If investigation shows the report is invalid, duplicate, or not reproducible, say so in the comment and agree with the user whether to close or retarget the issue.
+- The diagnose workflow is not for implementing changes. We update the details on the issue with our findings and any other relevant details discussed during diagnosis. Nothing from the user should be interpreted as a direction to start implementing any changes. I repeat, we do not implement changes during the diagnose workflow.
+- Try to keep updates in one diagnosis comment on the issue. If subsequent updates are required after creating the diagnosis comment, make those updates by editing the existing comment rather than creating a new one. If Github MCP does not support editing comments, then insert a new merged comment and inform the user that they may need to clean up the stale comments manually. Don't kid yourself. Github CLI is still not installed.
 
