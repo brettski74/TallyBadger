@@ -4,7 +4,8 @@ from datetime import date, timedelta
 from typing import Any, Literal
 import os
 import re
-from contextlib import AbstractContextManager
+from contextlib import AbstractContextManager, contextmanager
+from dataclasses import dataclass
 from decimal import Decimal
 
 from psycopg import errors
@@ -278,6 +279,51 @@ class LedgerImportBasenameConflictError(LedgerError):
             "An active import batch already uses this file name (ignoring case). "
             "Deactivate the earlier batch or rename the file, then try again.",
         )
+
+
+class LedgerImportBatchEntryError(LedgerValidationError):
+    """Raised when one journal in a CSV import batch fails validation or posting."""
+
+    def __init__(self, entry_index: int, message: str) -> None:
+        super().__init__(message)
+        self.entry_index = entry_index
+
+
+@dataclass(frozen=True)
+class ImportBatchPostingContext:
+    """Open import-batch transaction; post rows in file order so the DB reflects prior rows."""
+
+    batch_id: int
+    _service: "LedgerService"
+    _conn: Any
+    _cur: Any
+    settings: dict[str, Any]
+
+    def list_obligations_for_import_settlement(
+        self,
+        *,
+        party_id: int,
+        target_account_id: int,
+        obligation_type: Literal["receivable", "payable"],
+    ) -> list[AccrualObligationOut]:
+        return self._service._list_obligations_for_import_settlement_cur(
+            self._cur,
+            party_id=party_id,
+            target_account_id=target_account_id,
+            obligation_type=obligation_type,
+        )
+
+    def insert_entry(self, payload: JournalEntryWrite) -> JournalEntryOut:
+        self._service._validate_summary(payload.summary)
+        self._service._validate_lines(payload.lines)
+        _validate_review_request(payload, 0)
+        entry_id = self._service._insert_import_batch_entry(
+            self._cur,
+            payload,
+            batch_id=self.batch_id,
+            settings=self.settings,
+        )
+        return self._service.get_entry(entry_id, conn=self._conn)
 
 
 class LedgerService:
@@ -994,6 +1040,51 @@ class LedgerService:
                 )
                 rows = cur.fetchall()
         return [AccrualObligationOut.model_validate(row) for row in rows]
+
+    @staticmethod
+    def _list_obligations_for_import_settlement_cur(
+        cur,
+        *,
+        party_id: int,
+        target_account_id: int,
+        obligation_type: Literal["receivable", "payable"],
+    ) -> list[AccrualObligationOut]:
+        cur.execute(
+            """
+            SELECT ao.id, ao.party_id, ao.accrual_plan_id, ao.source_entry_id,
+                   je.entry_date AS source_entry_date,
+                   je.summary AS source_entry_summary,
+                   ao.source_line_id, ao.obligation_type, ao.status,
+                   ao.original_amount, ao.open_amount, ao.created_at, ao.updated_at
+            FROM accrual_obligations ao
+            INNER JOIN accrual_plans ap ON ap.id = ao.accrual_plan_id
+            LEFT JOIN journal_entries je ON je.id = ao.source_entry_id
+            WHERE ao.party_id = %s
+              AND ao.obligation_type = %s
+              AND ap.target_account_id = %s
+              AND ao.status IN ('open', 'partially_settled')
+            ORDER BY je.entry_date ASC NULLS LAST, ao.id ASC
+            """,
+            (party_id, obligation_type, target_account_id),
+        )
+        return [AccrualObligationOut.model_validate(row) for row in cur.fetchall()]
+
+    def list_obligations_for_import_settlement(
+        self,
+        *,
+        party_id: int,
+        target_account_id: int,
+        obligation_type: Literal["receivable", "payable"],
+    ) -> list[AccrualObligationOut]:
+        """Open obligations for CSV auto-settlement: party, plan target account, FIFO (#152)."""
+        with self._connection_factory() as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                return self._list_obligations_for_import_settlement_cur(
+                    cur,
+                    party_id=party_id,
+                    target_account_id=target_account_id,
+                    obligation_type=obligation_type,
+                )
 
     def update_obligation_status(
         self, obligation_id: int, payload: ObligationStatusUpdate
@@ -2194,21 +2285,15 @@ class LedgerService:
         except errors.ForeignKeyViolation as exc:
             raise LedgerValidationError("journal line references unknown account") from exc
 
-    def create_import_batch_with_entries(
+    @contextmanager
+    def open_import_batch(
         self,
         *,
         basename: str,
         content_sha256: bytes,
-        payloads: list[JournalEntryWrite],
         confirm_duplicate_content: bool,
-    ) -> tuple[int, list[JournalEntryOut]]:
-        if not payloads:
-            raise LedgerValidationError("import batch requires at least one journal entry")
-        for payload in payloads:
-            self._validate_summary(payload.summary)
-            self._validate_lines(payload.lines)
-            _validate_review_request(payload, 0)
-        created_ids: list[int] = []
+    ):
+        """Yield a posting context inside one transaction (batch row + per-row journal inserts)."""
         try:
             with self._connection_factory() as conn:
                 with conn.transaction():
@@ -2244,17 +2329,47 @@ class LedgerService:
                                 raise LedgerImportBasenameConflictError() from exc
                             raise
                         settings = self._fetch_settings_row(cur)
-                        for payload in payloads:
-                            entry_id = self._insert_import_batch_entry(
-                                cur,
-                                payload,
-                                batch_id=batch_id,
-                                settings=settings,
-                            )
-                            created_ids.append(entry_id)
-                    return batch_id, [self.get_entry(entry_id, conn=conn) for entry_id in created_ids]
+                        yield ImportBatchPostingContext(
+                            batch_id=batch_id,
+                            _service=self,
+                            _conn=conn,
+                            _cur=cur,
+                            settings=settings,
+                        )
+        except (
+            LedgerDuplicateImportContentError,
+            LedgerImportBasenameConflictError,
+            LedgerImportBatchEntryError,
+        ):
+            raise
         except errors.ForeignKeyViolation as exc:
             raise LedgerValidationError("journal line references unknown account") from exc
+
+    def create_import_batch_with_entries(
+        self,
+        *,
+        basename: str,
+        content_sha256: bytes,
+        payloads: list[JournalEntryWrite],
+        confirm_duplicate_content: bool,
+    ) -> tuple[int, list[JournalEntryOut]]:
+        if not payloads:
+            raise LedgerValidationError("import batch requires at least one journal entry")
+        try:
+            with self.open_import_batch(
+                basename=basename,
+                content_sha256=content_sha256,
+                confirm_duplicate_content=confirm_duplicate_content,
+            ) as posting:
+                created: list[JournalEntryOut] = []
+                for entry_index, payload in enumerate(payloads):
+                    try:
+                        created.append(posting.insert_entry(payload))
+                    except LedgerValidationError as exc:
+                        raise LedgerImportBatchEntryError(entry_index, str(exc)) from exc
+                return posting.batch_id, created
+        except LedgerImportBatchEntryError:
+            raise
 
     def list_import_batches(self, *, limit: int = 200) -> list[ImportBatchListItem]:
         if limit < 1 or limit > 500:
@@ -3090,7 +3205,9 @@ class LedgerService:
             if row["party_id"] != party_id:
                 raise LedgerValidationError("all obligations must belong to the selected party")
             if row["status"] in {"settled", "reconciled"}:
-                raise LedgerValidationError("cannot settle obligations that are already settled/reconciled")
+                raise LedgerValidationError(
+                    LedgerService._already_settled_obligation_message(row),
+                )
             if row["source_entry_id"] is None:
                 row["source_entry_date"] = None
                 row["source_entry_summary"] = None
@@ -3105,6 +3222,13 @@ class LedgerService:
                 (source["summary"] or "").strip() or None if source else None
             )
         return ordered
+
+    @staticmethod
+    def _already_settled_obligation_message(row: dict) -> str:
+        return (
+            f"cannot settle obligation {row['id']}: already {row['status']} "
+            "(settled/reconciled obligations cannot be settled again)"
+        )
 
     @staticmethod
     def _settlement_journal_summary(obligations, allocation_by_id: dict[int, Decimal]) -> str:
@@ -3288,7 +3412,9 @@ class LedgerService:
         ordered = [by_id[oid] for oid in obligation_ids]
         for row in ordered:
             if row["status"] in {"settled", "reconciled"}:
-                raise LedgerValidationError("cannot settle obligations that are already settled/reconciled")
+                raise LedgerValidationError(
+                    self._already_settled_obligation_message(row),
+                )
             if row["source_entry_id"] is None:
                 row["source_entry_date"] = None
                 row["source_entry_summary"] = None

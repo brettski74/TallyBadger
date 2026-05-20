@@ -384,3 +384,45 @@ def test_csv_execute_rejects_unknown_obligation_id(
     assert ex.status_code == 422, ex.text
     detail = ex.json()["detail"]
     assert "obligation" in detail["row_errors"][0]["errors"][0].lower()
+
+
+def test_csv_execute_second_row_cannot_resettle_obligation_settled_on_first_row(
+    import_api_client: TestClient,
+    integration_db_url: str,
+) -> None:
+    """Author ``line[]`` on two rows: second row fails after first settles the same obligation."""
+    party_id, cash_id, ar_id, obligation_id, _ = _setup_rent_accrual(import_api_client)
+    line_expr = (
+        '{"set":{"date":attributes["date"],"summary":attributes["summary"],'
+        '"line":[{"account":"Cash","amount":"1500.00","party":"Pamela Tenant"},'
+        '{"account":"Accounts Receivable","amount":"-1500.00","party":"Pamela Tenant",'
+        f'"obligation-id":{obligation_id}}}]}}'
+    )
+    rs = import_api_client.post(
+        "/import-rules/cel/rule-sets",
+        json={
+            "name": "dup line settle",
+            "rule_set": {"rules": [{"sort_order": 10, "expression": line_expr}]},
+        },
+    )
+    assert rs.status_code == 201, rs.text
+    payload = {
+        "csv_text": (
+            "date,summary\n"
+            "2026-07-15,First receipt\n"
+            "2026-07-16,Second receipt\n"
+        ),
+        "basename": "dup-line-settle.csv",
+        "has_header_row": True,
+        "columns": [
+            {"attribute_name": "date", "data_type": "date", "date_format": "YYYY-MM-DD"},
+            {"attribute_name": "summary", "data_type": "string"},
+        ],
+        "cel_rule_set_id": rs.json()["id"],
+    }
+    r = import_api_client.post("/imports/csv/execute", json=payload)
+    assert r.status_code == 422, r.text
+    detail = r.json()["detail"]
+    assert detail["row_errors"][0]["row_number"] == 3
+    assert str(obligation_id) in detail["row_errors"][0]["errors"][0]
+    assert _count_rows(integration_db_url, "journal_entries") == 0

@@ -169,7 +169,7 @@ Rules:
 
 Receipt settlements use the **accounts receivable** bridge (negative amount on A/R); payments use **accounts payable** (positive amount on A/P). Row validation rejects unknown obligations, duplicate ids on one entry, amounts exceeding `open_amount`, party mismatch, and wrong bridge account or sign.
 
-Posting (in `create_import_batch_with_entries`, same transaction as the journal insert):
+Posting (each CSV row in file order inside `open_import_batch`, one transaction for the whole file):
 
 1. Collect **`obligation-id`** lines and build allocations with amount **`|amount|`**.
 2. **Exact same-day collapse** (import-only, stricter than manual “same accrual day”): exactly one obligation line, full pay, row **`date`** equals accrual **`entry_date`**, and the import row is exactly **cash + bridge reduction** (two lines). The accrual journal entry is rewritten in place, stamped with **`import_batch_id`**, and **`settlement_allocations`** point at that accrual entry — no separate import JE.
@@ -196,6 +196,65 @@ Example (exact same-day collapse — only cash + one obligation line, date match
 ```
 
 The optional top-level **`settlement`** auto-build attribute ([#152](https://github.com/brettski74/TallyBadger/issues/152)) is **not** required when authors supply **`line[]`** with **`obligation-id`**.
+
+---
+
+## `settlement` auto-build attribute ([#152](https://github.com/brettski74/TallyBadger/issues/152))
+
+After CEL and **import default account** resolution, the CSV path may set **`settlement`** to **`receipt`** or **`payment`**. The engine matches open obligations, allocates **FIFO** (`source_entry_date`, then `id`), synthesizes **`line[]`** (cash + A/R or A/P bridges with **`obligation-id`**), and posts through the [#151](https://github.com/brettski74/TallyBadger/issues/151) import settlement path.
+
+| `settlement` | Behaviour |
+|--------------|-----------|
+| `receipt` | Auto-build receivable settlement `line[]` |
+| `payment` | Auto-build payable settlement `line[]` |
+| unset / null | No auto-settlement (unchanged) |
+
+### Mutual exclusion
+
+If **`settlement`** is `receipt` or `payment` **and** the bag already has **`line[]`** → row **422** (*settlement cannot be used together with line[]*).
+
+### Preconditions (else simple journal + review)
+
+**Receipt:** `cr-party`, `cr-account` (P&amp;L hint, e.g. Rent Revenue); `dr-account` is **asset** or **liability** (cash/bank); `amount`, `date`, `summary`; accounts receivable configured in ledger settings.
+
+**Payment:** `dr-party`, `dr-account` (P&amp;L hint); `cr-account` is **asset** or **liability**; `amount`, `date`, `summary`; accounts payable configured.
+
+Both `dr-account` and `cr-account` must be present after import defaults (no unallocated suspense fallback for the settlement attempt).
+
+### FIFO matching
+
+Open obligations for the party where the accrual plan **`target_account_id`** equals the P&amp;L hint account (`cr-account` for receipts, `dr-account` for payments), type **receivable** or **payable**, ordered by accrual **`source_entry_date`** then **`id`**.
+
+### Auto-built outcomes
+
+| Case | Behaviour |
+|------|-----------|
+| Fully allocated | Cash + bridge lines only |
+| Receipt overpay / no more obligations | Remainder on **`cr-account`** (P&amp;L hint) + **review** (not unearned revenue) |
+| Payment overpay | Remainder on **`dr-account`** + **review** |
+| No matching obligations | Simple journal from bag + **review** |
+| Preconditions fail | Simple journal + **review** (one message per failed precondition, with field names and values) |
+
+Review messages are merged with CEL **`review_messages`** and other import review reasons. When auto-settlement preconditions fail, each unmet check produces its own review message (for example missing `cr-party`, unknown account name, or cash account not asset/liability).
+
+CSV execute posts rows **in file order inside one database transaction**: each row’s auto-settlement and journal insert see obligation updates from earlier rows in the same import (uncommitted until the batch commits). A second auto-settlement receipt for an already-settled accrual typically posts as a simple journal with **review** (no open obligations). Explicit **`line[]`** rows that reference an obligation already settled earlier in the import return **422** **`row_errors`** with **`row_number`** (1-based **file line**; first data row is line **2** when a header row is present), including obligation id when applicable.
+
+### Authoring example (Pamela rent receipt)
+
+```cel
+{
+  "set": {
+    "settlement": "receipt",
+    "summary": "Pamela rent",
+    "amount": attr["amt"],
+    "date": attr["date"],
+    "cr-account": "Rent Revenue",
+    "cr-party": "Pamela Person"
+  }
+}
+```
+
+(`dr-account` comes from the template **`default_import_account_id`** — e.g. chequing — before matching.)
 
 ---
 

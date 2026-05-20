@@ -9,6 +9,7 @@ import re
 from pathlib import PurePath
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
+from dataclasses import dataclass, field
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -25,15 +26,19 @@ from tallybadger.import_rules.errors import ImportRulesCelError
 from tallybadger.import_templates.models import ImportTemplateColumn
 from tallybadger.ledger.models import (
     AccountOut,
+    AccrualObligationOut,
     ImportBatchListItem,
     JournalEntryOut,
     JournalEntryWrite,
     JournalLineIn,
     LedgerSettingsOut,
+    SettlementType,
 )
 from tallybadger.ledger.service import (
     LedgerDuplicateImportContentError,
     LedgerImportBasenameConflictError,
+    ImportBatchPostingContext,
+    LedgerImportBatchEntryError,
     LedgerNotFoundError,
     LedgerService,
     LedgerValidationError,
@@ -299,6 +304,374 @@ def _resolve_unallocated_account_name(
     return acct.name
 
 
+_CASH_SIDE_ACCOUNT_TYPES = frozenset({"asset", "liability"})
+
+
+def _parse_settlement_attr(bag: dict[str, Any]) -> SettlementType | None:
+    raw = bag.get("settlement")
+    if raw is None or raw == "":
+        return None
+    value = str(raw).strip().lower()
+    if not value:
+        return None
+    if value in ("receipt", "payment"):
+        return value  # type: ignore[return-value]
+    raise ValueError("settlement must be 'receipt', 'payment', or unset")
+
+
+def _account_name_from_bag(bag: dict[str, Any], key: str) -> str:
+    raw = bag.get(key)
+    if raw is None:
+        return ""
+    return str(raw).strip()
+
+
+def _party_name_from_bag(bag: dict[str, Any], key: str) -> str:
+    return _account_name_from_bag(bag, key)
+
+
+def _apply_import_default_accounts(
+    bag: dict[str, Any],
+    *,
+    accounts_by_id: dict[int, AccountOut],
+    signed_amount: Decimal,
+    default_import_account_id: int | None,
+    default_import_normal_balance: str | None,
+) -> None:
+    if default_import_account_id is None:
+        return
+    default_name = _default_import_account_name(default_import_account_id, accounts_by_id)
+    if default_import_normal_balance in ("debit", "credit"):
+        normal = default_import_normal_balance
+    else:
+        normal = _infer_normal_from_account_type(
+            accounts_by_id[default_import_account_id].type,
+        )
+    debit_normal = normal == "debit"
+    default_on_debit = (signed_amount > Decimal("0")) == debit_normal
+    if default_on_debit and not _account_name_from_bag(bag, "dr-account"):
+        bag["dr-account"] = default_name
+    elif not default_on_debit and not _account_name_from_bag(bag, "cr-account"):
+        bag["cr-account"] = default_name
+
+
+def _account_name_by_id(account_id: int, accounts_by_id: dict[int, AccountOut]) -> str | None:
+    acct = accounts_by_id.get(account_id)
+    if acct is None or not acct.is_active:
+        return None
+    return acct.name
+
+
+@dataclass(frozen=True)
+class _SettlementPreconditionResult:
+    failures: tuple[str, ...] = ()
+    settlement_type: SettlementType | None = None
+    party_name: str = ""
+    cash_account_name: str = ""
+    pl_account_name: str = ""
+    party_id: int | None = None
+    pl_account_id: int | None = None
+    cash_account_id: int | None = None
+
+    @property
+    def ok(self) -> bool:
+        return not self.failures
+
+
+def _auto_settlement_precondition_review_messages(*details: str) -> list[str]:
+    return [f"Auto-settlement: {detail}" for detail in details]
+
+
+def _check_auto_settlement_preconditions(
+    bag: dict[str, Any],
+    settlement_type: SettlementType,
+    *,
+    account_ids: dict[str, int],
+    party_ids: dict[str, int],
+    accounts_by_id: dict[int, AccountOut],
+    ledger_settings: LedgerSettingsOut,
+) -> _SettlementPreconditionResult:
+    failures: list[str] = []
+    if settlement_type == "receipt":
+        if ledger_settings.accounts_receivable_account_id is None:
+            failures.append(
+                "accounts receivable is not configured in ledger settings "
+                f"(settlement={settlement_type!r}).",
+            )
+        party_key, pl_key, cash_key = "cr-party", "cr-account", "dr-account"
+    else:
+        if ledger_settings.accounts_payable_account_id is None:
+            failures.append(
+                "accounts payable is not configured in ledger settings "
+                f"(settlement={settlement_type!r}).",
+            )
+        party_key, pl_key, cash_key = "dr-party", "dr-account", "cr-account"
+
+    party_name = _party_name_from_bag(bag, party_key)
+    pl_name = _account_name_from_bag(bag, pl_key)
+    cash_name = _account_name_from_bag(bag, cash_key)
+
+    if not party_name:
+        failures.append(f"{party_key} is missing (settlement={settlement_type!r}).")
+    elif party_name not in party_ids:
+        failures.append(
+            f"{party_key} {party_name!r} is not a known party "
+            f"(settlement={settlement_type!r}).",
+        )
+
+    if not pl_name:
+        failures.append(
+            f"{pl_key} is missing (P&L hint account; settlement={settlement_type!r}).",
+        )
+    elif pl_name not in account_ids:
+        failures.append(
+            f"{pl_key} {pl_name!r} is not a known account (settlement={settlement_type!r}).",
+        )
+
+    if not cash_name:
+        failures.append(
+            f"{cash_key} is missing (cash/bank account; settlement={settlement_type!r}).",
+        )
+    elif cash_name not in account_ids:
+        failures.append(
+            f"{cash_key} {cash_name!r} is not a known account (settlement={settlement_type!r}).",
+        )
+    else:
+        cash_acct = accounts_by_id.get(account_ids[cash_name])
+        if cash_acct is None:
+            failures.append(
+                f"{cash_key} {cash_name!r} could not be resolved (settlement={settlement_type!r}).",
+            )
+        elif cash_acct.type not in _CASH_SIDE_ACCOUNT_TYPES:
+            failures.append(
+                f"{cash_key} {cash_name!r} must be asset or liability; got type "
+                f"{cash_acct.type!r} (settlement={settlement_type!r}).",
+            )
+
+    date_raw = bag.get("date")
+    try:
+        _to_entry_date(date_raw)
+    except ValueError as exc:
+        failures.append(f"date is invalid: {exc} (value={date_raw!r}).")
+
+    try:
+        _require_string(bag, "summary")
+    except ValueError as exc:
+        failures.append(f"summary is invalid: {exc}.")
+
+    amount_raw = bag.get("amount")
+    try:
+        amount = _to_decimal_any(amount_raw, field="amount")
+        if amount == Decimal("0"):
+            failures.append(f"amount must be non-zero (value={amount_raw!r}).")
+    except ValueError as exc:
+        failures.append(f"amount is invalid: {exc} (value={amount_raw!r}).")
+
+    if failures:
+        return _SettlementPreconditionResult(failures=tuple(failures))
+
+    return _SettlementPreconditionResult(
+        settlement_type=settlement_type,
+        party_name=party_name,
+        cash_account_name=cash_name,
+        pl_account_name=pl_name,
+        party_id=party_ids[party_name],
+        pl_account_id=account_ids[pl_name],
+        cash_account_id=account_ids[cash_name],
+    )
+
+
+def _fifo_allocate(
+    obligations: list[AccrualObligationOut],
+    total: Decimal,
+) -> tuple[list[tuple[int, Decimal]], Decimal]:
+    remaining = total
+    allocations: list[tuple[int, Decimal]] = []
+    for obligation in obligations:
+        if remaining <= Decimal("0"):
+            break
+        open_amt = obligation.open_amount
+        if open_amt <= Decimal("0"):
+            continue
+        alloc = min(open_amt, remaining)
+        allocations.append((obligation.id, alloc))
+        remaining -= alloc
+    return allocations, remaining
+
+
+def _format_line_amount(amount: Decimal) -> str:
+    return format(amount, "f")
+
+
+def _build_auto_settlement_line_array(
+    *,
+    settlement_type: SettlementType,
+    pre: _SettlementPreconditionResult,
+    total: Decimal,
+    allocations: list[tuple[int, Decimal]],
+    remainder: Decimal,
+    bridge_account_name: str,
+) -> list[dict[str, Any]]:
+    party = pre.party_name
+    lines: list[dict[str, Any]] = []
+    if settlement_type == "receipt":
+        lines.append(
+            {
+                "account": pre.cash_account_name,
+                "amount": _format_line_amount(total),
+                "party": party,
+            },
+        )
+        for obligation_id, alloc in allocations:
+            lines.append(
+                {
+                    "account": bridge_account_name,
+                    "amount": _format_line_amount(-alloc),
+                    "party": party,
+                    "obligation-id": obligation_id,
+                },
+            )
+        if remainder > Decimal("0"):
+            lines.append(
+                {
+                    "account": pre.pl_account_name,
+                    "amount": _format_line_amount(-remainder),
+                    "party": party,
+                },
+            )
+    else:
+        lines.append(
+            {
+                "account": pre.cash_account_name,
+                "amount": _format_line_amount(-total),
+                "party": party,
+            },
+        )
+        for obligation_id, alloc in allocations:
+            lines.append(
+                {
+                    "account": bridge_account_name,
+                    "amount": _format_line_amount(alloc),
+                    "party": party,
+                    "obligation-id": obligation_id,
+                },
+            )
+        if remainder > Decimal("0"):
+            lines.append(
+                {
+                    "account": pre.pl_account_name,
+                    "amount": _format_line_amount(remainder),
+                    "party": party,
+                },
+            )
+    return lines
+
+
+def _maybe_apply_auto_settlement(
+    bag: dict[str, Any],
+    *,
+    ledger_service: LedgerService,
+    ledger_settings: LedgerSettingsOut,
+    account_ids: dict[str, int],
+    party_ids: dict[str, int],
+    accounts_by_id: dict[int, AccountOut],
+    default_import_account_id: int | None,
+    default_import_normal_balance: str | None,
+    posting_context: ImportBatchPostingContext | None = None,
+) -> list[str]:
+    """When ``settlement`` is receipt/payment, match obligations and synthesize ``line[]`` (#152)."""
+    settlement_type = _parse_settlement_attr(bag)
+    if settlement_type is None:
+        return []
+
+    if _has_nonempty_line_array(bag):
+        raise ValueError("settlement cannot be used together with line[]")
+
+    if not _has_simple_amount(bag):
+        return _auto_settlement_precondition_review_messages(
+            "amount is missing or empty.",
+        )
+
+    signed = _to_decimal_any(bag.get("amount"), field="amount")
+    if signed == Decimal("0"):
+        return _auto_settlement_precondition_review_messages(
+            f"amount must be non-zero (value={bag.get('amount')!r}).",
+        )
+
+    _apply_import_default_accounts(
+        bag,
+        accounts_by_id=accounts_by_id,
+        signed_amount=signed,
+        default_import_account_id=default_import_account_id,
+        default_import_normal_balance=default_import_normal_balance,
+    )
+
+    pre = _check_auto_settlement_preconditions(
+        bag,
+        settlement_type,
+        account_ids=account_ids,
+        party_ids=party_ids,
+        accounts_by_id=accounts_by_id,
+        ledger_settings=ledger_settings,
+    )
+    if not pre.ok or pre.party_id is None or pre.pl_account_id is None:
+        return _auto_settlement_precondition_review_messages(*pre.failures)
+
+    assert pre.settlement_type is not None
+    obligation_type = "receivable" if pre.settlement_type == "receipt" else "payable"
+    if posting_context is not None:
+        obligations = posting_context.list_obligations_for_import_settlement(
+            party_id=pre.party_id,
+            target_account_id=pre.pl_account_id,
+            obligation_type=obligation_type,
+        )
+    else:
+        obligations = ledger_service.list_obligations_for_import_settlement(
+            party_id=pre.party_id,
+            target_account_id=pre.pl_account_id,
+            obligation_type=obligation_type,
+        )
+    if not obligations:
+        return ["Auto-settlement could not match open obligations; posted as a simple journal entry."]
+
+    total = abs(signed)
+    allocations, remainder = _fifo_allocate(obligations, total)
+    if not allocations:
+        return ["Auto-settlement could not match open obligations; posted as a simple journal entry."]
+
+    if pre.settlement_type == "receipt":
+        bridge_id = ledger_settings.accounts_receivable_account_id
+    else:
+        bridge_id = ledger_settings.accounts_payable_account_id
+    assert bridge_id is not None
+    bridge_name = _account_name_by_id(bridge_id, accounts_by_id)
+    if bridge_name is None:
+        return _auto_settlement_precondition_review_messages(
+            f"settlement bridge account id {bridge_id} is missing or inactive in the chart.",
+        )
+
+    review_messages: list[str] = []
+    if remainder > Decimal("0"):
+        review_messages.append(
+            "Auto-settlement applied with an unallocated remainder on the P&L account.",
+        )
+
+    bag["line"] = _build_auto_settlement_line_array(
+        settlement_type=pre.settlement_type,
+        pre=pre,
+        total=total,
+        allocations=allocations,
+        remainder=remainder,
+        bridge_account_name=bridge_name,
+    )
+    bag.pop("amount", None)
+    bag.pop("dr-account", None)
+    bag.pop("cr-account", None)
+    bag.pop("dr-party", None)
+    bag.pop("cr-party", None)
+    return review_messages
+
+
 def _build_lines_from_simple(
     bag: dict[str, Any],
     account_ids: dict[str, int],
@@ -309,32 +682,23 @@ def _build_lines_from_simple(
     default_import_account_id: int | None = None,
     default_import_normal_balance: str | None = None,
 ) -> tuple[list[JournalLineIn], bool, bool, bool]:
-    dr = str(bag.get("dr-account") or "").strip()
-    cr = str(bag.get("cr-account") or "").strip()
+    dr = _account_name_from_bag(bag, "dr-account")
+    cr = _account_name_from_bag(bag, "cr-account")
 
     signed = _to_decimal_any(bag.get("amount"), field="amount")
     if signed == Decimal("0"):
         raise ValueError("amount must be non-zero")
     mag = abs(signed)
 
-    default_name: str | None = None
-    normal: str | None = None
-    if default_import_account_id is not None:
-        default_name = _default_import_account_name(default_import_account_id, accounts_by_id)
-        if default_import_normal_balance in ("debit", "credit"):
-            normal = default_import_normal_balance
-        else:
-            normal = _infer_normal_from_account_type(
-                accounts_by_id[default_import_account_id].type,
-            )
-
-    if default_name and normal:
-        debit_normal = normal == "debit"
-        default_on_debit = (signed > Decimal("0")) == debit_normal
-        if default_on_debit and not dr:
-            dr = default_name
-        elif not default_on_debit and not cr:
-            cr = default_name
+    _apply_import_default_accounts(
+        bag,
+        accounts_by_id=accounts_by_id,
+        signed_amount=signed,
+        default_import_account_id=default_import_account_id,
+        default_import_normal_balance=default_import_normal_balance,
+    )
+    dr = _account_name_from_bag(bag, "dr-account")
+    cr = _account_name_from_bag(bag, "cr-account")
 
     used_unalloc_dr = False
     used_unalloc_cr = False
@@ -524,6 +888,28 @@ def unload_import_batch(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
 
+@dataclass
+class _PendingCsvRow:
+    row_number: int
+    bag: dict[str, Any]
+    cel_messages: list[str] = field(default_factory=list)
+    row_debug: list[CelDebugEvent] | None = None
+
+
+def _raise_csv_row_validation_errors(
+    row_errors: list[CsvImportRowError],
+    *,
+    message: str = "CSV import failed validation",
+) -> None:
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        detail={
+            "message": message,
+            "row_errors": [item.model_dump(mode="json") for item in row_errors],
+        },
+    )
+
+
 @router.post("/imports/csv/execute", response_model=CsvImportExecuteResult)
 def execute_csv_import(
     payload: CsvImportExecuteRequest,
@@ -553,8 +939,7 @@ def execute_csv_import(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="CSV has no rows")
     data_rows = rows[1:] if payload.has_header_row else rows
 
-    pending_entries: list[JournalEntryWrite] = []
-    pending_row_debug: list[list[CelDebugEvent] | None] = []
+    pending_rows: list[_PendingCsvRow] = []
     row_errors: list[CsvImportRowError] = []
     dropped_rows = 0
     start_row_number = 2 if payload.has_header_row else 1
@@ -612,41 +997,14 @@ def execute_csv_import(
         else:
             cel_msgs = []
 
-        try:
-            entry = _bag_to_journal_entry(
-                bag,
-                account_ids,
-                party_ids,
-                ledger_settings=ledger_settings,
-                accounts_by_id=accounts_by_id,
-                cel_review_messages=cel_msgs,
-                default_import_account_id=payload.default_import_account_id,
-                default_import_normal_balance=payload.default_import_normal_balance,
-            )
-            try:
-                ledger_service.validate_import_entry_settlements(entry)
-            except LedgerValidationError as exc:
-                row_errors.append(
-                    CsvImportRowError(row_number=idx, errors=[str(exc)], debug=row_debug),
-                )
-                continue
-            pending_entries.append(entry)
-            pending_row_debug.append(row_debug)
-        except (ValueError, LedgerValidationError) as exc:
-            row_errors.append(
-                CsvImportRowError(row_number=idx, errors=[str(exc)], debug=row_debug),
-            )
-
-    if row_errors:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail={
-                "message": "CSV import failed validation",
-                "row_errors": [item.model_dump(mode="json") for item in row_errors],
-            },
+        pending_rows.append(
+            _PendingCsvRow(row_number=idx, bag=bag, cel_messages=cel_msgs, row_debug=row_debug),
         )
 
-    if not pending_entries:
+    if row_errors:
+        _raise_csv_row_validation_errors(row_errors)
+
+    if not pending_rows:
         return CsvImportExecuteResult(
             posted_entries=0,
             dropped_rows=dropped_rows,
@@ -659,12 +1017,42 @@ def execute_csv_import(
     content_sha256 = hashlib.sha256(payload.csv_text.encode("utf-8")).digest()
 
     try:
-        batch_id, created = ledger_service.create_import_batch_with_entries(
+        with ledger_service.open_import_batch(
             basename=payload.basename,
             content_sha256=content_sha256,
-            payloads=pending_entries,
             confirm_duplicate_content=payload.confirm_duplicate_content,
-        )
+        ) as posting:
+            created: list[JournalEntryOut] = []
+            for entry_index, pending in enumerate(pending_rows):
+                try:
+                    auto_settlement_review = _maybe_apply_auto_settlement(
+                        pending.bag,
+                        ledger_service=ledger_service,
+                        ledger_settings=ledger_settings,
+                        account_ids=account_ids,
+                        party_ids=party_ids,
+                        accounts_by_id=accounts_by_id,
+                        default_import_account_id=payload.default_import_account_id,
+                        default_import_normal_balance=payload.default_import_normal_balance,
+                        posting_context=posting,
+                    )
+                    entry = _bag_to_journal_entry(
+                        pending.bag,
+                        account_ids,
+                        party_ids,
+                        ledger_settings=ledger_settings,
+                        accounts_by_id=accounts_by_id,
+                        cel_review_messages=[
+                            *pending.cel_messages,
+                            *auto_settlement_review,
+                        ],
+                        default_import_account_id=payload.default_import_account_id,
+                        default_import_normal_balance=payload.default_import_normal_balance,
+                    )
+                    created.append(posting.insert_entry(entry))
+                except (ValueError, LedgerValidationError) as exc:
+                    raise LedgerImportBatchEntryError(entry_index, str(exc)) from exc
+            batch_id = posting.batch_id
     except LedgerDuplicateImportContentError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -681,13 +1069,27 @@ def execute_csv_import(
                 "message": str(exc),
             },
         ) from exc
+    except LedgerImportBatchEntryError as exc:
+        pending = pending_rows[exc.entry_index]
+        _raise_csv_row_validation_errors(
+            [
+                CsvImportRowError(
+                    row_number=pending.row_number,
+                    errors=[str(exc)],
+                    debug=pending.row_debug,
+                ),
+            ],
+        )
     except LedgerValidationError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
 
     entries_out: list[CsvJournalEntryOut] = []
-    for entry, dbg in zip(created, pending_row_debug, strict=True):
+    for entry, pending in zip(created, pending_rows, strict=True):
+        dbg = pending.row_debug
         if dbg:
-            entries_out.append(CsvJournalEntryOut.model_validate({**entry.model_dump(), "debug": dbg}))
+            entries_out.append(
+                CsvJournalEntryOut.model_validate({**entry.model_dump(), "debug": dbg}),
+            )
         else:
             entries_out.append(CsvJournalEntryOut.model_validate(entry.model_dump()))
 
