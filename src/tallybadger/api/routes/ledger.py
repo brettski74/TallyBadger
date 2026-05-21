@@ -224,6 +224,19 @@ def update_accrual_plan(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
+@router.delete("/accrual-plans/{plan_id}", status_code=status.HTTP_204_NO_CONTENT)
+def cancel_accrual_plan(
+    plan_id: int,
+    service: LedgerService = Depends(get_ledger_service),
+) -> None:
+    try:
+        service.cancel_accrual_plan(plan_id)
+    except LedgerNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except LedgerConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 @router.get("/ledger-settings", response_model=LedgerSettingsOut)
 def get_ledger_settings(service: LedgerService = Depends(get_ledger_service)) -> LedgerSettingsOut:
     return service.get_ledger_settings()
