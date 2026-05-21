@@ -27,6 +27,15 @@ const parties: Party[] = [
     created_at: "",
     updated_at: "",
   },
+  {
+    id: 2,
+    name: "Beta Property Co",
+    role: "customer",
+    is_active: true,
+    match_patterns: [],
+    created_at: "",
+    updated_at: "",
+  },
 ];
 
 const emptyListBody = {
@@ -34,14 +43,15 @@ const emptyListBody = {
   filter_options: { party_ids: [], target_account_ids: [], bridge_account_ids: [] },
 };
 
-function listPlansResponse(plans: unknown[] = []) {
+function listPlansResponse(plans: unknown[] = [], filterOptions?: Partial<typeof emptyListBody.filter_options>) {
   return new Response(
     JSON.stringify({
       plans,
       filter_options: {
-        party_ids: plans.length ? [1] : [],
-        target_account_ids: plans.length ? [2] : [],
-        bridge_account_ids: plans.length ? [1] : [],
+        party_ids: plans.length ? [1, 2] : [],
+        target_account_ids: plans.length ? [2, 4] : [],
+        bridge_account_ids: plans.length ? [1, 3] : [],
+        ...filterOptions,
       },
     }),
     { status: 200 },
@@ -66,6 +76,28 @@ describe("AccrualPlansSection register", () => {
       const url = String(calls[0][0]);
       expect(url).toContain("settlement_status=open");
       expect(url).toContain("include_filter_options=true");
+    });
+  });
+
+  it("refetches with multiple party_ids when party filter selects more than one", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        listPlansResponse([], { party_ids: [1, 2], target_account_ids: [2, 4], bridge_account_ids: [1, 3] }),
+      );
+
+    render(<AccrualPlansSection accounts={accounts} parties={parties} />);
+    await waitFor(() => expect(accrualPlanListCalls(fetchMock).length).toBe(1));
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Filter accrual plans by party" }));
+    await user.click(screen.getByRole("checkbox", { name: "Acme Yard Maintenance" }));
+    await user.click(screen.getByRole("checkbox", { name: "Beta Property Co" }));
+
+    await waitFor(() => {
+      const url = String(accrualPlanListCalls(fetchMock).at(-1)?.[0]);
+      expect(url).toContain("party_ids=1");
+      expect(url).toContain("party_ids=2");
     });
   });
 

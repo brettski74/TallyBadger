@@ -14,6 +14,7 @@ import {
   type AccrualPreviewItem,
 } from "../api/accrualPlans";
 import type { Party } from "../api/parties";
+import { JournalFilterMultiDropdown } from "./JournalFilterMultiDropdown";
 import { TableRowIconButton } from "./TableRowIconButton";
 
 const DAY_OPTIONS = [
@@ -45,9 +46,9 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
   const [listError, setListError] = useState<string | null>(null);
 
   const [settlementStatus, setSettlementStatus] = useState<AccrualPlanSettlementStatus>("open");
-  const [filterPartyId, setFilterPartyId] = useState("");
-  const [filterTargetAccountId, setFilterTargetAccountId] = useState("");
-  const [filterBridgeAccountId, setFilterBridgeAccountId] = useState("");
+  const [selectedPartyIds, setSelectedPartyIds] = useState<number[]>([]);
+  const [selectedTargetAccountIds, setSelectedTargetAccountIds] = useState<number[]>([]);
+  const [selectedBridgeAccountIds, setSelectedBridgeAccountIds] = useState<number[]>([]);
   const [filterName, setFilterName] = useState("");
   const [filterFromDate, setFilterFromDate] = useState("");
   const [filterToDate, setFilterToDate] = useState("");
@@ -88,14 +89,14 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
       settlement_status: settlementStatus,
       include_filter_options: true,
     };
-    if (filterPartyId) {
-      params.party_ids = [Number(filterPartyId)];
+    if (selectedPartyIds.length > 0) {
+      params.party_ids = selectedPartyIds;
     }
-    if (filterTargetAccountId) {
-      params.target_account_ids = [Number(filterTargetAccountId)];
+    if (selectedTargetAccountIds.length > 0) {
+      params.target_account_ids = selectedTargetAccountIds;
     }
-    if (filterBridgeAccountId) {
-      params.bridge_account_ids = [Number(filterBridgeAccountId)];
+    if (selectedBridgeAccountIds.length > 0) {
+      params.bridge_account_ids = selectedBridgeAccountIds;
     }
     if (filterFromDate) {
       params.from_date = filterFromDate;
@@ -109,9 +110,9 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
     return params;
   }, [
     settlementStatus,
-    filterPartyId,
-    filterTargetAccountId,
-    filterBridgeAccountId,
+    selectedPartyIds,
+    selectedTargetAccountIds,
+    selectedBridgeAccountIds,
     filterFromDate,
     filterToDate,
     filterName,
@@ -340,51 +341,33 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
               ))}
             </select>
           </label>
-          <label>
-            Party
-            <select
-              value={filterPartyId}
-              onChange={(e) => setFilterPartyId(e.target.value)}
-              aria-label="Filter accrual plans by party"
-            >
-              <option value="">All parties</option>
-              {partyFilterOptions().map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Target account
-            <select
-              value={filterTargetAccountId}
-              onChange={(e) => setFilterTargetAccountId(e.target.value)}
-              aria-label="Filter accrual plans by target account"
-            >
-              <option value="">All target accounts</option>
-              {accountFilterOptions(filterTargetAccountIds).map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Bridge account
-            <select
-              value={filterBridgeAccountId}
-              onChange={(e) => setFilterBridgeAccountId(e.target.value)}
-              aria-label="Filter accrual plans by bridge account"
-            >
-              <option value="">All bridge accounts</option>
-              {accountFilterOptions(filterBridgeAccountIds).map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
-                </option>
-              ))}
-            </select>
-          </label>
+          <JournalFilterMultiDropdown
+            label="Party"
+            ariaFilterLabel="Filter accrual plans by party"
+            options={partyFilterOptions().map((p) => ({ id: p.id, name: p.name }))}
+            selectedIds={selectedPartyIds}
+            onIdsChange={setSelectedPartyIds}
+          />
+          <JournalFilterMultiDropdown
+            label="Target account"
+            ariaFilterLabel="Filter accrual plans by target account"
+            options={accountFilterOptions(filterTargetAccountIds).map((a) => ({
+              id: a.id,
+              name: a.name,
+            }))}
+            selectedIds={selectedTargetAccountIds}
+            onIdsChange={setSelectedTargetAccountIds}
+          />
+          <JournalFilterMultiDropdown
+            label="Bridge account"
+            ariaFilterLabel="Filter accrual plans by bridge account"
+            options={accountFilterOptions(filterBridgeAccountIds).map((a) => ({
+              id: a.id,
+              name: a.name,
+            }))}
+            selectedIds={selectedBridgeAccountIds}
+            onIdsChange={setSelectedBridgeAccountIds}
+          />
           <label>
             Name
             <input
