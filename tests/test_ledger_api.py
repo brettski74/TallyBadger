@@ -39,6 +39,50 @@ class StubLedgerService:
 
         return AccrualPlanListResponse(plans=[])
 
+    def get_accrual_plan_detail(self, plan_id: int):
+        from datetime import datetime, timezone
+        from decimal import Decimal
+
+        from tallybadger.ledger.models import (
+            AccrualPlanDetailResponse,
+            AccrualPlanOut,
+            AccrualPlanSummaryRollups,
+        )
+
+        if plan_id != 1:
+            raise LedgerNotFoundError(f"accrual plan {plan_id} not found")
+        now = datetime.now(tz=timezone.utc)
+        return AccrualPlanDetailResponse(
+            plan=AccrualPlanOut(
+                id=1,
+                name="Stub Plan",
+                direction="revenue",
+                party_id=1,
+                target_account_id=2,
+                bridge_account_id=3,
+                frequency="monthly_day",
+                start_date=date(2026, 1, 1),
+                end_date=date(2026, 12, 31),
+                amount=Decimal("100.00"),
+                summary_template="{plan}",
+                description_template=None,
+                day_of_week=None,
+                day_of_month=1,
+                month_of_year=None,
+                business_day_adjust=False,
+                created_at=now,
+                updated_at=now,
+            ),
+            obligations=[],
+            summary=AccrualPlanSummaryRollups(
+                total_original_accrued=Decimal("100.00"),
+                total_settled_to_date=Decimal("0"),
+                past_due=Decimal("0"),
+                not_yet_due=Decimal("100.00"),
+                unearned=Decimal("0"),
+            ),
+        )
+
     def preview_accrual_plan(self, _payload):
         return []
 
@@ -294,6 +338,30 @@ def test_list_accrual_plans_returns_wrapper() -> None:
         response = client.get("/accrual-plans")
         assert response.status_code == 200
         assert response.json() == {"plans": [], "filter_options": None}
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_get_accrual_plan_detail_returns_wrapper() -> None:
+    client = TestClient(app)
+    app.dependency_overrides[get_ledger_service] = lambda: StubLedgerService()
+    try:
+        response = client.get("/accrual-plans/1")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["plan"]["id"] == 1
+        assert body["obligations"] == []
+        assert body["summary"]["total_original_accrued"] == "100.00"
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_get_accrual_plan_detail_not_found_maps_to_404() -> None:
+    client = TestClient(app)
+    app.dependency_overrides[get_ledger_service] = lambda: StubLedgerService()
+    try:
+        response = client.get("/accrual-plans/99")
+        assert response.status_code == 404
     finally:
         app.dependency_overrides.clear()
 

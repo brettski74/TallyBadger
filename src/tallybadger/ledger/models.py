@@ -444,6 +444,22 @@ class AccrualPlanListResponse(BaseModel):
     filter_options: AccrualPlanListFilterOptions | None = None
 
 
+class AccrualPlanSummaryRollups(BaseModel):
+    """Plan-level totals for the read-only view modal (#159, #169)."""
+
+    total_original_accrued: Decimal
+    total_settled_to_date: Decimal
+    past_due: Decimal
+    not_yet_due: Decimal
+    unearned: Decimal
+
+
+class AccrualPlanDetailResponse(BaseModel):
+    plan: AccrualPlanOut
+    obligations: list["AccrualObligationOut"]
+    summary: AccrualPlanSummaryRollups
+
+
 class AccrualPreviewItem(BaseModel):
     entry_date: date
     summary: str
