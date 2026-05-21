@@ -19,7 +19,6 @@ from tallybadger.ledger.models import (
     AccountCreate,
     AccountUpdate,
     AccrualPlanCreate,
-    AccrualPlanUpdate,
     ChequeCreate,
     JournalEntryWrite,
     JournalLineIn,
@@ -464,7 +463,7 @@ def test_get_entry_includes_account_name_on_each_line(ledger_service: LedgerServ
     assert [ln.account_name for ln in loaded.lines] == ["Cash", "Rent"]
 
 
-def test_accrual_plan_create_and_guarded_update(ledger_service: LedgerService) -> None:
+def test_accrual_plan_create_and_update_regenerates_entries(ledger_service: LedgerService) -> None:
     ar = ledger_service.create_account(AccountCreate(name="Accounts Receivable", type="asset"))
     rent = ledger_service.create_account(AccountCreate(name="Rent Revenue", type="revenue"))
     party = ledger_service.create_party(
@@ -491,11 +490,30 @@ def test_accrual_plan_create_and_guarded_update(ledger_service: LedgerService) -
     assert len(entries) == 2
     assert all(entry.summary.startswith("Rent Plan 2026") for entry in entries)
 
-    with pytest.raises(LedgerValidationError, match="force_override=true"):
-        ledger_service.update_accrual_plan(
-            plan.id,
-            AccrualPlanUpdate(name="Revised rent plan"),
-        )
+    updated = ledger_service.update_accrual_plan(
+        plan.id,
+        AccrualPlanCreate(
+            name="Revised rent plan",
+            direction="revenue",
+            party_id=party.id,
+            target_account_id=rent.id,
+            bridge_account_id=ar.id,
+            frequency="monthly_day",
+            start_date=date(2026, 1, 1),
+            end_date=date(2026, 3, 31),
+            amount=Decimal("1500.00"),
+            summary_template="{plan} {month}",
+            day_of_month=1,
+        ),
+    )
+    assert updated.name == "Revised rent plan"
+    assert updated.end_date == date(2026, 3, 31)
+
+    entries_after = ledger_service.list_entries(
+        from_date=date(2026, 1, 1), to_date=date(2026, 3, 31)
+    )
+    plan_entries = [e for e in entries_after if e.summary.startswith("Revised rent plan")]
+    assert len(plan_entries) == 3
 
 
 def test_early_receipt_settlement_reclasses_accrual_ar_to_unearned(

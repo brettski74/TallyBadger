@@ -94,6 +94,10 @@ This is important - Merging PRs is only ever done by the human user!!!!
 
 State **what changed**, **why**, how to **verify** (commands run, screenshots for UI), and **which issue(s)** the PR addresses.
 
+## Error Messages ##
+
+Error messages should be **brief** but **informative**. They should always include the value of **any attribute that contributed to the cause of the error**. When the error involves a named entity (eg. Party, Account, Accrual Plan, Rule Set, etc), the name of that entity must be included in the error message.
+
 ## Definition of Done ##
 
 For implementation to be complete:

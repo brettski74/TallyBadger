@@ -19,7 +19,6 @@ from tallybadger.ledger.models import (
     AccrualPlanListResponse,
     AccrualPlanOut,
     AccrualPlanSettlementStatus,
-    AccrualPlanUpdate,
     AccrualPreviewItem,
     LedgerSettingsOut,
     LedgerSettingsUpdate,
@@ -211,7 +210,7 @@ def create_accrual_plan(
 @router.patch("/accrual-plans/{plan_id}", response_model=AccrualPlanOut)
 def update_accrual_plan(
     plan_id: int,
-    payload: AccrualPlanUpdate,
+    payload: AccrualPlanCreate,
     service: LedgerService = Depends(get_ledger_service),
 ) -> AccrualPlanOut:
     try:
