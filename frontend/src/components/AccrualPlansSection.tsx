@@ -790,6 +790,7 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
             {plan.end_date}
           </p>
         </div>
+        <hr className="accrual-view-fields-divider" />
         <p className="cheque-form-summary">
           <strong>Summary template</strong>
           <br />
