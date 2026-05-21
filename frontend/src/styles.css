@@ -1615,6 +1615,32 @@ th.table-row-actions-heading {
   grid-column: 1 / -1;
 }
 
+.accrual-day-month-inline {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.accrual-day-month-inline input {
+  flex: 1;
+  min-width: 0;
+  max-width: 4.5rem;
+}
+
+.accrual-day-month-separator {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.accrual-form-field-disabled {
+  opacity: 0.55;
+}
+
+.accrual-form-field-disabled input {
+  pointer-events: none;
+}
+
 .cheque-series-enable {
   display: flex;
   align-items: center;
