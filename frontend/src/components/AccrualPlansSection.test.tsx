@@ -200,6 +200,7 @@ describe("AccrualPlansSection register", () => {
           business_day_adjust: false,
           created_at: "",
           updated_at: "",
+          has_settlement_allocations: false,
         },
       ]),
     );
@@ -210,6 +211,158 @@ describe("AccrualPlansSection register", () => {
     expect(within(register).getByText("Alpha Rent")).toBeInTheDocument();
     expect(within(register).getByText("Acme Yard Maintenance")).toBeInTheDocument();
     expect(within(register).getByText("$1,200.00")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /View plan/i })).not.toBeInTheDocument();
+  });
+});
+
+describe("AccrualPlansSection view modal", () => {
+  const detailBody = {
+    plan: {
+      id: 7,
+      name: "Settled Rent",
+      direction: "revenue",
+      party_id: 1,
+      target_account_id: 2,
+      bridge_account_id: 1,
+      frequency: "monthly_day",
+      start_date: "2026-01-01",
+      end_date: "2026-03-31",
+      amount: "300.00",
+      summary_template: "{plan}",
+      description_template: null,
+      day_of_week: null,
+      day_of_month: 1,
+      month_of_year: null,
+      business_day_adjust: false,
+      created_at: "",
+      updated_at: "",
+    },
+    summary: {
+      total_original_accrued: "900.00",
+      total_settled_to_date: "150.00",
+      past_due: "300.00",
+      not_yet_due: "200.00",
+      unearned: "100.00",
+    },
+    obligations: [
+      {
+        id: 101,
+        party_id: 1,
+        accrual_plan_id: 7,
+        source_entry_id: 1,
+        source_entry_date: "2026-01-01",
+        source_entry_summary: "Jan accrual",
+        source_line_id: 1,
+        obligation_type: "receivable",
+        status: "open",
+        original_amount: "300.00",
+        open_amount: "300.00",
+        created_at: "",
+        updated_at: "",
+      },
+      {
+        id: 102,
+        party_id: 1,
+        accrual_plan_id: 7,
+        source_entry_id: 2,
+        source_entry_date: "2026-02-01",
+        source_entry_summary: "Feb accrual",
+        source_line_id: 2,
+        obligation_type: "receivable",
+        status: "settled",
+        original_amount: "300.00",
+        open_amount: "0.00",
+        created_at: "",
+        updated_at: "",
+      },
+    ],
+  };
+
+  it("hides View when plan has no settlement allocations", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      listPlansResponse([
+        {
+          id: 3,
+          name: "Fresh Plan",
+          direction: "revenue",
+          party_id: 1,
+          target_account_id: 2,
+          bridge_account_id: 1,
+          frequency: "monthly_day",
+          start_date: "2026-01-01",
+          end_date: "2026-12-31",
+          amount: "100.00",
+          summary_template: "{plan}",
+          description_template: null,
+          day_of_week: null,
+          day_of_month: 1,
+          month_of_year: null,
+          business_day_adjust: false,
+          created_at: "",
+          updated_at: "",
+          has_settlement_allocations: false,
+        },
+      ]),
+    );
+
+    render(<AccrualPlansSection accounts={accounts} parties={parties} />);
+    await waitFor(() => expect(screen.getByText("Fresh Plan")).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: /View plan/i })).not.toBeInTheDocument();
+  });
+
+  it("opens view modal with rollups and obligations from detail API", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        listPlansResponse([
+          {
+            id: 7,
+            name: "Settled Rent",
+            direction: "revenue",
+            party_id: 1,
+            target_account_id: 2,
+            bridge_account_id: 1,
+            frequency: "monthly_day",
+            start_date: "2026-01-01",
+            end_date: "2026-03-31",
+            amount: "300.00",
+            summary_template: "{plan}",
+            description_template: null,
+            day_of_week: null,
+            day_of_month: 1,
+            month_of_year: null,
+            business_day_adjust: false,
+            created_at: "",
+            updated_at: "",
+            has_settlement_allocations: true,
+          },
+        ]),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify(detailBody), { status: 200 }));
+
+    render(<AccrualPlansSection accounts={accounts} parties={parties} />);
+    const user = userEvent.setup();
+    await waitFor(() => expect(screen.getByText("Settled Rent")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "View plan Settled Rent" }));
+
+    expect(await screen.findByRole("heading", { name: "Settled Rent" })).toBeInTheDocument();
+    const rollups = screen.getByLabelText("Plan summary rollups");
+    expect(within(rollups).getByText("Total original accrued")).toBeInTheDocument();
+    expect(within(rollups).getByText("$900.00")).toBeInTheDocument();
+    expect(within(rollups).getByText("Past due")).toBeInTheDocument();
+    expect(within(rollups).getByText("$300.00")).toBeInTheDocument();
+    expect(within(rollups).getByText("Unearned")).toBeInTheDocument();
+    expect(within(rollups).getByText("$100.00")).toBeInTheDocument();
+
+    const obligations = screen.getByRole("table", { name: "Plan obligations" });
+    expect(within(obligations).getByText("2026-01-01")).toBeInTheDocument();
+    expect(within(obligations).getByText("open")).toBeInTheDocument();
+    expect(within(obligations).getByText("settled")).toBeInTheDocument();
+
+    const detailCalls = vi.mocked(globalThis.fetch).mock.calls.filter((c) =>
+      String(c[0]).match(/\/accrual-plans\/7$/),
+    );
+    expect(detailCalls).toHaveLength(1);
   });
 });
 

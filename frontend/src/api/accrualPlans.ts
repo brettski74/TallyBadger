@@ -29,6 +29,39 @@ export interface AccrualPlan {
   business_day_adjust: boolean;
   created_at: string;
   updated_at: string;
+  has_settlement_allocations?: boolean;
+}
+
+export type ObligationStatus = "open" | "settled" | "reconciled";
+
+export interface AccrualObligation {
+  id: number;
+  party_id: number;
+  accrual_plan_id: number | null;
+  source_entry_id: number | null;
+  source_entry_date: string | null;
+  source_entry_summary: string | null;
+  source_line_id: number | null;
+  obligation_type: string;
+  status: ObligationStatus;
+  original_amount: string;
+  open_amount: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AccrualPlanSummaryRollups {
+  total_original_accrued: string;
+  total_settled_to_date: string;
+  past_due: string;
+  not_yet_due: string;
+  unearned: string;
+}
+
+export interface AccrualPlanDetailResponse {
+  plan: AccrualPlan;
+  obligations: AccrualObligation[];
+  summary: AccrualPlanSummaryRollups;
 }
 
 export interface AccrualPlanWrite {
@@ -140,4 +173,12 @@ export async function createAccrualPlan(payload: AccrualPlanWrite): Promise<Accr
     throw new Error(await readApiErrorMessage(response));
   }
   return response.json();
+}
+
+export async function getAccrualPlanDetail(planId: number): Promise<AccrualPlanDetailResponse> {
+  const response = await fetch(`${getApiBase()}/accrual-plans/${planId}`);
+  if (!response.ok) {
+    throw new Error(await readApiErrorMessage(response));
+  }
+  return response.json() as Promise<AccrualPlanDetailResponse>;
 }

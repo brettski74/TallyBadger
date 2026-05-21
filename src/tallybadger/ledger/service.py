@@ -728,6 +728,20 @@ class LedgerService:
         FROM accrual_plans ap
     """
 
+    _ACCRUAL_PLAN_LIST_SELECT = """
+        SELECT ap.id, ap.name, ap.direction, ap.party_id, ap.target_account_id, ap.bridge_account_id,
+               ap.frequency, ap.start_date, ap.end_date, ap.amount, ap.summary_template,
+               ap.description_template, ap.day_of_week, ap.day_of_month, ap.month_of_year,
+               ap.business_day_adjust, ap.created_at, ap.updated_at,
+               EXISTS (
+                   SELECT 1
+                   FROM accrual_obligations ao
+                   INNER JOIN settlement_allocations sa ON sa.obligation_id = ao.id
+                   WHERE ao.accrual_plan_id = ap.id
+               ) AS has_settlement_allocations
+        FROM accrual_plans ap
+    """
+
     _ACCRUAL_PLAN_SETTLEMENT_SQL: dict[AccrualPlanSettlementStatus, str | None] = {
         "any": None,
         "unsettled": """
@@ -835,7 +849,7 @@ class LedgerService:
                 try:
                     cur.execute(
                         f"""
-                        {self._ACCRUAL_PLAN_SELECT}
+                        {self._ACCRUAL_PLAN_LIST_SELECT}
                         {where_clause}
                         ORDER BY ap.created_at DESC, ap.id DESC
                         """,

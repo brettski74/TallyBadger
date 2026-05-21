@@ -1,16 +1,20 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FilePlus2, RefreshCcw } from "lucide-react";
+import { Eye, FilePlus2, RefreshCcw } from "lucide-react";
 
 import type { Account } from "../api/accounts";
 import {
   createAccrualPlan,
+  getAccrualPlanDetail,
   listAccrualPlans,
   previewAccrualPlan,
   type AccrualDirection,
   type AccrualFrequency,
   type AccrualPlan,
+  type AccrualPlanDetailResponse,
   type AccrualPlanSettlementStatus,
+  type AccrualPlanSummaryRollups,
   type AccrualPlanWrite,
+  type AccrualObligation,
   type AccrualPreviewItem,
 } from "../api/accrualPlans";
 import type { Party } from "../api/parties";
@@ -67,7 +71,13 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
 
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [createDialogView, setCreateDialogView] = useState<"form" | "preview">("form");
+  const [viewDialogOpen, setViewDialogOpen] = useState(false);
+  const [viewPlanId, setViewPlanId] = useState<number | null>(null);
+  const [viewDetail, setViewDetail] = useState<AccrualPlanDetailResponse | null>(null);
+  const [viewLoading, setViewLoading] = useState(false);
+  const [viewError, setViewError] = useState<string | null>(null);
   const createDialogRef = useRef<HTMLDialogElement>(null);
+  const viewDialogRef = useRef<HTMLDialogElement>(null);
   const createFormRef = useRef<HTMLFormElement>(null);
   const editFormRef = useRef<HTMLFormElement>(null);
   const isMac = useMemo(() => isMacLikeUserAgent(), []);
@@ -166,6 +176,45 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
     }
   }, [createDialogOpen]);
 
+  useEffect(() => {
+    if (!viewDialogOpen) {
+      return;
+    }
+    const el = viewDialogRef.current;
+    if (el && !el.open) {
+      el.showModal();
+    }
+  }, [viewDialogOpen]);
+
+  useEffect(() => {
+    if (!viewDialogOpen || viewPlanId === null) {
+      return;
+    }
+    let cancelled = false;
+    setViewLoading(true);
+    setViewError(null);
+    setViewDetail(null);
+    void getAccrualPlanDetail(viewPlanId)
+      .then((detail) => {
+        if (!cancelled) {
+          setViewDetail(detail);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setViewError(err instanceof Error ? err.message : "Failed to load plan detail");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setViewLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [viewDialogOpen, viewPlanId]);
+
   const targetAccountOptions = useMemo(
     () => accounts.filter((a) => (direction === "revenue" ? a.type === "revenue" : a.type === "expense")),
     [accounts, direction],
@@ -212,6 +261,39 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
     setPreviewing(false);
     setCreating(false);
     clearCreateForm();
+  }
+
+  function openViewPlan(plan: AccrualPlan) {
+    setViewPlanId(plan.id);
+    setViewDetail(null);
+    setViewError(null);
+    setViewLoading(true);
+    setViewDialogOpen(true);
+  }
+
+  function closeViewDialog() {
+    setViewDialogOpen(false);
+    setViewPlanId(null);
+    setViewDetail(null);
+    setViewError(null);
+    setViewLoading(false);
+  }
+
+  function dayOfWeekLabel(value: number | null): string {
+    if (value === null) {
+      return "—";
+    }
+    return DAY_OPTIONS.find((d) => d.value === value)?.label ?? String(value);
+  }
+
+  function frequencyScheduleLabel(plan: AccrualPlan): string {
+    if (plan.frequency === "weekly") {
+      return `weekly (${dayOfWeekLabel(plan.day_of_week)})`;
+    }
+    if (plan.frequency === "monthly_day") {
+      return `monthly (day ${plan.day_of_month ?? "—"})`;
+    }
+    return `yearly (${plan.day_of_month ?? "—"}/${plan.month_of_year ?? "—"})`;
   }
 
   function handleNewPlan() {
@@ -649,6 +731,125 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
     );
   }
 
+  function renderViewPlanFields(plan: AccrualPlan) {
+    return (
+      <div className="cheque-form-grid accrual-view-plan-fields">
+        <div className="cheque-form-col">
+          <p>
+            <strong>Plan name</strong>
+            <br />
+            {plan.name}
+          </p>
+          <p>
+            <strong>Direction</strong>
+            <br />
+            {plan.direction}
+          </p>
+          <p>
+            <strong>Party</strong>
+            <br />
+            {partyNameById.get(plan.party_id) ?? `#${plan.party_id}`}
+          </p>
+          <p>
+            <strong>Target account</strong>
+            <br />
+            {accountNameById.get(plan.target_account_id) ?? `#${plan.target_account_id}`}
+          </p>
+          <p>
+            <strong>Bridge account</strong>
+            <br />
+            {accountNameById.get(plan.bridge_account_id) ?? `#${plan.bridge_account_id}`}
+          </p>
+        </div>
+        <div className="cheque-form-col">
+          <p>
+            <strong>Frequency</strong>
+            <br />
+            {frequencyScheduleLabel(plan)}
+          </p>
+          <p>
+            <strong>Start date</strong>
+            <br />
+            {plan.start_date}
+          </p>
+          <p>
+            <strong>End date</strong>
+            <br />
+            {plan.end_date}
+          </p>
+          <p>
+            <strong>Amount</strong>
+            <br />
+            {formatAmount(plan.amount)}
+          </p>
+          <p>
+            <strong>Roll weekends to Monday</strong>
+            <br />
+            {plan.business_day_adjust ? "Yes" : "No"}
+          </p>
+        </div>
+        <p className="cheque-form-summary">
+          <strong>Summary template</strong>
+          <br />
+          {plan.summary_template}
+        </p>
+        <p className="cheque-form-summary">
+          <strong>Description template</strong>
+          <br />
+          {plan.description_template?.trim() ? plan.description_template : "—"}
+        </p>
+      </div>
+    );
+  }
+
+  function renderSummaryRollups(summary: AccrualPlanSummaryRollups) {
+    const items: { label: string; value: string }[] = [
+      { label: "Total original accrued", value: formatAmount(summary.total_original_accrued) },
+      { label: "Total settled to date", value: formatAmount(summary.total_settled_to_date) },
+      { label: "Past due", value: formatAmount(summary.past_due) },
+      { label: "Not yet due", value: formatAmount(summary.not_yet_due) },
+      { label: "Unearned", value: formatAmount(summary.unearned) },
+    ];
+    return (
+      <dl className="accrual-plan-summary-rollups" aria-label="Plan summary rollups">
+        {items.map((item) => (
+          <div key={item.label} className="accrual-plan-summary-rollup">
+            <dt>{item.label}</dt>
+            <dd>{item.value}</dd>
+          </div>
+        ))}
+      </dl>
+    );
+  }
+
+  function renderObligationsTable(obligations: AccrualObligation[]) {
+    if (obligations.length === 0) {
+      return <p className="muted">No obligations on this plan.</p>;
+    }
+    return (
+      <table className="journal-entry-list" aria-label="Plan obligations">
+        <thead>
+          <tr>
+            <th>Accrual date</th>
+            <th className="journal-list-amount">Original</th>
+            <th className="journal-list-amount">Open</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {obligations.map((ob) => (
+            <tr key={ob.id}>
+              <td>{ob.source_entry_date ?? "—"}</td>
+              <td className="journal-list-amount">{formatAmount(ob.original_amount)}</td>
+              <td className="journal-list-amount">{formatAmount(ob.open_amount)}</td>
+              <td>{ob.status}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    );
+  }
+
   return (
     <>
       <section className="card journal-card-wide">
@@ -674,10 +875,7 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
             </TableRowIconButton>
           </div>
         </div>
-        <p className="muted">
-          Filter by settlement bucket, party, accounts, date range, or name. Row actions for view and edit arrive in
-          follow-on tickets.
-        </p>
+        <p className="muted">Filter by settlement bucket, party, accounts, date range, or name.</p>
 
         <div className="cheque-register-filters">
           <label>
@@ -794,7 +992,20 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
                     <td>{formatAmount(p.amount)}</td>
                     <td>{p.direction}</td>
                     <td>{p.frequency}</td>
-                    <td aria-label="Plan actions reserved" />
+                    <td>
+                      <div className="table-row-actions">
+                        {p.has_settlement_allocations ? (
+                          <TableRowIconButton
+                            type="button"
+                            aria-label={`View plan ${p.name}`}
+                            title="View plan"
+                            onClick={() => openViewPlan(p)}
+                          >
+                            <Eye size={18} strokeWidth={2} aria-hidden />
+                          </TableRowIconButton>
+                        ) : null}
+                      </div>
+                    </td>
                   </tr>
                 ))
               )}
@@ -891,6 +1102,40 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
               </>
             )}
           </form>
+        </dialog>
+      )}
+
+      {viewDialogOpen && (
+        <dialog
+          ref={viewDialogRef}
+          className="cheque-dialog"
+          aria-labelledby="accrual-view-dialog-title"
+          onClose={closeViewDialog}
+        >
+          <div className="cheque-dialog-inner">
+            <div className="cheque-dialog-header">
+              <h2 id="accrual-view-dialog-title">
+                {viewDetail?.plan.name ?? (viewLoading ? "Loading plan…" : "View accrual plan")}
+              </h2>
+              <button type="button" className="button-secondary" onClick={closeViewDialog}>
+                Close
+              </button>
+            </div>
+
+            {viewLoading && <p className="muted">Loading plan detail…</p>}
+            {viewError && (
+              <p className="error" role="alert">
+                {viewError}
+              </p>
+            )}
+            {viewDetail && !viewLoading && (
+              <>
+                {renderViewPlanFields(viewDetail.plan)}
+                {renderSummaryRollups(viewDetail.summary)}
+                {renderObligationsTable(viewDetail.obligations)}
+              </>
+            )}
+          </div>
         </dialog>
       )}
     </>
