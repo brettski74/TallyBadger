@@ -256,11 +256,11 @@ export function JournalEntriesPanel({
   useEffect(() => {
     void (async () => {
       try {
-        const [plans, loadedPresets] = await Promise.all([
+        const [planList, loadedPresets] = await Promise.all([
           listAccrualPlans(),
           listJournalEntryFilterPresets(),
         ]);
-        setAccrualPlans(plans);
+        setAccrualPlans(planList.plans);
         setPresets(loadedPresets);
       } catch (err) {
         setPresetsError(

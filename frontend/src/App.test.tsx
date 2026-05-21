@@ -126,7 +126,14 @@ describe("App", () => {
     mockFetchImplementation([
       () => new Response(JSON.stringify([]), { status: 200 }),
       () => new Response(JSON.stringify([]), { status: 200 }),
-      () => new Response(JSON.stringify({ plans: [] }), { status: 200 }),
+      () =>
+        new Response(
+          JSON.stringify({
+            plans: [],
+            filter_options: { party_ids: [], target_account_ids: [], bridge_account_ids: [] },
+          }),
+          { status: 200 },
+        ),
     ]);
 
     render(<App />);
