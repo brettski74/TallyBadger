@@ -1116,6 +1116,43 @@ class LedgerService:
                         raise LedgerNotFoundError(f"accrual plan {plan_id} not found")
         return AccrualPlanOut.model_validate(row)
 
+    def cancel_accrual_plan(self, plan_id: int) -> None:
+        """Remove an unsettled plan and its accrual journal entries and obligations (#170)."""
+        with self._connection_factory() as conn:
+            with conn.transaction():
+                with conn.cursor(row_factory=dict_row) as cur:
+                    cur.execute(
+                        "SELECT id FROM accrual_plans WHERE id = %s FOR UPDATE",
+                        (plan_id,),
+                    )
+                    if not cur.fetchone():
+                        raise LedgerNotFoundError(f"accrual plan {plan_id} not found")
+
+                    cur.execute(
+                        """
+                        SELECT 1
+                        FROM accrual_obligations ao
+                        INNER JOIN settlement_allocations sa ON sa.obligation_id = ao.id
+                        WHERE ao.accrual_plan_id = %s
+                        LIMIT 1
+                        """,
+                        (plan_id,),
+                    )
+                    if cur.fetchone():
+                        raise LedgerConflictError(
+                            "accrual plan has settlement allocations and cannot be cancelled"
+                        )
+
+                    cur.execute(
+                        "DELETE FROM accrual_obligations WHERE accrual_plan_id = %s",
+                        (plan_id,),
+                    )
+                    cur.execute(
+                        "DELETE FROM journal_entries WHERE accrual_plan_id = %s",
+                        (plan_id,),
+                    )
+                    cur.execute("DELETE FROM accrual_plans WHERE id = %s", (plan_id,))
+
     def get_ledger_settings(self) -> LedgerSettingsOut:
         with self._connection_factory() as conn:
             with conn.cursor(row_factory=dict_row) as cur:

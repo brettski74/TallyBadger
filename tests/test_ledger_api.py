@@ -92,6 +92,14 @@ class StubLedgerService:
     def update_accrual_plan(self, _plan_id, _payload):
         raise LedgerValidationError("plan has already posted entries; pass force_override=true to update")
 
+    def cancel_accrual_plan(self, plan_id: int) -> None:
+        if plan_id == 99:
+            raise LedgerNotFoundError(f"accrual plan {plan_id} not found")
+        if plan_id == 2:
+            raise LedgerConflictError(
+                "accrual plan has settlement allocations and cannot be cancelled"
+            )
+
     def list_entries(self, **_kwargs):
         return []
 
@@ -396,6 +404,32 @@ def test_update_accrual_plan_guard_maps_to_422() -> None:
     response = client.patch("/accrual-plans/1", json={"name": "Updated"})
     assert response.status_code == 422
     assert "force_override=true" in response.json()["detail"]
+    app.dependency_overrides.clear()
+
+
+def test_cancel_accrual_plan_success_returns_204() -> None:
+    app.dependency_overrides[get_ledger_service] = StubLedgerService
+    client = TestClient(app)
+    response = client.delete("/accrual-plans/1")
+    assert response.status_code == 204
+    assert response.content == b""
+    app.dependency_overrides.clear()
+
+
+def test_cancel_accrual_plan_not_found_maps_to_404() -> None:
+    app.dependency_overrides[get_ledger_service] = StubLedgerService
+    client = TestClient(app)
+    response = client.delete("/accrual-plans/99")
+    assert response.status_code == 404
+    app.dependency_overrides.clear()
+
+
+def test_cancel_accrual_plan_with_allocations_maps_to_409() -> None:
+    app.dependency_overrides[get_ledger_service] = StubLedgerService
+    client = TestClient(app)
+    response = client.delete("/accrual-plans/2")
+    assert response.status_code == 409
+    assert "settlement allocations" in response.json()["detail"].lower()
     app.dependency_overrides.clear()
 
 
