@@ -15,7 +15,9 @@ from tallybadger.ledger.models import (
     AccountUpdate,
     AccrualObligationOut,
     AccrualPlanCreate,
+    AccrualPlanListResponse,
     AccrualPlanOut,
+    AccrualPlanSettlementStatus,
     AccrualPlanUpdate,
     AccrualPreviewItem,
     LedgerSettingsOut,
@@ -122,11 +124,48 @@ def update_party(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-@router.get("/accrual-plans", response_model=list[AccrualPlanOut])
+@router.get("/accrual-plans", response_model=AccrualPlanListResponse)
 def list_accrual_plans(
+    party_ids: Annotated[list[int] | None, Query()] = None,
+    target_account_ids: Annotated[list[int] | None, Query()] = None,
+    bridge_account_ids: Annotated[list[int] | None, Query()] = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
+    name: str | None = Query(
+        default=None,
+        min_length=1,
+        max_length=120,
+        description="Case-insensitive POSIX regular expression matched against plan name.",
+    ),
+    settlement_status: AccrualPlanSettlementStatus | None = Query(
+        default=None,
+        description=(
+            "Plan-level settlement bucket (#159). Omitted means no filter (same as 'any'). "
+            "The register UI defaults to 'open' on first load."
+        ),
+    ),
+    include_filter_options: bool = Query(
+        default=False,
+        description=(
+            "When true, include distinct party_id / target_account_id / bridge_account_id "
+            "values from all plans (for filter dropdowns)."
+        ),
+    ),
     service: LedgerService = Depends(get_ledger_service),
-) -> list[AccrualPlanOut]:
-    return service.list_accrual_plans()
+) -> AccrualPlanListResponse:
+    try:
+        return service.list_accrual_plans(
+            party_ids=party_ids,
+            target_account_ids=target_account_ids,
+            bridge_account_ids=bridge_account_ids,
+            from_date=from_date,
+            to_date=to_date,
+            name=name,
+            settlement_status=settlement_status,
+            include_filter_options=include_filter_options,
+        )
+    except LedgerValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.post("/accrual-plans/preview", response_model=list[AccrualPreviewItem])

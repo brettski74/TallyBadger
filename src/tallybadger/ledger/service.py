@@ -29,7 +29,10 @@ from tallybadger.ledger.models import (
     AccountUpdate,
     AccrualObligationOut,
     AccrualPlanCreate,
+    AccrualPlanListFilterOptions,
+    AccrualPlanListResponse,
     AccrualPlanOut,
+    AccrualPlanSettlementStatus,
     AccrualPlanUpdate,
     AccrualPreviewItem,
     BalanceSheetAccountRowOut,
@@ -716,21 +719,166 @@ class LedgerService:
 
         return AccountOut.model_validate(row)
 
-    def list_accrual_plans(self) -> list[AccrualPlanOut]:
+    _ACCRUAL_PLAN_SELECT = """
+        SELECT ap.id, ap.name, ap.direction, ap.party_id, ap.target_account_id, ap.bridge_account_id,
+               ap.frequency, ap.start_date, ap.end_date, ap.amount, ap.summary_template,
+               ap.description_template, ap.day_of_week, ap.day_of_month, ap.month_of_year,
+               ap.business_day_adjust, ap.created_at, ap.updated_at
+        FROM accrual_plans ap
+    """
+
+    _ACCRUAL_PLAN_SETTLEMENT_SQL: dict[AccrualPlanSettlementStatus, str | None] = {
+        "any": None,
+        "unsettled": """
+            NOT EXISTS (
+                SELECT 1
+                FROM accrual_obligations ao
+                INNER JOIN settlement_allocations sa ON sa.obligation_id = ao.id
+                WHERE ao.accrual_plan_id = ap.id
+            )
+        """,
+        "open": """
+            EXISTS (
+                SELECT 1
+                FROM accrual_obligations ao
+                WHERE ao.accrual_plan_id = ap.id
+                  AND (
+                    ao.status NOT IN ('settled', 'reconciled')
+                    OR ao.open_amount > 0
+                  )
+            )
+        """,
+        "settled": """
+            NOT EXISTS (
+                SELECT 1
+                FROM accrual_obligations ao
+                WHERE ao.accrual_plan_id = ap.id
+                  AND (
+                    ao.status NOT IN ('settled', 'reconciled')
+                    OR ao.open_amount > 0
+                  )
+            )
+        """,
+        "partially_settled": """
+            EXISTS (
+                SELECT 1
+                FROM accrual_obligations ao
+                INNER JOIN settlement_allocations sa ON sa.obligation_id = ao.id
+                WHERE ao.accrual_plan_id = ap.id
+            )
+            AND EXISTS (
+                SELECT 1
+                FROM accrual_obligations ao
+                WHERE ao.accrual_plan_id = ap.id
+                  AND (
+                    ao.status NOT IN ('settled', 'reconciled')
+                    OR ao.open_amount > 0
+                  )
+            )
+        """,
+    }
+
+    def list_accrual_plans(
+        self,
+        *,
+        party_ids: list[int] | None = None,
+        target_account_ids: list[int] | None = None,
+        bridge_account_ids: list[int] | None = None,
+        from_date: date | None = None,
+        to_date: date | None = None,
+        name: str | None = None,
+        settlement_status: AccrualPlanSettlementStatus | None = None,
+        include_filter_options: bool = False,
+    ) -> AccrualPlanListResponse:
+        if settlement_status is None:
+            settlement_status = "any"
+
+        conditions: list[str] = []
+        params: list[object] = []
+
+        if party_ids:
+            conditions.append("ap.party_id = ANY(%s)")
+            params.append(list(party_ids))
+        if target_account_ids:
+            conditions.append("ap.target_account_id = ANY(%s)")
+            params.append(list(target_account_ids))
+        if bridge_account_ids:
+            conditions.append("ap.bridge_account_id = ANY(%s)")
+            params.append(list(bridge_account_ids))
+        if from_date is not None:
+            conditions.append("ap.end_date >= %s")
+            params.append(from_date)
+        if to_date is not None:
+            conditions.append("ap.start_date <= %s")
+            params.append(to_date)
+        if name is not None:
+            pattern = name.strip()
+            if not pattern:
+                raise LedgerValidationError("name pattern must be non-blank when provided")
+            conditions.append("ap.name ~* %s")
+            params.append(pattern)
+
+        settlement_sql = self._ACCRUAL_PLAN_SETTLEMENT_SQL.get(settlement_status)
+        if settlement_sql is None and settlement_status != "any":
+            raise LedgerValidationError(
+                "settlement_status must be one of "
+                "'any', 'unsettled', 'open', 'partially_settled', 'settled'"
+            )
+        if settlement_sql:
+            conditions.append(f"({settlement_sql.strip()})")
+
+        where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+
         with self._connection_factory() as conn:
             with conn.cursor(row_factory=dict_row) as cur:
-                cur.execute(
-                    """
-                    SELECT id, name, direction, party_id, target_account_id, bridge_account_id,
-                           frequency, start_date, end_date, amount, summary_template, description_template,
-                           day_of_week, day_of_month, month_of_year, business_day_adjust,
-                           created_at, updated_at
-                    FROM accrual_plans
-                    ORDER BY created_at DESC, id DESC
-                    """
-                )
-                rows = cur.fetchall()
-        return [AccrualPlanOut.model_validate(row) for row in rows]
+                try:
+                    cur.execute(
+                        f"""
+                        {self._ACCRUAL_PLAN_SELECT}
+                        {where_clause}
+                        ORDER BY ap.created_at DESC, ap.id DESC
+                        """,
+                        params,
+                    )
+                    rows = cur.fetchall()
+                except errors.InvalidRegularExpression as exc:
+                    raise LedgerValidationError("name is not a valid regular expression") from exc
+
+                filter_options: AccrualPlanListFilterOptions | None = None
+                if include_filter_options:
+                    cur.execute(
+                        """
+                        SELECT
+                          COALESCE(
+                            ARRAY_AGG(DISTINCT party_id ORDER BY party_id)
+                              FILTER (WHERE party_id IS NOT NULL),
+                            ARRAY[]::BIGINT[]
+                          ) AS party_ids,
+                          COALESCE(
+                            ARRAY_AGG(DISTINCT target_account_id ORDER BY target_account_id)
+                              FILTER (WHERE target_account_id IS NOT NULL),
+                            ARRAY[]::BIGINT[]
+                          ) AS target_account_ids,
+                          COALESCE(
+                            ARRAY_AGG(DISTINCT bridge_account_id ORDER BY bridge_account_id)
+                              FILTER (WHERE bridge_account_id IS NOT NULL),
+                            ARRAY[]::BIGINT[]
+                          ) AS bridge_account_ids
+                        FROM accrual_plans
+                        """
+                    )
+                    opt_row = cur.fetchone()
+                    assert opt_row is not None
+                    filter_options = AccrualPlanListFilterOptions(
+                        party_ids=[int(x) for x in opt_row["party_ids"]],
+                        target_account_ids=[int(x) for x in opt_row["target_account_ids"]],
+                        bridge_account_ids=[int(x) for x in opt_row["bridge_account_ids"]],
+                    )
+
+        return AccrualPlanListResponse(
+            plans=[AccrualPlanOut.model_validate(row) for row in rows],
+            filter_options=filter_options,
+        )
 
     def preview_accrual_plan(
         self, payload: AccrualPlanCreate

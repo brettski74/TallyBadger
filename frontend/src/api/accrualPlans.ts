@@ -50,12 +50,24 @@ export interface AccrualPreviewItem {
   lines: Array<{ account_id: number; party_id: number | null; amount: string }>;
 }
 
+export interface AccrualPlanListFilterOptions {
+  party_ids: number[];
+  target_account_ids: number[];
+  bridge_account_ids: number[];
+}
+
+export interface AccrualPlanListResponse {
+  plans: AccrualPlan[];
+  filter_options?: AccrualPlanListFilterOptions;
+}
+
 export async function listAccrualPlans(): Promise<AccrualPlan[]> {
   const response = await fetch(`${getApiBase()}/accrual-plans`);
   if (!response.ok) {
     throw new Error(await readApiErrorMessage(response));
   }
-  return response.json();
+  const body = (await response.json()) as AccrualPlanListResponse;
+  return body.plans;
 }
 
 export async function previewAccrualPlan(payload: AccrualPlanWrite): Promise<AccrualPreviewItem[]> {

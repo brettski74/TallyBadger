@@ -34,8 +34,10 @@ class StubLedgerService:
     def update_party(self, _party_id, _payload):
         raise LedgerValidationError("at least one party field must be updated")
 
-    def list_accrual_plans(self):
-        return []
+    def list_accrual_plans(self, **_kwargs):
+        from tallybadger.ledger.models import AccrualPlanListResponse
+
+        return AccrualPlanListResponse(plans=[])
 
     def preview_accrual_plan(self, _payload):
         return []
@@ -283,6 +285,17 @@ def test_create_journal_entry_requires_summary_field() -> None:
 
     assert response.status_code == 422
     app.dependency_overrides.clear()
+
+
+def test_list_accrual_plans_returns_wrapper() -> None:
+    client = TestClient(app)
+    app.dependency_overrides[get_ledger_service] = lambda: StubLedgerService()
+    try:
+        response = client.get("/accrual-plans")
+        assert response.status_code == 200
+        assert response.json() == {"plans": [], "filter_options": None}
+    finally:
+        app.dependency_overrides.clear()
 
 
 def test_preview_accrual_plan_endpoint() -> None:

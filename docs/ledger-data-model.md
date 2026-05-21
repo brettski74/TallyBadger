@@ -204,6 +204,27 @@ Import unload is the **supported rollback path for CSV batch work**. Settlement 
 
 ---
 
+## Accrual plan list filters (`GET /accrual-plans`, #168)
+
+The list endpoint returns `{ "plans": [...], "filter_options": null | {...} }`. Query parameters combine with **AND** semantics; omit a parameter for no constraint on that dimension.
+
+| Parameter | Behaviour |
+|-----------|-----------|
+| `party_ids`, `target_account_ids`, `bridge_account_ids` | Multi-value exact match on the plan row |
+| `from_date`, `to_date` | Plan `[start_date, end_date]` overlaps the filter range (inclusive) |
+| `name` | Case-insensitive POSIX regex (`~*`) on plan `name`; invalid pattern → **422** |
+| `settlement_status` | `any` \| `unsettled` \| `open` \| `partially_settled` \| `settled` — plan-level buckets per [#159](https://github.com/brettski74/TallyBadger/issues/159). **Omitted = no filter** (same as `any`). The register UI defaults to `open` on first load. |
+| `include_filter_options` | When `true`, adds `filter_options` with distinct `party_ids`, `target_account_ids`, and `bridge_account_ids` from **all** plans (for filter dropdowns), independent of the current filter. |
+
+**Settlement buckets (plan level):**
+
+- **unsettled** — no `settlement_allocations` on any obligation for the plan.
+- **open** — at least one obligation with `status` not in `settled`/`reconciled` or `open_amount > 0`.
+- **partially_settled** — at least one allocation on the plan’s obligations and the plan is not fully settled.
+- **settled** — no obligation with non-terminal status and positive `open_amount` (plans with no obligations match vacuously).
+
+---
+
 ## References
 
 - Schema: `sql/007_settlement_workflow.sql`, `sql/024_settlement_allocations_entry_id.sql`, `sql/022_import_batches_and_journal_fk.sql`

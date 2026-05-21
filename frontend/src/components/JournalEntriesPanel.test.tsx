@@ -65,7 +65,7 @@ describe("JournalEntriesPanel", () => {
         return new Response(JSON.stringify([]), { status: 200 });
       }
       if (url.includes("/accrual-plans")) {
-        return new Response(JSON.stringify([]), { status: 200 });
+        return new Response(JSON.stringify({ plans: [] }), { status: 200 });
       }
       if (url.includes("/journal-entry-filter-presets")) {
         return new Response(JSON.stringify([]), { status: 200 });
@@ -156,7 +156,7 @@ describe("JournalEntriesPanel", () => {
         return new Response(JSON.stringify([]), { status: 200 });
       }
       if (url.includes("/accrual-plans")) {
-        return new Response(JSON.stringify([]), { status: 200 });
+        return new Response(JSON.stringify({ plans: [] }), { status: 200 });
       }
       if (url.includes("/journal-entry-filter-presets")) {
         return new Response(JSON.stringify([]), { status: 200 });
@@ -243,7 +243,10 @@ describe("JournalEntriesPanel", () => {
   it("shows journal API error text from list failure", async () => {
     vi.spyOn(global, "fetch").mockImplementation(async (input) => {
       const url = String(input);
-      if (url.includes("/journal-entry-filter-presets") || url.includes("/accrual-plans")) {
+      if (url.includes("/accrual-plans")) {
+        return new Response(JSON.stringify({ plans: [] }), { status: 200 });
+      }
+      if (url.includes("/journal-entry-filter-presets")) {
         return new Response(JSON.stringify([]), { status: 200 });
       }
       return new Response(JSON.stringify({ detail: "service unavailable" }), { status: 503 });
@@ -285,7 +288,7 @@ describe("JournalEntriesPanel", () => {
         return new Response(JSON.stringify([]), { status: 200 });
       }
       if (url.includes("/accrual-plans")) {
-        return new Response(JSON.stringify([]), { status: 200 });
+        return new Response(JSON.stringify({ plans: [] }), { status: 200 });
       }
       if (url.includes("/journal-entry-filter-presets")) {
         return new Response(JSON.stringify([]), { status: 200 });
@@ -370,7 +373,7 @@ describe("JournalEntriesPanel", () => {
         return new Response(JSON.stringify([]), { status: 200 });
       }
       if (url.includes("/accrual-plans")) {
-        return new Response(JSON.stringify([]), { status: 200 });
+        return new Response(JSON.stringify({ plans: [] }), { status: 200 });
       }
       if (url.includes("/journal-entry-filter-presets")) {
         return new Response(JSON.stringify([]), { status: 200 });
@@ -443,7 +446,7 @@ describe("JournalEntriesPanel", () => {
         return new Response(JSON.stringify([]), { status: 200 });
       }
       if (url.includes("/accrual-plans")) {
-        return new Response(JSON.stringify([]), { status: 200 });
+        return new Response(JSON.stringify({ plans: [] }), { status: 200 });
       }
       if (url.includes("/journal-entry-filter-presets")) {
         return new Response(JSON.stringify([]), { status: 200 });
@@ -503,7 +506,10 @@ describe("JournalEntriesPanel", () => {
           { status: 200 },
         );
       }
-      if (url.includes("/journal-entry-filter-presets") || url.includes("/accrual-plans")) {
+      if (url.includes("/accrual-plans")) {
+        return new Response(JSON.stringify({ plans: [] }), { status: 200 });
+      }
+      if (url.includes("/journal-entry-filter-presets")) {
         return new Response(JSON.stringify([]), { status: 200 });
       }
       return new Response(JSON.stringify([]), { status: 200 });
@@ -560,7 +566,7 @@ describe("JournalEntriesPanel", () => {
       const url = String(input);
       const method = init?.method ?? "GET";
       if (url.includes("/accrual-plans")) {
-        return new Response(JSON.stringify([]), { status: 200 });
+        return new Response(JSON.stringify({ plans: [] }), { status: 200 });
       }
       if (url.includes("/journal-entry-filter-presets")) {
         if (method === "POST") {
@@ -629,7 +635,7 @@ describe("JournalEntriesPanel", () => {
       const url = String(input);
       const method = init?.method ?? "GET";
       if (url.includes("/accrual-plans")) {
-        return new Response(JSON.stringify([]), { status: 200 });
+        return new Response(JSON.stringify({ plans: [] }), { status: 200 });
       }
       if (
         url.includes("/journal-entry-filter-presets/22")
@@ -702,7 +708,7 @@ describe("JournalEntriesPanel", () => {
     const fetchMock = vi.spyOn(global, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url.includes("/accrual-plans")) {
-        return new Response(JSON.stringify([]), { status: 200 });
+        return new Response(JSON.stringify({ plans: [] }), { status: 200 });
       }
       if (url.includes("/journal-entry-filter-presets")) {
         return new Response(JSON.stringify([preset]), { status: 200 });
@@ -753,7 +759,10 @@ describe("JournalEntriesPanel", () => {
       if (url.includes("/import-batches")) {
         return new Response(JSON.stringify([]), { status: 200 });
       }
-      if (url.includes("/journal-entry-filter-presets") || url.includes("/accrual-plans")) {
+      if (url.includes("/accrual-plans")) {
+        return new Response(JSON.stringify({ plans: [] }), { status: 200 });
+      }
+      if (url.includes("/journal-entry-filter-presets")) {
         return new Response(JSON.stringify([]), { status: 200 });
       }
       if (url.includes("/cheques")) {
