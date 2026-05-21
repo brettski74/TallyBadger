@@ -1122,11 +1122,13 @@ class LedgerService:
             with conn.transaction():
                 with conn.cursor(row_factory=dict_row) as cur:
                     cur.execute(
-                        "SELECT id FROM accrual_plans WHERE id = %s FOR UPDATE",
+                        "SELECT id, name FROM accrual_plans WHERE id = %s FOR UPDATE",
                         (plan_id,),
                     )
-                    if not cur.fetchone():
+                    plan_row = cur.fetchone()
+                    if not plan_row:
                         raise LedgerNotFoundError(f"accrual plan {plan_id} not found")
+                    plan_name = plan_row["name"]
 
                     cur.execute(
                         """
@@ -1140,7 +1142,7 @@ class LedgerService:
                     )
                     if cur.fetchone():
                         raise LedgerConflictError(
-                            "accrual plan has settlement allocations and cannot be cancelled"
+                            f'accrual plan "{plan_name}" has settlement allocations and cannot be cancelled'
                         )
 
                     cur.execute(

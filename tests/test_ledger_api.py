@@ -97,7 +97,7 @@ class StubLedgerService:
             raise LedgerNotFoundError(f"accrual plan {plan_id} not found")
         if plan_id == 2:
             raise LedgerConflictError(
-                "accrual plan has settlement allocations and cannot be cancelled"
+                'accrual plan "Stub Settled Plan" has settlement allocations and cannot be cancelled'
             )
 
     def list_entries(self, **_kwargs):
@@ -429,7 +429,9 @@ def test_cancel_accrual_plan_with_allocations_maps_to_409() -> None:
     client = TestClient(app)
     response = client.delete("/accrual-plans/2")
     assert response.status_code == 409
-    assert "settlement allocations" in response.json()["detail"].lower()
+    detail = response.json()["detail"]
+    assert "settlement allocations" in detail.lower()
+    assert "Stub Settled Plan" in detail
     app.dependency_overrides.clear()
 
 

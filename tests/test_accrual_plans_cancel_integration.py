@@ -200,7 +200,9 @@ def test_cancel_accrual_plan_rejects_when_allocations_exist(
 
     response = api_client.delete(f"/accrual-plans/{plan.id}")
     assert response.status_code == 409
-    assert "settlement allocations" in response.json()["detail"].lower()
+    detail = response.json()["detail"]
+    assert "settlement allocations" in detail.lower()
+    assert "Settled Partial" in detail
 
     assert _count_rows(integration_db_url, "accrual_plans", plan_id=plan.id) == 1
     assert _count_rows(integration_db_url, "journal_entries", plan_id=plan.id) == 1
