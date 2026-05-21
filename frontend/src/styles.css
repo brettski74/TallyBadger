@@ -1757,14 +1757,22 @@ th.table-row-actions-heading {
   white-space: nowrap;
 }
 
+.cheque-dialog.accrual-view-dialog {
+  max-width: min(62.4rem, calc(100vw - 2rem));
+}
+
+.accrual-view-plan-fields {
+  grid-template-columns: 1fr 1fr 1fr;
+}
+
 .accrual-view-plan-fields p {
   margin: 0 0 0.75rem;
 }
 
 .accrual-plan-summary-rollups {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr));
-  gap: 0.75rem 1rem;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 0.75rem 0.65rem;
   margin: 1rem 0;
   padding: 0.75rem 1rem;
   border: 1px solid var(--border);
@@ -1774,6 +1782,7 @@ th.table-row-actions-heading {
 
 .accrual-plan-summary-rollup {
   margin: 0;
+  min-width: 0;
 }
 
 .accrual-plan-summary-rollup dt {
@@ -1785,5 +1794,16 @@ th.table-row-actions-heading {
 
 .accrual-plan-summary-rollup dd {
   margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.accrual-view-obligations-table {
+  table-layout: fixed;
+  width: 100%;
+}
+
+.accrual-view-obligations-table th,
+.accrual-view-obligations-table td {
+  text-align: center;
   font-variant-numeric: tabular-nums;
 }

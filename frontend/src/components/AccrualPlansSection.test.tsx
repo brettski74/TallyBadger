@@ -364,6 +364,52 @@ describe("AccrualPlansSection view modal", () => {
     );
     expect(detailCalls).toHaveLength(1);
   });
+
+  it("shows roll forward on frequency when business day adjust is enabled", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        listPlansResponse([
+          {
+            id: 7,
+            name: "Settled Rent",
+            direction: "revenue",
+            party_id: 1,
+            target_account_id: 2,
+            bridge_account_id: 1,
+            frequency: "monthly_day",
+            start_date: "2026-01-01",
+            end_date: "2026-03-31",
+            amount: "300.00",
+            summary_template: "{plan}",
+            description_template: null,
+            day_of_week: null,
+            day_of_month: 1,
+            month_of_year: null,
+            business_day_adjust: true,
+            created_at: "",
+            updated_at: "",
+            has_settlement_allocations: true,
+          },
+        ]),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            ...detailBody,
+            plan: { ...detailBody.plan, business_day_adjust: true },
+          }),
+          { status: 200 },
+        ),
+      );
+
+    render(<AccrualPlansSection accounts={accounts} parties={parties} />);
+    const user = userEvent.setup();
+    await waitFor(() => expect(screen.getByText("Settled Rent")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "View plan Settled Rent" }));
+
+    expect(await screen.findByText("monthly (day 1) (roll forward)")).toBeInTheDocument();
+    expect(screen.queryByText(/Roll weekends/i)).not.toBeInTheDocument();
+  });
 });
 
 describe("AccrualPlansSection create flow", () => {

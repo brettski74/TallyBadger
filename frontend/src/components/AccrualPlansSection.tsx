@@ -731,6 +731,11 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
     );
   }
 
+  function viewFrequencyLabel(plan: AccrualPlan): string {
+    const schedule = frequencyScheduleLabel(plan);
+    return plan.business_day_adjust ? `${schedule} (roll forward)` : schedule;
+  }
+
   function renderViewPlanFields(plan: AccrualPlan) {
     return (
       <div className="cheque-form-grid accrual-view-plan-fields">
@@ -750,6 +755,8 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
             <br />
             {partyNameById.get(plan.party_id) ?? `#${plan.party_id}`}
           </p>
+        </div>
+        <div className="cheque-form-col">
           <p>
             <strong>Target account</strong>
             <br />
@@ -760,12 +767,17 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
             <br />
             {accountNameById.get(plan.bridge_account_id) ?? `#${plan.bridge_account_id}`}
           </p>
+          <p>
+            <strong>Amount</strong>
+            <br />
+            {formatAmount(plan.amount)}
+          </p>
         </div>
         <div className="cheque-form-col">
           <p>
             <strong>Frequency</strong>
             <br />
-            {frequencyScheduleLabel(plan)}
+            {viewFrequencyLabel(plan)}
           </p>
           <p>
             <strong>Start date</strong>
@@ -776,16 +788,6 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
             <strong>End date</strong>
             <br />
             {plan.end_date}
-          </p>
-          <p>
-            <strong>Amount</strong>
-            <br />
-            {formatAmount(plan.amount)}
-          </p>
-          <p>
-            <strong>Roll weekends to Monday</strong>
-            <br />
-            {plan.business_day_adjust ? "Yes" : "No"}
           </p>
         </div>
         <p className="cheque-form-summary">
@@ -827,12 +829,12 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
       return <p className="muted">No obligations on this plan.</p>;
     }
     return (
-      <table className="journal-entry-list" aria-label="Plan obligations">
+      <table className="journal-entry-list accrual-view-obligations-table" aria-label="Plan obligations">
         <thead>
           <tr>
             <th>Accrual date</th>
-            <th className="journal-list-amount">Original</th>
-            <th className="journal-list-amount">Open</th>
+            <th>Original</th>
+            <th>Open</th>
             <th>Status</th>
           </tr>
         </thead>
@@ -840,8 +842,8 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
           {obligations.map((ob) => (
             <tr key={ob.id}>
               <td>{ob.source_entry_date ?? "—"}</td>
-              <td className="journal-list-amount">{formatAmount(ob.original_amount)}</td>
-              <td className="journal-list-amount">{formatAmount(ob.open_amount)}</td>
+              <td>{formatAmount(ob.original_amount)}</td>
+              <td>{formatAmount(ob.open_amount)}</td>
               <td>{ob.status}</td>
             </tr>
           ))}
@@ -1108,7 +1110,7 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
       {viewDialogOpen && (
         <dialog
           ref={viewDialogRef}
-          className="cheque-dialog"
+          className="cheque-dialog accrual-view-dialog"
           aria-labelledby="accrual-view-dialog-title"
           onClose={closeViewDialog}
         >
