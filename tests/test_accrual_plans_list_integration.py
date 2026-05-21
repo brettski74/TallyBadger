@@ -195,6 +195,17 @@ def test_list_accrual_plans_no_filter_returns_all(api_client: TestClient, ledger
     assert response.json()["filter_options"] is None
 
 
+def test_list_accrual_plans_has_settlement_allocations_flag(
+    api_client: TestClient, ledger_service: LedgerService
+) -> None:
+    ids = _seed_filter_fixtures(ledger_service)
+    response = api_client.get("/accrual-plans")
+    by_id = {p["id"]: p for p in response.json()["plans"]}
+    assert by_id[ids["unsettled_id"]]["has_settlement_allocations"] is False
+    assert by_id[ids["partial_id"]]["has_settlement_allocations"] is True
+    assert by_id[ids["settled_id"]]["has_settlement_allocations"] is True
+
+
 @pytest.mark.parametrize(
     ("status", "expected_key"),
     [

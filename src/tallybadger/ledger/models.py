@@ -420,6 +420,7 @@ class AccrualPlanOut(BaseModel):
     business_day_adjust: bool
     created_at: datetime
     updated_at: datetime
+    has_settlement_allocations: bool = False
 
 
 class AccrualPlanListFilterOptions(BaseModel):
