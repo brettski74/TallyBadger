@@ -403,6 +403,11 @@ class AccrualPlanUpdate(BaseModel):
     force_override: bool = False
 
 
+AccrualPlanSettlementStatus = Literal[
+    "any", "unsettled", "open", "partially_settled", "settled"
+]
+
+
 class AccrualPlanOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -424,6 +429,19 @@ class AccrualPlanOut(BaseModel):
     business_day_adjust: bool
     created_at: datetime
     updated_at: datetime
+
+
+class AccrualPlanListFilterOptions(BaseModel):
+    """Distinct ids used on ≥1 accrual plan — for register filter dropdowns (#168)."""
+
+    party_ids: list[int] = Field(default_factory=list)
+    target_account_ids: list[int] = Field(default_factory=list)
+    bridge_account_ids: list[int] = Field(default_factory=list)
+
+
+class AccrualPlanListResponse(BaseModel):
+    plans: list[AccrualPlanOut]
+    filter_options: AccrualPlanListFilterOptions | None = None
 
 
 class AccrualPreviewItem(BaseModel):

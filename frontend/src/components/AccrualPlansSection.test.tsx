@@ -32,7 +32,7 @@ const parties: Party[] = [
 describe("AccrualPlansSection", () => {
   it("previews then creates a plan", async () => {
     vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ plans: [] }), { status: 200 }))
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify([
@@ -98,7 +98,9 @@ describe("AccrualPlansSection", () => {
   });
 
   it("shows a clear message when party is not selected on preview", async () => {
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }));
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(JSON.stringify({ plans: [] }), { status: 200 }),
+    );
     render(<AccrualPlansSection accounts={accounts} parties={parties} />);
     const user = userEvent.setup();
 
@@ -113,7 +115,9 @@ describe("AccrualPlansSection", () => {
   });
 
   it("prevents preview when account types do not match direction", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }));
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(JSON.stringify({ plans: [] }), { status: 200 }),
+    );
     render(<AccrualPlansSection accounts={accounts} parties={parties} />);
     const user = userEvent.setup();
 

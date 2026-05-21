@@ -126,7 +126,7 @@ describe("App", () => {
     mockFetchImplementation([
       () => new Response(JSON.stringify([]), { status: 200 }),
       () => new Response(JSON.stringify([]), { status: 200 }),
-      () => new Response(JSON.stringify([]), { status: 200 }),
+      () => new Response(JSON.stringify({ plans: [] }), { status: 200 }),
     ]);
 
     render(<App />);
