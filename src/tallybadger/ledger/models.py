@@ -394,15 +394,6 @@ class AccrualPlanCreate(AccrualPlanWrite):
     pass
 
 
-class AccrualPlanUpdate(BaseModel):
-    name: str | None = Field(default=None, min_length=1, max_length=120)
-    end_date: date | None = None
-    amount: Decimal | None = None
-    summary_template: str | None = Field(default=None, min_length=1, max_length=200)
-    description_template: str | None = Field(default=None, max_length=500)
-    force_override: bool = False
-
-
 AccrualPlanSettlementStatus = Literal[
     "any", "unsettled", "open", "partially_settled", "settled"
 ]

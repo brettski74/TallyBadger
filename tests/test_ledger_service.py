@@ -6,7 +6,6 @@ import pytest
 
 from tallybadger.ledger.models import (
     AccrualPlanCreate,
-    AccrualPlanUpdate,
     JournalEntryWrite,
     JournalLineIn,
 )
@@ -271,13 +270,6 @@ def test_weekly_rejects_business_day_adjust() -> None:
             day_of_week=0,
             business_day_adjust=True,
         )
-
-
-def test_update_accrual_plan_guard_requires_force_override() -> None:
-    service, _conn, cur = _build_service_with_mocks()
-    cur.fetchone.side_effect = [{"id": 1}]
-    with pytest.raises(LedgerValidationError, match="force_override=true"):
-        service.update_accrual_plan(1, AccrualPlanUpdate(name="Updated"))
 
 
 def test_expense_plan_target_account_must_be_expense() -> None:

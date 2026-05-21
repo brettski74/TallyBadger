@@ -89,8 +89,37 @@ class StubLedgerService:
     def create_accrual_plan(self, _payload):
         raise LedgerValidationError("plan frequency produced no entries in the date range")
 
-    def update_accrual_plan(self, _plan_id, _payload):
-        raise LedgerValidationError("plan has already posted entries; pass force_override=true to update")
+    def update_accrual_plan(self, plan_id, _payload):
+        from datetime import datetime, timezone
+
+        from tallybadger.ledger.models import AccrualPlanOut
+
+        if plan_id == 2:
+            raise LedgerConflictError(
+                'accrual plan "Stub Settled Plan" (id=2) has 1 settlement allocation(s) '
+                "across 1 obligation(s) and cannot be edited"
+            )
+        now = datetime.now(tz=timezone.utc)
+        return AccrualPlanOut(
+            id=plan_id,
+            name="Updated Plan",
+            direction="revenue",
+            party_id=1,
+            target_account_id=2,
+            bridge_account_id=3,
+            frequency="monthly_day",
+            start_date=date(2026, 1, 1),
+            end_date=date(2026, 3, 31),
+            amount=Decimal("100.00"),
+            summary_template="{plan}",
+            description_template=None,
+            day_of_week=None,
+            day_of_month=1,
+            month_of_year=None,
+            business_day_adjust=False,
+            created_at=now,
+            updated_at=now,
+        )
 
     def cancel_accrual_plan(self, plan_id: int) -> None:
         if plan_id == 99:
@@ -398,12 +427,54 @@ def test_preview_accrual_plan_endpoint() -> None:
     app.dependency_overrides.clear()
 
 
-def test_update_accrual_plan_guard_maps_to_422() -> None:
+def test_update_accrual_plan_success_maps_to_200() -> None:
     app.dependency_overrides[get_ledger_service] = StubLedgerService
     client = TestClient(app)
-    response = client.patch("/accrual-plans/1", json={"name": "Updated"})
-    assert response.status_code == 422
-    assert "force_override=true" in response.json()["detail"]
+    response = client.patch(
+        "/accrual-plans/1",
+        json={
+            "name": "Updated Plan",
+            "direction": "revenue",
+            "party_id": 1,
+            "target_account_id": 2,
+            "bridge_account_id": 3,
+            "frequency": "monthly_day",
+            "start_date": "2026-01-01",
+            "end_date": "2026-03-31",
+            "amount": "100.00",
+            "summary_template": "{plan}",
+            "day_of_month": 1,
+            "business_day_adjust": False,
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["name"] == "Updated Plan"
+    app.dependency_overrides.clear()
+
+
+def test_update_accrual_plan_with_allocations_maps_to_409() -> None:
+    app.dependency_overrides[get_ledger_service] = StubLedgerService
+    client = TestClient(app)
+    response = client.patch(
+        "/accrual-plans/2",
+        json={
+            "name": "Updated",
+            "direction": "revenue",
+            "party_id": 1,
+            "target_account_id": 2,
+            "bridge_account_id": 3,
+            "frequency": "monthly_day",
+            "start_date": "2026-01-01",
+            "end_date": "2026-01-31",
+            "amount": "100.00",
+            "summary_template": "{plan}",
+            "day_of_month": 1,
+            "business_day_adjust": False,
+        },
+    )
+    assert response.status_code == 409
+    assert "Stub Settled Plan" in response.json()["detail"]
+    assert "settlement allocation" in response.json()["detail"].lower()
     app.dependency_overrides.clear()
 
 
