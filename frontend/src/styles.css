@@ -1772,7 +1772,7 @@ th.table-row-actions-heading {
 .accrual-view-fields-divider {
   grid-column: 1 / -1;
   width: 30%;
-  margin: 0.15rem 0 0.65rem;
+  margin: 0.15rem auto 0.65rem;
   border: none;
   border-top: 1px solid var(--border);
 }
