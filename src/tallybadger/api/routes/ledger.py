@@ -15,6 +15,7 @@ from tallybadger.ledger.models import (
     AccountUpdate,
     AccrualObligationOut,
     AccrualPlanCreate,
+    AccrualPlanDetailResponse,
     AccrualPlanListResponse,
     AccrualPlanOut,
     AccrualPlanSettlementStatus,
@@ -166,6 +167,17 @@ def list_accrual_plans(
         )
     except LedgerValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/accrual-plans/{plan_id}", response_model=AccrualPlanDetailResponse)
+def get_accrual_plan_detail(
+    plan_id: int,
+    service: LedgerService = Depends(get_ledger_service),
+) -> AccrualPlanDetailResponse:
+    try:
+        return service.get_accrual_plan_detail(plan_id)
+    except LedgerNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/accrual-plans/preview", response_model=list[AccrualPreviewItem])

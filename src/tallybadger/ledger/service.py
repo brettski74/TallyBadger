@@ -29,9 +29,11 @@ from tallybadger.ledger.models import (
     AccountUpdate,
     AccrualObligationOut,
     AccrualPlanCreate,
+    AccrualPlanDetailResponse,
     AccrualPlanListFilterOptions,
     AccrualPlanListResponse,
     AccrualPlanOut,
+    AccrualPlanSummaryRollups,
     AccrualPlanSettlementStatus,
     AccrualPlanUpdate,
     AccrualPreviewItem,
@@ -878,6 +880,74 @@ class LedgerService:
         return AccrualPlanListResponse(
             plans=[AccrualPlanOut.model_validate(row) for row in rows],
             filter_options=filter_options,
+        )
+
+    def get_accrual_plan_detail(self, plan_id: int) -> AccrualPlanDetailResponse:
+        with self._connection_factory() as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(
+                    f"""
+                    {self._ACCRUAL_PLAN_SELECT}
+                    WHERE ap.id = %s
+                    """,
+                    (plan_id,),
+                )
+                plan_row = cur.fetchone()
+                if not plan_row:
+                    raise LedgerNotFoundError(f"accrual plan {plan_id} not found")
+
+                cur.execute(
+                    """
+                    SELECT ao.id, ao.party_id, ao.accrual_plan_id, ao.source_entry_id,
+                           je.entry_date AS source_entry_date,
+                           je.summary AS source_entry_summary,
+                           ao.source_line_id, ao.obligation_type, ao.status,
+                           ao.original_amount, ao.open_amount, ao.created_at, ao.updated_at
+                    FROM accrual_obligations ao
+                    LEFT JOIN journal_entries je ON je.id = ao.source_entry_id
+                    WHERE ao.accrual_plan_id = %s
+                    ORDER BY je.entry_date ASC NULLS LAST, ao.id ASC
+                    """,
+                    (plan_id,),
+                )
+                obligation_rows = cur.fetchall()
+
+                cur.execute(
+                    """
+                    SELECT
+                      COALESCE(SUM(ao.original_amount), 0) AS total_original_accrued,
+                      COALESCE(SUM(ao.original_amount - ao.open_amount), 0) AS total_settled_to_date,
+                      COALESCE(
+                        SUM(ao.open_amount) FILTER (
+                          WHERE je.entry_date < CURRENT_DATE
+                        ),
+                        0
+                      ) AS past_due,
+                      COALESCE(
+                        SUM(ao.open_amount) FILTER (
+                          WHERE je.entry_date > CURRENT_DATE
+                        ),
+                        0
+                      ) AS not_yet_due,
+                      COALESCE(
+                        SUM(ao.original_amount - ao.open_amount) FILTER (
+                          WHERE je.entry_date > CURRENT_DATE
+                        ),
+                        0
+                      ) AS unearned
+                    FROM accrual_obligations ao
+                    LEFT JOIN journal_entries je ON je.id = ao.source_entry_id
+                    WHERE ao.accrual_plan_id = %s
+                    """,
+                    (plan_id,),
+                )
+                summary_row = cur.fetchone()
+                assert summary_row is not None
+
+        return AccrualPlanDetailResponse(
+            plan=AccrualPlanOut.model_validate(plan_row),
+            obligations=[AccrualObligationOut.model_validate(row) for row in obligation_rows],
+            summary=AccrualPlanSummaryRollups.model_validate(summary_row),
         )
 
     def preview_accrual_plan(
