@@ -1,4 +1,5 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FilePlus2, RefreshCcw } from "lucide-react";
 
 import type { Account } from "../api/accounts";
 import {
@@ -8,10 +9,12 @@ import {
   type AccrualDirection,
   type AccrualFrequency,
   type AccrualPlan,
+  type AccrualPlanSettlementStatus,
   type AccrualPlanWrite,
   type AccrualPreviewItem,
 } from "../api/accrualPlans";
 import type { Party } from "../api/parties";
+import { TableRowIconButton } from "./TableRowIconButton";
 
 const DAY_OPTIONS = [
   { label: "Monday", value: 0 },
@@ -23,6 +26,14 @@ const DAY_OPTIONS = [
   { label: "Sunday", value: 6 },
 ];
 
+const SETTLEMENT_STATUS_OPTIONS: { value: AccrualPlanSettlementStatus; label: string }[] = [
+  { value: "open", label: "Open (default)" },
+  { value: "unsettled", label: "Unsettled" },
+  { value: "partially_settled", label: "Partially settled" },
+  { value: "settled", label: "Settled" },
+  { value: "any", label: "Any" },
+];
+
 interface AccrualPlansSectionProps {
   accounts: Account[];
   parties: Party[];
@@ -30,8 +41,20 @@ interface AccrualPlansSectionProps {
 
 export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionProps) {
   const [plans, setPlans] = useState<AccrualPlan[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [listLoading, setListLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
+
+  const [settlementStatus, setSettlementStatus] = useState<AccrualPlanSettlementStatus>("open");
+  const [filterPartyId, setFilterPartyId] = useState("");
+  const [filterTargetAccountId, setFilterTargetAccountId] = useState("");
+  const [filterBridgeAccountId, setFilterBridgeAccountId] = useState("");
+  const [filterName, setFilterName] = useState("");
+  const [filterFromDate, setFilterFromDate] = useState("");
+  const [filterToDate, setFilterToDate] = useState("");
+
+  const [filterPartyIds, setFilterPartyIds] = useState<number[]>([]);
+  const [filterTargetAccountIds, setFilterTargetAccountIds] = useState<number[]>([]);
+  const [filterBridgeAccountIds, setFilterBridgeAccountIds] = useState<number[]>([]);
 
   const [name, setName] = useState("");
   const [direction, setDirection] = useState<AccrualDirection>("revenue");
@@ -54,27 +77,70 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
   const [previewing, setPreviewing] = useState(false);
   const [creating, setCreating] = useState(false);
 
-  useEffect(() => {
-    async function loadPlans() {
-      setLoading(true);
-      setError(null);
-      try {
-        setPlans(await listAccrualPlans());
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load plans");
-      } finally {
-        setLoading(false);
-      }
-    }
-    void loadPlans();
-  }, []);
-
-  const canCreate = useMemo(() => previewRows.length > 0 && !creating, [previewRows, creating]);
   const accountNameById = useMemo(
     () => new Map(accounts.map((account) => [account.id, account.name])),
     [accounts],
   );
   const partyNameById = useMemo(() => new Map(parties.map((party) => [party.id, party.name])), [parties]);
+
+  const listParams = useMemo(() => {
+    const params: Parameters<typeof listAccrualPlans>[0] = {
+      settlement_status: settlementStatus,
+      include_filter_options: true,
+    };
+    if (filterPartyId) {
+      params.party_ids = [Number(filterPartyId)];
+    }
+    if (filterTargetAccountId) {
+      params.target_account_ids = [Number(filterTargetAccountId)];
+    }
+    if (filterBridgeAccountId) {
+      params.bridge_account_ids = [Number(filterBridgeAccountId)];
+    }
+    if (filterFromDate) {
+      params.from_date = filterFromDate;
+    }
+    if (filterToDate) {
+      params.to_date = filterToDate;
+    }
+    if (filterName.trim()) {
+      params.name = filterName.trim();
+    }
+    return params;
+  }, [
+    settlementStatus,
+    filterPartyId,
+    filterTargetAccountId,
+    filterBridgeAccountId,
+    filterFromDate,
+    filterToDate,
+    filterName,
+  ]);
+
+  const reloadList = useCallback(async () => {
+    setListError(null);
+    setListLoading(true);
+    try {
+      const body = await listAccrualPlans(listParams);
+      setPlans(body.plans);
+      if (body.filter_options) {
+        setFilterPartyIds(body.filter_options.party_ids);
+        setFilterTargetAccountIds(body.filter_options.target_account_ids);
+        setFilterBridgeAccountIds(body.filter_options.bridge_account_ids);
+      }
+    } catch (err) {
+      setListError(err instanceof Error ? err.message : "Failed to load plans");
+      setPlans([]);
+    } finally {
+      setListLoading(false);
+    }
+  }, [listParams]);
+
+  useEffect(() => {
+    void reloadList();
+  }, [reloadList]);
+
+  const canCreate = useMemo(() => previewRows.length > 0 && !creating, [previewRows, creating]);
   const targetAccountOptions = useMemo(
     () => accounts.filter((a) => (direction === "revenue" ? a.type === "revenue" : a.type === "expense")),
     [accounts, direction],
@@ -83,6 +149,16 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
     () => accounts.filter((a) => (direction === "revenue" ? a.type === "asset" : a.type === "liability")),
     [accounts, direction],
   );
+
+  function partyFilterOptions(): Party[] {
+    const ids = new Set(filterPartyIds);
+    return parties.filter((p) => ids.has(p.id)).sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  function accountFilterOptions(ids: number[]): Account[] {
+    const idSet = new Set(ids);
+    return accounts.filter((a) => idSet.has(a.id)).sort((a, b) => a.name.localeCompare(b.name));
+  }
 
   function validateForm(): string | null {
     if (!name.trim()) {
@@ -195,10 +271,10 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
     }
     setCreating(true);
     try {
-      const created = await createAccrualPlan(buildPayload());
-      setPlans((prev) => [created, ...prev]);
+      await createAccrualPlan(buildPayload());
       setPreviewRows([]);
       setName("");
+      await reloadList();
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : "Failed to create plan");
     } finally {
@@ -206,10 +282,193 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
     }
   }
 
+  function formatAmount(value: string): string {
+    const n = Number.parseFloat(value);
+    if (!Number.isFinite(n)) {
+      return value;
+    }
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: "USD",
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(n);
+  }
+
   return (
     <>
       <section className="card journal-card-wide">
-        <h2>Accrual plans</h2>
+        <div className="cheque-register-toolbar">
+          <h2>Accrual plans</h2>
+          <div className="cheque-register-actions">
+            <TableRowIconButton
+              type="button"
+              aria-label="Refresh list"
+              title="Refresh list"
+              disabled={listLoading}
+              onClick={() => void reloadList()}
+            >
+              <RefreshCcw size={18} strokeWidth={2} aria-hidden />
+            </TableRowIconButton>
+            <TableRowIconButton
+              type="button"
+              aria-label="New accrual plan"
+              title="Create plan (coming soon)"
+              disabled
+            >
+              <FilePlus2 size={18} strokeWidth={2} aria-hidden />
+            </TableRowIconButton>
+          </div>
+        </div>
+        <p className="muted">
+          Filter by settlement bucket, party, accounts, date range, or name. Row actions for view and edit arrive in
+          follow-on tickets.
+        </p>
+
+        <div className="cheque-register-filters">
+          <label>
+            Settlement
+            <select
+              value={settlementStatus}
+              onChange={(e) => setSettlementStatus(e.target.value as AccrualPlanSettlementStatus)}
+              aria-label="Filter accrual plans by settlement status"
+            >
+              {SETTLEMENT_STATUS_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Party
+            <select
+              value={filterPartyId}
+              onChange={(e) => setFilterPartyId(e.target.value)}
+              aria-label="Filter accrual plans by party"
+            >
+              <option value="">All parties</option>
+              {partyFilterOptions().map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Target account
+            <select
+              value={filterTargetAccountId}
+              onChange={(e) => setFilterTargetAccountId(e.target.value)}
+              aria-label="Filter accrual plans by target account"
+            >
+              <option value="">All target accounts</option>
+              {accountFilterOptions(filterTargetAccountIds).map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Bridge account
+            <select
+              value={filterBridgeAccountId}
+              onChange={(e) => setFilterBridgeAccountId(e.target.value)}
+              aria-label="Filter accrual plans by bridge account"
+            >
+              <option value="">All bridge accounts</option>
+              {accountFilterOptions(filterBridgeAccountIds).map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Name
+            <input
+              type="search"
+              value={filterName}
+              onChange={(e) => setFilterName(e.target.value)}
+              aria-label="Filter accrual plans by name"
+              placeholder="Regex on plan name"
+            />
+          </label>
+          <label>
+            From date
+            <input
+              type="date"
+              value={filterFromDate}
+              onChange={(e) => setFilterFromDate(e.target.value)}
+              aria-label="Filter accrual plans from date"
+            />
+          </label>
+          <label>
+            To date
+            <input
+              type="date"
+              value={filterToDate}
+              onChange={(e) => setFilterToDate(e.target.value)}
+              aria-label="Filter accrual plans to date"
+            />
+          </label>
+        </div>
+
+        {listError && <p className="error-text">{listError}</p>}
+
+        <div style={{ overflowX: "auto" }}>
+          <table aria-label="Accrual plans register">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Party</th>
+                <th>Target</th>
+                <th>Bridge</th>
+                <th>Range</th>
+                <th>Amount</th>
+                <th>Direction</th>
+                <th>Frequency</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {listLoading && plans.length === 0 ? (
+                <tr>
+                  <td colSpan={9} className="muted">
+                    Loading…
+                  </td>
+                </tr>
+              ) : plans.length === 0 ? (
+                <tr>
+                  <td colSpan={9} className="muted">
+                    No plans for this filter.
+                  </td>
+                </tr>
+              ) : (
+                plans.map((p) => (
+                  <tr key={p.id}>
+                    <td>{p.name}</td>
+                    <td>{partyNameById.get(p.party_id) ?? `#${p.party_id}`}</td>
+                    <td>{accountNameById.get(p.target_account_id) ?? `#${p.target_account_id}`}</td>
+                    <td>{accountNameById.get(p.bridge_account_id) ?? `#${p.bridge_account_id}`}</td>
+                    <td>
+                      {p.start_date} – {p.end_date}
+                    </td>
+                    <td>{formatAmount(p.amount)}</td>
+                    <td>{p.direction}</td>
+                    <td>{p.frequency}</td>
+                    <td aria-label="Plan actions reserved" />
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="card journal-card-wide">
+        <h2>Create accrual plan</h2>
         <p className="muted">Preview generated accrual entries, then commit plan + entries together.</p>
         <form noValidate onSubmit={(e) => void handlePreview(e)}>
           <label>
@@ -241,7 +500,7 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
           <label>
             Target account
             <select
-              aria-label="Target account"
+              aria-label="Plan target account"
               value={targetAccountId}
               onChange={(e) => setTargetAccountId(e.target.value)}
               required
@@ -257,7 +516,7 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
           <label>
             Bridge account
             <select
-              aria-label="Bridge account"
+              aria-label="Plan bridge account"
               value={bridgeAccountId}
               onChange={(e) => setBridgeAccountId(e.target.value)}
               required
@@ -411,12 +670,12 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
                     : creditLines.length > 1
                       ? "-- Split --"
                       : "—";
-                const amount = debitLines.reduce((acc, line) => acc + line.amountNumber, 0);
+                const rowAmount = debitLines.reduce((acc, line) => acc + line.amountNumber, 0);
                 const partyNames = Array.from(
                   new Set(
                     row.lines
                       .map((line) => (line.party_id ? partyNameById.get(line.party_id) : null))
-                      .filter((name): name is string => Boolean(name)),
+                      .filter((n): n is string => Boolean(n)),
                   ),
                 );
                 return (
@@ -426,45 +685,10 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
                     <td>{partyNames.length > 0 ? partyNames.join(", ") : "—"}</td>
                     <td>{debitLabel}</td>
                     <td>{creditLabel}</td>
-                    <td className="journal-list-amount">{amount.toFixed(2)}</td>
+                    <td className="journal-list-amount">{rowAmount.toFixed(2)}</td>
                   </tr>
                 );
               })}
-            </tbody>
-          </table>
-        )}
-      </section>
-
-      <section className="card journal-card-wide">
-        <h2>Existing plans</h2>
-        {loading && <p>Loading plans...</p>}
-        {error && (
-          <p className="error" role="alert">
-            {error}
-          </p>
-        )}
-        {!loading && !error && plans.length === 0 && <p>No plans yet.</p>}
-        {!loading && !error && plans.length > 0 && (
-          <table>
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Frequency</th>
-                <th>Direction</th>
-                <th>Range</th>
-              </tr>
-            </thead>
-            <tbody>
-              {plans.map((p) => (
-                <tr key={p.id}>
-                  <td>{p.name}</td>
-                  <td>{p.frequency}</td>
-                  <td>{p.direction}</td>
-                  <td>
-                    {p.start_date} to {p.end_date}
-                  </td>
-                </tr>
-              ))}
             </tbody>
           </table>
         )}

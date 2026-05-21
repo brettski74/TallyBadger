@@ -3,6 +3,12 @@ import { readApiErrorMessage } from "./errors";
 
 export type AccrualDirection = "revenue" | "expense";
 export type AccrualFrequency = "weekly" | "monthly_day" | "yearly";
+export type AccrualPlanSettlementStatus =
+  | "any"
+  | "unsettled"
+  | "open"
+  | "partially_settled"
+  | "settled";
 
 export interface AccrualPlan {
   id: number;
@@ -61,13 +67,55 @@ export interface AccrualPlanListResponse {
   filter_options?: AccrualPlanListFilterOptions;
 }
 
-export async function listAccrualPlans(): Promise<AccrualPlan[]> {
-  const response = await fetch(`${getApiBase()}/accrual-plans`);
+export interface AccrualPlanListParams {
+  party_ids?: number[];
+  target_account_ids?: number[];
+  bridge_account_ids?: number[];
+  from_date?: string;
+  to_date?: string;
+  name?: string;
+  settlement_status?: AccrualPlanSettlementStatus;
+  include_filter_options?: boolean;
+}
+
+function appendIdList(search: URLSearchParams, key: string, ids: number[] | undefined): void {
+  if (!ids?.length) {
+    return;
+  }
+  for (const id of ids) {
+    search.append(key, String(id));
+  }
+}
+
+export async function listAccrualPlans(
+  params: AccrualPlanListParams = {},
+): Promise<AccrualPlanListResponse> {
+  const search = new URLSearchParams();
+  appendIdList(search, "party_ids", params.party_ids);
+  appendIdList(search, "target_account_ids", params.target_account_ids);
+  appendIdList(search, "bridge_account_ids", params.bridge_account_ids);
+  if (params.from_date) {
+    search.set("from_date", params.from_date);
+  }
+  if (params.to_date) {
+    search.set("to_date", params.to_date);
+  }
+  if (params.name?.trim()) {
+    search.set("name", params.name.trim());
+  }
+  if (params.settlement_status) {
+    search.set("settlement_status", params.settlement_status);
+  }
+  if (params.include_filter_options) {
+    search.set("include_filter_options", "true");
+  }
+  const query = search.toString();
+  const url = query ? `${getApiBase()}/accrual-plans?${query}` : `${getApiBase()}/accrual-plans`;
+  const response = await fetch(url);
   if (!response.ok) {
     throw new Error(await readApiErrorMessage(response));
   }
-  const body = (await response.json()) as AccrualPlanListResponse;
-  return body.plans;
+  return response.json() as Promise<AccrualPlanListResponse>;
 }
 
 export async function previewAccrualPlan(payload: AccrualPlanWrite): Promise<AccrualPreviewItem[]> {

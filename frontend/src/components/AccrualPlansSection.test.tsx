@@ -29,10 +29,147 @@ const parties: Party[] = [
   },
 ];
 
-describe("AccrualPlansSection", () => {
+const emptyListBody = {
+  plans: [],
+  filter_options: { party_ids: [], target_account_ids: [], bridge_account_ids: [] },
+};
+
+function listPlansResponse(plans: unknown[] = []) {
+  return new Response(
+    JSON.stringify({
+      plans,
+      filter_options: {
+        party_ids: plans.length ? [1] : [],
+        target_account_ids: plans.length ? [2] : [],
+        bridge_account_ids: plans.length ? [1] : [],
+      },
+    }),
+    { status: 200 },
+  );
+}
+
+function accrualPlanListCalls(fetchMock: ReturnType<typeof vi.spyOn>) {
+  return fetchMock.mock.calls.filter((call: unknown[]) => String(call[0]).includes("/accrual-plans"));
+}
+
+describe("AccrualPlansSection register", () => {
+  it("requests open settlement and filter options by default", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(JSON.stringify(emptyListBody), { status: 200 }),
+    );
+
+    render(<AccrualPlansSection accounts={accounts} parties={parties} />);
+
+    await waitFor(() => {
+      const calls = accrualPlanListCalls(fetchMock);
+      expect(calls.length).toBeGreaterThan(0);
+      const url = String(calls[0][0]);
+      expect(url).toContain("settlement_status=open");
+      expect(url).toContain("include_filter_options=true");
+    });
+  });
+
+  it("refetches when settlement filter changes", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(JSON.stringify(emptyListBody), { status: 200 }));
+
+    render(<AccrualPlansSection accounts={accounts} parties={parties} />);
+    await waitFor(() => expect(accrualPlanListCalls(fetchMock).length).toBe(1));
+
+    const user = userEvent.setup();
+    await user.selectOptions(screen.getByLabelText("Filter accrual plans by settlement status"), "settled");
+
+    await waitFor(() => {
+      const calls = accrualPlanListCalls(fetchMock);
+      expect(calls.length).toBeGreaterThan(1);
+      expect(String(calls.at(-1)?.[0])).toContain("settlement_status=settled");
+    });
+  });
+
+  it("refresh re-requests with current filters", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(JSON.stringify(emptyListBody), { status: 200 }));
+
+    render(<AccrualPlansSection accounts={accounts} parties={parties} />);
+    await waitFor(() => expect(accrualPlanListCalls(fetchMock).length).toBe(1));
+    fetchMock.mockClear();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Refresh list" }));
+
+    await waitFor(() => {
+      const calls = accrualPlanListCalls(fetchMock);
+      expect(calls.length).toBe(1);
+      expect(String(calls[0][0])).toContain("settlement_status=open");
+    });
+  });
+
+  it("shows loading then empty state", async () => {
+    let resolveFetch: (value: Response) => void = () => undefined;
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve;
+        }),
+    );
+
+    render(<AccrualPlansSection accounts={accounts} parties={parties} />);
+    const register = screen.getByRole("table", { name: "Accrual plans register" });
+    expect(within(register).getByText("Loading…")).toBeInTheDocument();
+
+    resolveFetch(new Response(JSON.stringify(emptyListBody), { status: 200 }));
+    expect(await within(register).findByText("No plans for this filter.")).toBeInTheDocument();
+  });
+
+  it("shows list error", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response("nope", { status: 500 }));
+
+    render(<AccrualPlansSection accounts={accounts} parties={parties} />);
+
+    expect(await screen.findByText(/Request failed \(500\)/i)).toBeInTheDocument();
+  });
+
+  it("renders plan rows in the register table", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      listPlansResponse([
+        {
+          id: 5,
+          name: "Alpha Rent",
+          direction: "revenue",
+          party_id: 1,
+          target_account_id: 2,
+          bridge_account_id: 1,
+          frequency: "monthly_day",
+          start_date: "2026-01-01",
+          end_date: "2026-12-31",
+          amount: "1200.00",
+          summary_template: "{plan}",
+          description_template: null,
+          day_of_week: null,
+          day_of_month: 1,
+          month_of_year: null,
+          business_day_adjust: false,
+          created_at: "",
+          updated_at: "",
+        },
+      ]),
+    );
+
+    render(<AccrualPlansSection accounts={accounts} parties={parties} />);
+
+    const register = await screen.findByRole("table", { name: "Accrual plans register" });
+    expect(within(register).getByText("Alpha Rent")).toBeInTheDocument();
+    expect(within(register).getByText("Acme Yard Maintenance")).toBeInTheDocument();
+    expect(within(register).getByText("$1,200.00")).toBeInTheDocument();
+  });
+});
+
+describe("AccrualPlansSection create flow", () => {
   it("previews then creates a plan", async () => {
     vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(new Response(JSON.stringify({ plans: [] }), { status: 200 }))
+      .mockResolvedValueOnce(listPlansResponse())
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify([
@@ -73,6 +210,30 @@ describe("AccrualPlansSection", () => {
           }),
           { status: 201 },
         ),
+      )
+      .mockResolvedValueOnce(
+        listPlansResponse([
+          {
+            id: 11,
+            name: "Rent Plan",
+            direction: "revenue",
+            party_id: 1,
+            target_account_id: 2,
+            bridge_account_id: 1,
+            frequency: "monthly_day",
+            start_date: "2026-01-01",
+            end_date: "2026-01-31",
+            amount: "100.00",
+            summary_template: "{plan} {month}",
+            description_template: null,
+            day_of_week: null,
+            day_of_month: 1,
+            month_of_year: null,
+            business_day_adjust: false,
+            created_at: "",
+            updated_at: "",
+          },
+        ]),
       );
 
     render(<AccrualPlansSection accounts={accounts} parties={parties} />);
@@ -80,8 +241,8 @@ describe("AccrualPlansSection", () => {
 
     await user.type(screen.getByLabelText("Plan name"), "Rent Plan");
     await user.selectOptions(screen.getByLabelText("Plan party"), "1");
-    await user.selectOptions(screen.getByLabelText("Target account"), "2");
-    await user.selectOptions(screen.getByLabelText("Bridge account"), "1");
+    await user.selectOptions(screen.getByLabelText("Plan target account"), "2");
+    await user.selectOptions(screen.getByLabelText("Plan bridge account"), "1");
     await user.clear(screen.getByLabelText("Plan amount"));
     await user.type(screen.getByLabelText("Plan amount"), "100.00");
     await user.click(screen.getByRole("button", { name: "Preview entries" }));
@@ -94,37 +255,34 @@ describe("AccrualPlansSection", () => {
     expect(within(previewTable).getByText("100.00")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Create plan" }));
 
-    await waitFor(() => expect(screen.getByText("Rent Plan")).toBeInTheDocument());
+    const register = await screen.findByRole("table", { name: "Accrual plans register" });
+    await waitFor(() => expect(within(register).getByText("Rent Plan")).toBeInTheDocument());
   });
 
   it("shows a clear message when party is not selected on preview", async () => {
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-      new Response(JSON.stringify({ plans: [] }), { status: 200 }),
-    );
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(listPlansResponse());
     render(<AccrualPlansSection accounts={accounts} parties={parties} />);
     const user = userEvent.setup();
 
     await user.type(screen.getByLabelText("Plan name"), "Rent Plan");
-    await user.selectOptions(screen.getByLabelText("Target account"), "2");
-    await user.selectOptions(screen.getByLabelText("Bridge account"), "1");
+    await user.selectOptions(screen.getByLabelText("Plan target account"), "2");
+    await user.selectOptions(screen.getByLabelText("Plan bridge account"), "1");
     await user.click(screen.getByRole("button", { name: "Preview entries" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Select a party.");
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
-    expect(String(fetchSpy.mock.calls[0]?.[0])).not.toContain("/preview");
+    const previewCalls = fetchSpy.mock.calls.filter((c) => String(c[0]).includes("/preview"));
+    expect(previewCalls).toHaveLength(0);
   });
 
   it("prevents preview when account types do not match direction", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-      new Response(JSON.stringify({ plans: [] }), { status: 200 }),
-    );
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(listPlansResponse());
     render(<AccrualPlansSection accounts={accounts} parties={parties} />);
     const user = userEvent.setup();
 
     await user.type(screen.getByLabelText("Plan name"), "Bad Revenue Plan");
     await user.selectOptions(screen.getByLabelText("Plan party"), "1");
-    await user.selectOptions(screen.getByLabelText("Target account"), "2");
-    await user.selectOptions(screen.getByLabelText("Bridge account"), "1");
+    await user.selectOptions(screen.getByLabelText("Plan target account"), "2");
+    await user.selectOptions(screen.getByLabelText("Plan bridge account"), "1");
     await user.selectOptions(screen.getByLabelText("Plan direction"), "expense");
     await user.click(screen.getByRole("button", { name: "Preview entries" }));
 
