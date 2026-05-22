@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Eye, FilePlus2, Pencil, RefreshCcw, Trash2 } from "lucide-react";
+import { BookCopy, Eye, FilePlus2, Pencil, RefreshCcw, Trash2 } from "lucide-react";
 
 import type { Account } from "../api/accounts";
 import {
@@ -22,6 +22,10 @@ import {
 import type { Party } from "../api/parties";
 import { useAccrualPlanModalShortcuts } from "../hooks/useAccrualPlanModalShortcuts";
 import {
+  proposeDuplicateAccrualPlanName,
+  shiftAccrualPlanDatesByOneYear,
+} from "../lib/accrualPlanDuplicate";
+import {
   newActionTooltip,
   newAriaKeyShortcuts,
   newEntityAriaLabel,
@@ -43,6 +47,24 @@ const DAY_OPTIONS = [
   { label: "Saturday", value: 5 },
   { label: "Sunday", value: 6 },
 ];
+
+type AccrualPlanCreateFormSnapshot = {
+  name: string;
+  direction: AccrualDirection;
+  partyId: string;
+  targetAccountId: string;
+  bridgeAccountId: string;
+  frequency: AccrualFrequency;
+  dayOfWeek: string;
+  dayOfMonth: string;
+  monthOfYear: string;
+  startDate: string;
+  endDate: string;
+  amount: string;
+  summaryTemplate: string;
+  descriptionTemplate: string;
+  businessDayAdjust: boolean;
+};
 
 const SETTLEMENT_STATUS_OPTIONS: { value: AccrualPlanSettlementStatus; label: string }[] = [
   { value: "open", label: "Open (default)" },
@@ -89,6 +111,7 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
   const viewDialogRef = useRef<HTMLDialogElement>(null);
   const createFormRef = useRef<HTMLFormElement>(null);
   const editFormRef = useRef<HTMLFormElement>(null);
+  const createFormBaselineRef = useRef<AccrualPlanCreateFormSnapshot | null>(null);
   const isMac = useMemo(() => isMacLikeUserAgent(), []);
 
   const [name, setName] = useState("");
@@ -255,25 +278,82 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
     return accounts.filter((a) => idSet.has(a.id)).sort((a, b) => a.name.localeCompare(b.name));
   }
 
-  function clearPlanForm() {
-    setName("");
-    setDirection("revenue");
-    setPartyId("");
-    setTargetAccountId("");
-    setBridgeAccountId("");
-    setFrequency("monthly_day");
-    setDayOfWeek("0");
-    setDayOfMonth("1");
-    setMonthOfYear("1");
+  function defaultCreateFormSnapshot(): AccrualPlanCreateFormSnapshot {
     const today = new Date().toISOString().slice(0, 10);
-    setStartDate(today);
-    setEndDate(today);
-    setAmount("0.00");
-    setSummaryTemplate("{plan} {month}");
-    setDescriptionTemplate("");
-    setBusinessDayAdjust(false);
+    return {
+      name: "",
+      direction: "revenue",
+      partyId: "",
+      targetAccountId: "",
+      bridgeAccountId: "",
+      frequency: "monthly_day",
+      dayOfWeek: "0",
+      dayOfMonth: "1",
+      monthOfYear: "1",
+      startDate: today,
+      endDate: today,
+      amount: "0.00",
+      summaryTemplate: "{plan} {month}",
+      descriptionTemplate: "",
+      businessDayAdjust: false,
+    };
+  }
+
+  function createFormSnapshotFromPlan(
+    plan: AccrualPlan,
+    overrides: Partial<Pick<AccrualPlanCreateFormSnapshot, "name" | "startDate" | "endDate">> = {},
+  ): AccrualPlanCreateFormSnapshot {
+    return {
+      name: overrides.name ?? plan.name,
+      direction: plan.direction,
+      partyId: String(plan.party_id),
+      targetAccountId: String(plan.target_account_id),
+      bridgeAccountId: String(plan.bridge_account_id),
+      frequency: plan.frequency,
+      dayOfWeek: plan.day_of_week != null ? String(plan.day_of_week) : "0",
+      dayOfMonth: plan.day_of_month != null ? String(plan.day_of_month) : "1",
+      monthOfYear: plan.month_of_year != null ? String(plan.month_of_year) : "1",
+      startDate: overrides.startDate ?? plan.start_date,
+      endDate: overrides.endDate ?? plan.end_date,
+      amount: plan.amount,
+      summaryTemplate: plan.summary_template,
+      descriptionTemplate: plan.description_template ?? "",
+      businessDayAdjust: plan.business_day_adjust,
+    };
+  }
+
+  function clearPlanForm() {
+    applyCreateFormSnapshot(defaultCreateFormSnapshot());
+  }
+
+  function applyCreateFormSnapshot(snapshot: AccrualPlanCreateFormSnapshot): void {
+    setName(snapshot.name);
+    setDirection(snapshot.direction);
+    setPartyId(snapshot.partyId);
+    setTargetAccountId(snapshot.targetAccountId);
+    setBridgeAccountId(snapshot.bridgeAccountId);
+    setFrequency(snapshot.frequency);
+    setDayOfWeek(snapshot.dayOfWeek);
+    setDayOfMonth(snapshot.dayOfMonth);
+    setMonthOfYear(snapshot.monthOfYear);
+    setStartDate(snapshot.startDate);
+    setEndDate(snapshot.endDate);
+    setAmount(snapshot.amount);
+    setSummaryTemplate(snapshot.summaryTemplate);
+    setDescriptionTemplate(snapshot.descriptionTemplate);
+    setBusinessDayAdjust(snapshot.businessDayAdjust);
     setPreviewRows([]);
     setSubmitError(null);
+  }
+
+  function restoreCreateFormBaseline(): void {
+    const baseline = createFormBaselineRef.current;
+    if (!baseline) {
+      clearPlanForm();
+      return;
+    }
+    applyCreateFormSnapshot(baseline);
+    setCreateDialogView("form");
   }
 
   function loadPlanIntoForm(plan: AccrualPlan) {
@@ -301,6 +381,7 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
     setCreateDialogView("form");
     setPreviewing(false);
     setCreating(false);
+    createFormBaselineRef.current = null;
     clearPlanForm();
   }
 
@@ -358,9 +439,32 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
   }
 
   function handleNewPlan() {
-    clearPlanForm();
+    const baseline = defaultCreateFormSnapshot();
+    applyCreateFormSnapshot(baseline);
+    createFormBaselineRef.current = baseline;
     setCreateDialogView("form");
     setCreateDialogOpen(true);
+  }
+
+  async function openDuplicatePlan(plan: AccrualPlan) {
+    setListError(null);
+    try {
+      const body = await listAccrualPlans({ settlement_status: "any" });
+      const existingNames = body.plans.map((p) => p.name);
+      const proposedName = proposeDuplicateAccrualPlanName(plan.name, existingNames);
+      const dates = shiftAccrualPlanDatesByOneYear(plan.start_date, plan.end_date);
+      const baseline = createFormSnapshotFromPlan(plan, {
+        name: proposedName,
+        startDate: dates.start,
+        endDate: dates.end,
+      });
+      applyCreateFormSnapshot(baseline);
+      createFormBaselineRef.current = baseline;
+      setCreateDialogView("form");
+      setCreateDialogOpen(true);
+    } catch (err) {
+      setListError(err instanceof Error ? err.message : `Failed to duplicate plan "${plan.name}"`);
+    }
   }
 
   function validateForm(): string | null {
@@ -615,6 +719,7 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
     onViewClose: closeViewDialog,
     onCreateReturnToForm: returnToCreateForm,
     onEditReturnToForm: returnToEditForm,
+    onCreateRevertForm: restoreCreateFormBaseline,
     onNewPlan: handleNewPlan,
   });
 
@@ -1146,6 +1251,14 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
                     <td>{p.frequency}</td>
                     <td>
                       <div className="table-row-actions">
+                        <TableRowIconButton
+                          type="button"
+                          aria-label={`Duplicate plan ${p.name}`}
+                          title="Duplicate plan"
+                          onClick={() => void openDuplicatePlan(p)}
+                        >
+                          <BookCopy size={18} strokeWidth={2} aria-hidden />
+                        </TableRowIconButton>
                         {isUnsettledPlan(p) ? (
                           <>
                             <TableRowIconButton

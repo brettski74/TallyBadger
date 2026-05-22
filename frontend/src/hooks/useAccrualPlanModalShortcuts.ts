@@ -21,6 +21,8 @@ export interface AccrualPlanModalShortcutOptions {
   onViewClose: () => void;
   onCreateReturnToForm: () => void;
   onEditReturnToForm: () => void;
+  /** Ctrl/Cmd+Shift+D on create form step: revert toward baseline (duplicate pre-fill or empty defaults). */
+  onCreateRevertForm?: () => void;
   /** Ctrl/Cmd+Shift+N on the list when no modal is open. */
   onNewPlan?: () => void;
 }
@@ -30,7 +32,7 @@ export interface AccrualPlanModalShortcutOptions {
  * - Ctrl/Cmd+Shift+N: new plan on list when no modal is open
  * - Esc: always close the open modal
  * - Ctrl/Cmd+S: preview (form) or save (preview) — active while any plan modal is open
- * - Ctrl/Cmd+Shift+D: return from preview to form (preview step only)
+ * - Ctrl/Cmd+Shift+D: preview → form; create form → revert toward baseline
  */
 export function useAccrualPlanModalShortcuts(opts: AccrualPlanModalShortcutOptions): void {
   const optsRef = useRef(opts);
@@ -86,10 +88,19 @@ export function useAccrualPlanModalShortcuts(opts: AccrualPlanModalShortcutOptio
       }
 
       if (previewRevertChord) {
-        if (o.createDialogOpen && o.createDialogView === "preview" && !o.createSubmitting) {
+        if (o.createSubmitting || o.editSubmitting) {
+          return;
+        }
+        if (o.createDialogOpen) {
           e.preventDefault();
-          o.onCreateReturnToForm();
-        } else if (o.editDialogOpen && o.editDialogView === "preview" && !o.editSubmitting) {
+          if (o.createDialogView === "preview") {
+            o.onCreateReturnToForm();
+          } else {
+            o.onCreateRevertForm?.();
+          }
+          return;
+        }
+        if (o.editDialogOpen && o.editDialogView === "preview") {
           e.preventDefault();
           o.onEditReturnToForm();
         }

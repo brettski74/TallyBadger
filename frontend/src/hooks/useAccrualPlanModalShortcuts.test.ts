@@ -129,6 +129,40 @@ describe("useAccrualPlanModalShortcuts", () => {
     expect(onNewPlan).toHaveBeenCalledTimes(1);
   });
 
+  it("reverts create form on Ctrl+Shift+D when create form step is open", () => {
+    const onCreateRevertForm = vi.fn();
+    renderHook(() =>
+      useAccrualPlanModalShortcuts({
+        createDialogOpen: true,
+        createDialogView: "form",
+        editDialogOpen: false,
+        editDialogView: "form",
+        viewDialogOpen: false,
+        canSubmitCreate: true,
+        canSubmitEdit: false,
+        createSubmitting: false,
+        editSubmitting: false,
+        onCreateSave: vi.fn(),
+        onEditSave: vi.fn(),
+        onCreateClose: vi.fn(),
+        onEditClose: vi.fn(),
+        onViewClose: vi.fn(),
+        onCreateReturnToForm: vi.fn(),
+        onEditReturnToForm: vi.fn(),
+        onCreateRevertForm,
+      }),
+    );
+
+    fireEvent.keyDown(document, {
+      key: "d",
+      code: "KeyD",
+      ctrlKey: true,
+      shiftKey: true,
+      bubbles: true,
+    });
+    expect(onCreateRevertForm).toHaveBeenCalledTimes(1);
+  });
+
   it("fires create save from Ctrl+S without focus in the form", () => {
     const onCreateSave = vi.fn();
     renderHook(() =>
