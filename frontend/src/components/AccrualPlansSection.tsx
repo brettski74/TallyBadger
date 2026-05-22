@@ -614,23 +614,8 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
     onViewClose: closeViewDialog,
     onCreateReturnToForm: returnToCreateForm,
     onEditReturnToForm: returnToEditForm,
+    onNewPlan: handleNewPlan,
   });
-
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (createDialogOpen || editDialogOpen || viewDialogOpen) {
-        return;
-      }
-      const newChord =
-        (e.key === "n" || e.key === "N") && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey;
-      if (newChord) {
-        e.preventDefault();
-        handleNewPlan();
-      }
-    };
-    document.addEventListener("keydown", onKeyDown, true);
-    return () => document.removeEventListener("keydown", onKeyDown, true);
-  }, [createDialogOpen, editDialogOpen, viewDialogOpen]);
 
   function formatAmount(value: string): string {
     const n = Number.parseFloat(value);

@@ -94,6 +94,16 @@ describe("AccrualPlansSection register", () => {
     expect(screen.queryByRole("button", { name: /Preview entries/i })).not.toBeInTheDocument();
   });
 
+  it("Ctrl+N opens the create dialog when no modal is open", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(listPlansResponse());
+
+    render(<AccrualPlansSection accounts={accounts} parties={parties} />);
+    await waitFor(() => expect(screen.getByRole("table", { name: "Accrual plans register" })).toBeInTheDocument());
+
+    fireEvent.keyDown(document, { code: "KeyN", key: "\u000e", ctrlKey: true });
+    expect(screen.getByRole("heading", { name: "New accrual plan" })).toBeInTheDocument();
+  });
+
   it("refetches with multiple party_ids when party filter selects more than one", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")

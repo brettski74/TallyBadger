@@ -1,5 +1,7 @@
 import { useEffect, useRef } from "react";
 
+import { isNewChord } from "../lib/keyboardChords";
+
 export type ChequeCreateDialogView = "form" | "preview";
 
 export interface ChequeCreateModalShortcutOptions {
@@ -75,8 +77,4 @@ export function useChequeCreateModalShortcuts(opts: ChequeCreateModalShortcutOpt
     document.addEventListener("keydown", onKeyDown, true);
     return () => document.removeEventListener("keydown", onKeyDown, true);
   }, []);
-}
-
-function isNewChord(e: KeyboardEvent): boolean {
-  return (e.key === "n" || e.key === "N") && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey;
 }

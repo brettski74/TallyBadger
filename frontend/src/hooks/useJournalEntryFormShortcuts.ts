@@ -1,5 +1,7 @@
 import { useEffect, useRef } from "react";
 
+import { isNewChord } from "../lib/keyboardChords";
+
 export interface JournalEntryFormShortcutOptions {
   formActive: boolean;
   canSave: boolean;
@@ -54,10 +56,6 @@ export function useJournalEntryFormShortcuts(opts: JournalEntryFormShortcutOptio
     document.addEventListener("keydown", onKeyDown, true);
     return () => document.removeEventListener("keydown", onKeyDown, true);
   }, []);
-}
-
-function isNewChord(e: KeyboardEvent): boolean {
-  return (e.key === "n" || e.key === "N") && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey;
 }
 
 export function useJournalListNewShortcut(opts: {

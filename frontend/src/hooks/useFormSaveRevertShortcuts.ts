@@ -1,5 +1,7 @@
 import { type RefObject, useEffect, useRef } from "react";
 
+import { isNewChord } from "../lib/keyboardChords";
+
 /**
  * True when `target` belongs to this form for keyboard shortcut purposes.
  *
@@ -59,10 +61,6 @@ function isSaveChord(e: KeyboardEvent): boolean {
 
 function isRevertChord(e: KeyboardEvent): boolean {
   return (e.key === "d" || e.key === "D") && (e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey;
-}
-
-function isNewChord(e: KeyboardEvent): boolean {
-  return (e.key === "n" || e.key === "N") && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey;
 }
 
 export interface FormSaveRevertShortcutOptions {
