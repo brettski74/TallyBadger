@@ -2,8 +2,8 @@ export function saveActionTooltip(isMac: boolean): string {
   return isMac ? "Save (⌘+S)" : "Save (Ctrl+S)";
 }
 
-export function revertActionTooltip(isMac: boolean): string {
-  return isMac ? "Revert (⌘+Shift+D)" : "Revert (Ctrl+Shift+D)";
+export function discardActionTooltip(isMac: boolean): string {
+  return isMac ? "Discard (⌘+Shift+D)" : "Discard (Ctrl+Shift+D)";
 }
 
 export function newActionTooltip(isMac: boolean): string {
@@ -18,7 +18,7 @@ export function saveAriaKeyShortcuts(isMac: boolean): string {
   return isMac ? "Meta+S" : "Control+S";
 }
 
-export function revertAriaKeyShortcuts(isMac: boolean): string {
+export function discardAriaKeyShortcuts(isMac: boolean): string {
   return isMac ? "Meta+Shift+D" : "Control+Shift+D";
 }
 

@@ -9,8 +9,8 @@ import {
   newAriaKeyShortcuts,
   previewReturnToFormActionTooltip,
   previewReturnToFormAriaKeyShortcuts,
-  revertActionTooltip,
-  revertAriaKeyShortcuts,
+  discardActionTooltip,
+  discardAriaKeyShortcuts,
   saveActionTooltip,
   saveAriaKeyShortcuts,
 } from "../lib/keyboardHints";
@@ -1182,9 +1182,9 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
                   type="button"
                   className="button-secondary"
                   onClick={closeCreateDialog}
-                  title={revertActionTooltip(isMac)}
-                  aria-label={revertActionTooltip(isMac)}
-                  aria-keyshortcuts={revertAriaKeyShortcuts(isMac)}
+                  title={discardActionTooltip(isMac)}
+                  aria-label={discardActionTooltip(isMac)}
+                  aria-keyshortcuts={discardAriaKeyShortcuts(isMac)}
                 >
                   Cancel
                 </button>
@@ -1220,9 +1220,9 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
                   type="button"
                   className="button-secondary"
                   onClick={closeCreateDialog}
-                  title={revertActionTooltip(isMac)}
-                  aria-label={revertActionTooltip(isMac)}
-                  aria-keyshortcuts={revertAriaKeyShortcuts(isMac)}
+                  title={discardActionTooltip(isMac)}
+                  aria-label={discardActionTooltip(isMac)}
+                  aria-keyshortcuts={discardAriaKeyShortcuts(isMac)}
                 >
                   Cancel
                 </button>

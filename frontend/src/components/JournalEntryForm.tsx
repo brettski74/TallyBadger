@@ -12,8 +12,8 @@ import { accountsForLinePicker } from "../journal/accountSelect";
 import { useJournalEntryFormShortcuts } from "../hooks/useJournalEntryFormShortcuts";
 import {
   closeActionTooltip,
-  revertActionTooltip,
-  revertAriaKeyShortcuts,
+  discardActionTooltip,
+  discardAriaKeyShortcuts,
   saveActionTooltip,
   saveAriaKeyShortcuts,
 } from "../lib/keyboardHints";
@@ -419,11 +419,11 @@ export function JournalEntryForm({
             type="button"
             className="button-secondary"
             onClick={onRevert}
-            title={revertActionTooltip(isMac)}
-            aria-label={revertActionTooltip(isMac)}
-            aria-keyshortcuts={revertAriaKeyShortcuts(isMac)}
+            title={discardActionTooltip(isMac)}
+            aria-label={discardActionTooltip(isMac)}
+            aria-keyshortcuts={discardAriaKeyShortcuts(isMac)}
           >
-            Revert
+            {discardActionTooltip(isMac)}
           </button>
         </div>
       </div>

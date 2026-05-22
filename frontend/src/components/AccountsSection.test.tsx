@@ -139,7 +139,7 @@ describe("AccountsSection", () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: /Create account/i }));
     await user.type(screen.getByLabelText("New account name"), "Draft");
-    await user.click(screen.getByRole("button", { name: /Revert \(Ctrl\+Shift\+D\)|Revert \(⌘\+Shift\+D\)/ }));
+    await user.click(screen.getByRole("button", { name: /Discard \(Ctrl\+Shift\+D\)|Discard \(⌘\+Shift\+D\)/ }));
 
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(screen.getByLabelText("New account name")).toHaveValue("");

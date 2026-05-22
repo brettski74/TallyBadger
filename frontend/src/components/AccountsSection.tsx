@@ -13,8 +13,8 @@ import { useFormSaveRevertShortcuts } from "../hooks/useFormSaveRevertShortcuts"
 import {
   newActionTooltip,
   newAriaKeyShortcuts,
-  revertActionTooltip,
-  revertAriaKeyShortcuts,
+  discardActionTooltip,
+  discardAriaKeyShortcuts,
   saveActionTooltip,
   saveAriaKeyShortcuts,
 } from "../lib/keyboardHints";
@@ -484,9 +484,9 @@ export function AccountsSection({
                       <TableRowIconButton
                         type="button"
                         className="button-secondary"
-                        aria-label={revertActionTooltip(isMac)}
-                        title={revertActionTooltip(isMac)}
-                        aria-keyshortcuts={revertAriaKeyShortcuts(isMac)}
+                        aria-label={discardActionTooltip(isMac)}
+                        title={discardActionTooltip(isMac)}
+                        aria-keyshortcuts={discardAriaKeyShortcuts(isMac)}
                         disabled={createSubmitting}
                         onClick={revertInlineCreate}
                       >
@@ -578,9 +578,9 @@ export function AccountsSection({
                           <TableRowIconButton
                             type="button"
                             className="button-secondary"
-                            aria-label={revertActionTooltip(isMac)}
-                            title={revertActionTooltip(isMac)}
-                            aria-keyshortcuts={revertAriaKeyShortcuts(isMac)}
+                            aria-label={discardActionTooltip(isMac)}
+                            title={discardActionTooltip(isMac)}
+                            aria-keyshortcuts={discardAriaKeyShortcuts(isMac)}
                             disabled={editSubmitting}
                             onClick={() => {
                               if (performance.now() < suppressRevertUntilRef.current) {

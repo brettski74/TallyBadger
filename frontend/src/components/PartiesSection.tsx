@@ -13,8 +13,8 @@ import {
 } from "../api/parties";
 import { useFormSaveRevertShortcuts } from "../hooks/useFormSaveRevertShortcuts";
 import {
-  revertActionTooltip,
-  revertAriaKeyShortcuts,
+  discardActionTooltip,
+  discardAriaKeyShortcuts,
   saveActionTooltip,
   saveAriaKeyShortcuts,
 } from "../lib/keyboardHints";
@@ -596,11 +596,11 @@ export function PartiesSection({
                 type="button"
                 className="button-secondary"
                 onClick={cancelEdit}
-                title={revertActionTooltip(isMac)}
-                aria-label={revertActionTooltip(isMac)}
-                aria-keyshortcuts={revertAriaKeyShortcuts(isMac)}
+                title={discardActionTooltip(isMac)}
+                aria-label={discardActionTooltip(isMac)}
+                aria-keyshortcuts={discardAriaKeyShortcuts(isMac)}
               >
-                Revert
+                Discard
               </button>
             </div>
 

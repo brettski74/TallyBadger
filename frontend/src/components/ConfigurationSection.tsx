@@ -11,8 +11,8 @@ import {
 import { getLedgerSettings, updateLedgerSettings } from "../api/settlements";
 import { accountsForSettingPicker } from "../journal/accountSelect";
 import {
-  revertActionTooltip,
-  revertAriaKeyShortcuts,
+  discardActionTooltip,
+  discardAriaKeyShortcuts,
   saveActionTooltip,
   saveAriaKeyShortcuts,
 } from "../lib/keyboardHints";
@@ -234,11 +234,11 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
             type="button"
             className="button-secondary"
             onClick={revertSettings}
-            title={revertActionTooltip(isMac)}
-            aria-label={revertActionTooltip(isMac)}
-            aria-keyshortcuts={revertAriaKeyShortcuts(isMac)}
+            title={discardActionTooltip(isMac)}
+            aria-label={discardActionTooltip(isMac)}
+            aria-keyshortcuts={discardAriaKeyShortcuts(isMac)}
           >
-            Revert
+            Discard
           </button>
         </div>
         {settingsError && (
