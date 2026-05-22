@@ -13,6 +13,7 @@ import { useFormSaveRevertShortcuts } from "../hooks/useFormSaveRevertShortcuts"
 import {
   newActionTooltip,
   newAriaKeyShortcuts,
+  newEntityAriaLabel,
   discardActionTooltip,
   discardAriaKeyShortcuts,
   saveActionTooltip,
@@ -397,7 +398,7 @@ export function AccountsSection({
           type="button"
           onClick={startCreate}
           title={newActionTooltip(isMac)}
-          aria-label={isMac ? "Create account (⌘+N)" : "Create account (Ctrl+N)"}
+          aria-label={newEntityAriaLabel("Create account", isMac)}
           aria-keyshortcuts={newAriaKeyShortcuts(isMac)}
         >
           <FilePlus size={18} strokeWidth={2} aria-hidden />

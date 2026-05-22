@@ -122,9 +122,9 @@ For forms that have a **Save** button or any similar function which saves the up
 
 For forms that have staged and unsaved changes, discard the changes and revert the form back to original, already saved values. For forms displaying a staged preview of pending changes, discard the preview and return to any prior form without altering values. Pressing Ctrl+Shift+D another time once back at that form would further revert to the previously saved values. This does not apply to search filter parameters.
 
-### Ctrl+N - New
+### Ctrl+Shift+N - New
 
-For forms that have a button to create a new entity of the type being displayed, Ctrl+N should act as if clicking this button. (eg. Create Cheque, Create Account, Create Party, Create Accrual Plan, etc)
+For forms that have a button to create a new entity of the type being displayed, **Ctrl+Shift+N** (⌘+Shift+N on macOS) should act as if clicking this button (e.g. Create account, New cheque, New accrual plan, Add journal entry). **Do not use plain Ctrl+N** — browsers reserve it for “new window” and the page cannot override it reliably.
 
 ### Esc - Cancel/Close
 

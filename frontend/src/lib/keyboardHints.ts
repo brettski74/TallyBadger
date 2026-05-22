@@ -7,7 +7,11 @@ export function discardActionTooltip(isMac: boolean): string {
 }
 
 export function newActionTooltip(isMac: boolean): string {
-  return isMac ? "New (⌘+N)" : "New (Ctrl+N)";
+  return isMac ? "New (⌘+Shift+N)" : "New (Ctrl+Shift+N)";
+}
+
+export function newEntityAriaLabel(action: string, isMac: boolean): string {
+  return isMac ? `${action} (⌘+Shift+N)` : `${action} (Ctrl+Shift+N)`;
 }
 
 export function closeActionTooltip(isMac: boolean): string {
@@ -23,7 +27,7 @@ export function discardAriaKeyShortcuts(isMac: boolean): string {
 }
 
 export function newAriaKeyShortcuts(isMac: boolean): string {
-  return isMac ? "Meta+N" : "Control+N";
+  return isMac ? "Meta+Shift+N" : "Control+Shift+N";
 }
 
 /** Preview step: return to the editable form without changing saved field values. */

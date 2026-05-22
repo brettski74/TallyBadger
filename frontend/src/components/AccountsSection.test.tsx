@@ -165,7 +165,7 @@ describe("AccountsSection", () => {
     expect(screen.queryByLabelText("New account name")).not.toBeInTheDocument();
   });
 
-  it("Ctrl+N opens inline create when not already creating", async () => {
+  it("Ctrl+Shift+N opens inline create when not already creating", async () => {
     render(
       <AccountsSection
         accounts={[]}
@@ -175,7 +175,7 @@ describe("AccountsSection", () => {
         onAccountUpdated={vi.fn()}
       />,
     );
-    fireEvent.keyDown(document, { key: "n", ctrlKey: true });
+    fireEvent.keyDown(document, { key: "n", code: "KeyN", ctrlKey: true, shiftKey: true });
     expect(screen.getByLabelText("New account name")).toBeInTheDocument();
   });
 

@@ -25,7 +25,7 @@ import {
   type JournalEntryFilterPresetDefinition,
 } from "../api/journalEntryFilterPresets";
 import { useJournalListNewShortcut } from "../hooks/useJournalEntryFormShortcuts";
-import { newActionTooltip, newAriaKeyShortcuts } from "../lib/keyboardHints";
+import { newActionTooltip, newAriaKeyShortcuts, newEntityAriaLabel } from "../lib/keyboardHints";
 import { isMacLikeUserAgent } from "../lib/platformKeyboard";
 import { JournalEntryAttachmentsDialog } from "./JournalEntryAttachmentsDialog";
 import { JournalEntryForm, type LineDraft } from "./JournalEntryForm";
@@ -793,7 +793,7 @@ export function JournalEntriesPanel({
           onClick={() => void openCreate()}
           disabled={accounts.length < 2}
           title={newActionTooltip(isMac)}
-          aria-label={isMac ? "Add Journal Entry (⌘+N)" : "Add Journal Entry (Ctrl+N)"}
+          aria-label={newEntityAriaLabel("Add Journal Entry", isMac)}
           aria-keyshortcuts={newAriaKeyShortcuts(isMac)}
         >
           <NotebookPen size={18} strokeWidth={2} aria-hidden />

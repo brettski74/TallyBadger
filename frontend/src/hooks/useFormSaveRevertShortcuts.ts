@@ -93,9 +93,9 @@ export interface FormSaveRevertShortcutOptions {
   requestEditClose?: () => void;
   /** When true, Esc invokes create/edit close handlers when the matching editor is active. */
   escapeActive?: boolean;
-  /** Ctrl/Cmd+N: open create flow for the current view. */
+  /** Ctrl/Cmd+Shift+N: open create flow for the current view. */
   requestNew?: () => void;
-  /** When false, Ctrl/Cmd+N is ignored (e.g. modal already open). */
+  /** When false, Ctrl/Cmd+Shift+N is ignored (e.g. modal already open). */
   newShortcutActive?: boolean;
 }
 
@@ -103,7 +103,7 @@ export interface FormSaveRevertShortcutOptions {
  * Save: Ctrl/Cmd+S when focus is inside the owning form (or create dialog is active).
  * Revert: Ctrl/Cmd+Shift+D — restore draft to last saved values in place.
  * Close: Esc — abandon editor without saving (when `escapeActive` and close handlers are set).
- * New: Ctrl/Cmd+N when `newShortcutActive` (default true if `requestNew` is set).
+ * New: Ctrl/Cmd+Shift+N when `newShortcutActive` (default true if `requestNew` is set).
  */
 export function useFormSaveRevertShortcuts(opts: FormSaveRevertShortcutOptions): void {
   const optsRef = useRef(opts);

@@ -7,6 +7,7 @@ import { useFormSaveRevertShortcuts } from "../hooks/useFormSaveRevertShortcuts"
 import {
   newActionTooltip,
   newAriaKeyShortcuts,
+  newEntityAriaLabel,
   previewReturnToFormActionTooltip,
   previewReturnToFormAriaKeyShortcuts,
   discardActionTooltip,
@@ -1000,7 +1001,7 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
             </TableRowIconButton>
             <TableRowIconButton
               type="button"
-              aria-label={isMac ? "New cheque (⌘+N)" : "New cheque (Ctrl+N)"}
+              aria-label={newEntityAriaLabel("New cheque", isMac)}
               title={newActionTooltip(isMac)}
               aria-keyshortcuts={newAriaKeyShortcuts(isMac)}
               onClick={handleNewCheque}

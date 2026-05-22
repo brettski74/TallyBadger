@@ -24,6 +24,7 @@ import { useAccrualPlanModalShortcuts } from "../hooks/useAccrualPlanModalShortc
 import {
   newActionTooltip,
   newAriaKeyShortcuts,
+  newEntityAriaLabel,
   previewReturnToFormActionTooltip,
   previewReturnToFormAriaKeyShortcuts,
   saveActionTooltip,
@@ -1017,7 +1018,7 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
             </TableRowIconButton>
             <TableRowIconButton
               type="button"
-              aria-label={isMac ? "New accrual plan (⌘+N)" : "New accrual plan (Ctrl+N)"}
+              aria-label={newEntityAriaLabel("New accrual plan", isMac)}
               title={newActionTooltip(isMac)}
               aria-keyshortcuts={newAriaKeyShortcuts(isMac)}
               onClick={handleNewPlan}

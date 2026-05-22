@@ -21,13 +21,13 @@ export interface AccrualPlanModalShortcutOptions {
   onViewClose: () => void;
   onCreateReturnToForm: () => void;
   onEditReturnToForm: () => void;
-  /** Ctrl/Cmd+N on the list when no modal is open. */
+  /** Ctrl/Cmd+Shift+N on the list when no modal is open. */
   onNewPlan?: () => void;
 }
 
 /**
  * Accrual plan list and create/edit/view modals:
- * - Ctrl/Cmd+N: new plan on list when no modal is open
+ * - Ctrl/Cmd+Shift+N: new plan on list when no modal is open
  * - Esc: always close the open modal
  * - Ctrl/Cmd+S: preview (form) or save (preview) — active while any plan modal is open
  * - Ctrl/Cmd+Shift+D: return from preview to form (preview step only)

@@ -22,7 +22,7 @@ export interface ChequeCreateModalShortcutOptions {
  * - Esc: close without save
  * - Ctrl/Cmd+S: preview (form) or submit (preview / single)
  * - Ctrl/Cmd+Shift+D: preview → form; form → revert fields toward last stable state
- * - Ctrl/Cmd+N: new cheque when dialog is closed (`newShortcutActive`)
+ * - Ctrl/Cmd+Shift+N: new cheque when dialog is closed (`newShortcutActive`)
  */
 export function useChequeCreateModalShortcuts(opts: ChequeCreateModalShortcutOptions): void {
   const optsRef = useRef(opts);

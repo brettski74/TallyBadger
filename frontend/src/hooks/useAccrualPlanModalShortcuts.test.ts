@@ -95,7 +95,7 @@ describe("useAccrualPlanModalShortcuts", () => {
     expect(onCreateReturnToForm).toHaveBeenCalledTimes(1);
   });
 
-  it("opens a new plan from Ctrl+N when no modal is open", () => {
+  it("opens a new plan from Ctrl+Shift+N when no modal is open", () => {
     const onNewPlan = vi.fn();
     renderHook(() =>
       useAccrualPlanModalShortcuts({
@@ -123,6 +123,7 @@ describe("useAccrualPlanModalShortcuts", () => {
       code: "KeyN",
       key: "\u000e",
       ctrlKey: true,
+      shiftKey: true,
       bubbles: true,
     });
     expect(onNewPlan).toHaveBeenCalledTimes(1);
