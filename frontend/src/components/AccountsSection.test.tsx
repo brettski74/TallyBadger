@@ -176,7 +176,25 @@ describe("AccountsSection", () => {
       />,
     );
     fireEvent.keyDown(document, { key: "n", code: "KeyN", ctrlKey: true, shiftKey: true });
-    expect(screen.getByLabelText("New account name")).toBeInTheDocument();
+    const nameInput = screen.getByLabelText("New account name");
+    expect(nameInput).toBeInTheDocument();
+    expect(nameInput).toHaveFocus();
+  });
+
+  it("focuses the name field when Create account is clicked", async () => {
+    render(
+      <AccountsSection
+        accounts={[baseAccount]}
+        loading={false}
+        error={null}
+        onAccountCreated={vi.fn()}
+        onAccountUpdated={vi.fn()}
+      />,
+    );
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /Create account/i }));
+    const nameInput = screen.getByLabelText("New account name");
+    expect(nameInput).toHaveFocus();
   });
 
   it("PATCHes is_active from list deactivate after confirm", async () => {

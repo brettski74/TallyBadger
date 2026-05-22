@@ -1,5 +1,5 @@
 import type { CSSProperties } from "react";
-import { FormEvent, Fragment, useMemo, useRef, useState } from "react";
+import { FormEvent, Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { FilePlus, Pencil, Save, SquareCheckBig, SquareX, Undo2 } from "lucide-react";
 
 import {
@@ -94,6 +94,7 @@ export function AccountsSection({
   onAccountUpdated,
 }: AccountsSectionProps) {
   const createFormRef = useRef<HTMLFormElement>(null);
+  const createNameInputRef = useRef<HTMLInputElement>(null);
   const editFormRef = useRef<HTMLFormElement>(null);
   /** Ignore Revert clicks for a beat after opening edit (stray completion click can land on Revert). */
   const suppressRevertUntilRef = useRef(0);
@@ -120,6 +121,13 @@ export function AccountsSection({
   const [activeVisibility, setActiveVisibility] = useState<ActiveVisibility>("active");
 
   const isMac = useMemo(() => isMacLikeUserAgent(), []);
+
+  useEffect(() => {
+    if (!isCreating) {
+      return;
+    }
+    createNameInputRef.current?.focus();
+  }, [isCreating]);
 
   const displayAccounts = useMemo(
     () =>
@@ -441,6 +449,7 @@ export function AccountsSection({
                       hidden
                     />
                     <input
+                      ref={createNameInputRef}
                       form={CREATE_FORM_ID}
                       aria-label="New account name"
                       value={createDraftName}
