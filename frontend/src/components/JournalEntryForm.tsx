@@ -8,9 +8,15 @@ import {
   type JournalEntryReviewMessage,
   type JournalEntryWrite,
 } from "../api/journalEntries";
-import { isTargetAssociatedWithForm } from "../hooks/useFormSaveDiscardShortcuts";
 import { accountsForLinePicker } from "../journal/accountSelect";
-import { saveActionTooltip, saveAriaKeyShortcuts } from "../lib/keyboardHints";
+import { useJournalEntryFormShortcuts } from "../hooks/useJournalEntryFormShortcuts";
+import {
+  closeActionTooltip,
+  discardActionTooltip,
+  discardAriaKeyShortcuts,
+  saveActionTooltip,
+  saveAriaKeyShortcuts,
+} from "../lib/keyboardHints";
 import { isMacLikeUserAgent } from "../lib/platformKeyboard";
 
 export interface LineDraft {
@@ -133,47 +139,6 @@ function formatConfirmCurrency(amount: number): string {
   }).format(amount);
 }
 
-/**
- * Full-page journal form: shortcuts should work when focus never moved into a control (body / root)
- * or is still on the main tab strip, while avoiding top-level HTML dialog elements that are not
- * nested inside this form (e.g. attachments rendered on document body).
- */
-function shouldHandleJournalFormKeyboardShortcuts(form: HTMLFormElement | null, e: KeyboardEvent): boolean {
-  if (!form) {
-    return false;
-  }
-  const target = e.target;
-  if (!(target instanceof Node)) {
-    return false;
-  }
-  if (isTargetAssociatedWithForm(target, form, e)) {
-    return true;
-  }
-
-  const ae = document.activeElement;
-  if (ae instanceof HTMLElement) {
-    const openDialog = ae.closest("dialog[open]");
-    if (openDialog instanceof HTMLDialogElement && !form.contains(openDialog)) {
-      return false;
-    }
-  }
-
-  if (
-    target === document.body ||
-    target === document.documentElement ||
-    ae === document.body ||
-    ae === document.documentElement
-  ) {
-    return true;
-  }
-
-  if (ae instanceof HTMLElement && ae.closest(".app-nav")) {
-    return true;
-  }
-
-  return false;
-}
-
 export function isBalanced(lines: LineDraft[]): boolean {
   const material = materialJournalLines(lines);
   if (material.length < 2) {
@@ -206,7 +171,10 @@ export interface JournalEntryFormProps {
   /** Called after a review message is removed (refetch entry in the parent). */
   onReviewMessagesChanged?: () => void | Promise<void>;
   onSubmit: (payload: JournalEntryWrite) => Promise<void>;
+  /** Esc / Back: return to list without saving. */
   onCancel: () => void;
+  /** Ctrl/Cmd+Shift+D: restore draft to last loaded values in place. */
+  onRevert: () => void;
   /** Shown in edit mode to open the journal entry attachments dialog. */
   onOpenAttachments?: () => void;
   /** Open cheques (and optionally the entry’s linked cleared cheque when editing). */
@@ -227,6 +195,7 @@ export function JournalEntryForm({
   onReviewMessagesChanged,
   onSubmit,
   onCancel,
+  onRevert,
   onOpenAttachments,
   chequeLinkChoices = [],
   initialChequeId = null,
@@ -245,6 +214,8 @@ export function JournalEntryForm({
   const [dismissingId, setDismissingId] = useState<number | null>(null);
   const formRef = useRef<HTMLFormElement | null>(null);
   const handleSubmitForShortcutRef = useRef<() => Promise<void>>(async () => {});
+  const onRevertForShortcutRef = useRef(onRevert);
+  onRevertForShortcutRef.current = onRevert;
   const onCancelForShortcutRef = useRef(onCancel);
   onCancelForShortcutRef.current = onCancel;
   const isMac = isMacLikeUserAgent();
@@ -394,40 +365,14 @@ export function JournalEntryForm({
 
   handleSubmitForShortcutRef.current = handleSubmit;
 
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      const target = e.target;
-      if (!(target instanceof Node)) {
-        return;
-      }
-      if (!shouldHandleJournalFormKeyboardShortcuts(formRef.current, e)) {
-        return;
-      }
-      const saveChord =
-        (e.key === "s" || e.key === "S") && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey;
-      const discardChord =
-        (e.key === "d" || e.key === "D") && (e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey;
-
-      if (saveChord) {
-        if (submitting || !balanced) {
-          return;
-        }
-        e.preventDefault();
-        void handleSubmitForShortcutRef.current();
-        return;
-      }
-
-      if (discardChord) {
-        if (submitting) {
-          return;
-        }
-        e.preventDefault();
-        onCancelForShortcutRef.current();
-      }
-    };
-    document.addEventListener("keydown", onKeyDown, true);
-    return () => document.removeEventListener("keydown", onKeyDown, true);
-  }, [submitting, balanced]);
+  useJournalEntryFormShortcuts({
+    formActive: true,
+    canSave: balanced,
+    saving: submitting,
+    onSave: () => void handleSubmitForShortcutRef.current(),
+    onRevert: () => onRevertForShortcutRef.current(),
+    onClose: () => onCancelForShortcutRef.current(),
+  });
 
   const hasZeroLine =
     amountsComplete &&
@@ -461,8 +406,24 @@ export function JournalEntryForm({
               Attachments
             </button>
           ) : null}
-          <button type="button" className="button-secondary" onClick={onCancel}>
+          <button
+            type="button"
+            className="button-secondary"
+            onClick={onCancel}
+            title={closeActionTooltip(isMac)}
+            aria-label={closeActionTooltip(isMac)}
+          >
             Back to list
+          </button>
+          <button
+            type="button"
+            className="button-secondary"
+            onClick={onRevert}
+            title={discardActionTooltip(isMac)}
+            aria-label={discardActionTooltip(isMac)}
+            aria-keyshortcuts={discardAriaKeyShortcuts(isMac)}
+          >
+            {discardActionTooltip(isMac)}
           </button>
         </div>
       </div>

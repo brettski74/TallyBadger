@@ -95,6 +95,40 @@ describe("useAccrualPlanModalShortcuts", () => {
     expect(onCreateReturnToForm).toHaveBeenCalledTimes(1);
   });
 
+  it("opens a new plan from Ctrl+Shift+N when no modal is open", () => {
+    const onNewPlan = vi.fn();
+    renderHook(() =>
+      useAccrualPlanModalShortcuts({
+        createDialogOpen: false,
+        createDialogView: "form",
+        editDialogOpen: false,
+        editDialogView: "form",
+        viewDialogOpen: false,
+        canSubmitCreate: false,
+        canSubmitEdit: false,
+        createSubmitting: false,
+        editSubmitting: false,
+        onCreateSave: vi.fn(),
+        onEditSave: vi.fn(),
+        onCreateClose: vi.fn(),
+        onEditClose: vi.fn(),
+        onViewClose: vi.fn(),
+        onCreateReturnToForm: vi.fn(),
+        onEditReturnToForm: vi.fn(),
+        onNewPlan,
+      }),
+    );
+
+    fireEvent.keyDown(document, {
+      code: "KeyN",
+      key: "\u000e",
+      ctrlKey: true,
+      shiftKey: true,
+      bubbles: true,
+    });
+    expect(onNewPlan).toHaveBeenCalledTimes(1);
+  });
+
   it("fires create save from Ctrl+S without focus in the form", () => {
     const onCreateSave = vi.fn();
     renderHook(() =>

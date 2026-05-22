@@ -11,7 +11,7 @@ import {
   type PartyCreateInput,
   type PartyRole,
 } from "../api/parties";
-import { useFormSaveDiscardShortcuts } from "../hooks/useFormSaveDiscardShortcuts";
+import { useFormSaveRevertShortcuts } from "../hooks/useFormSaveRevertShortcuts";
 import {
   discardActionTooltip,
   discardAriaKeyShortcuts,
@@ -98,7 +98,20 @@ export function PartiesSection({
 
   const isMac = useMemo(() => isMacLikeUserAgent(), []);
 
-  useFormSaveDiscardShortcuts({
+  function revertEdit(party: Party) {
+    setEditName(party.name);
+    setEditRole(party.role);
+    setEditActive(party.is_active);
+    setEditSubtype(party.subtype ?? "");
+    setEditPatterns(party.match_patterns?.length ? [...party.match_patterns] : []);
+    setEditDefRev(party.default_revenue_account_id != null ? String(party.default_revenue_account_id) : "");
+    setEditDefExp(party.default_expense_account_id != null ? String(party.default_expense_account_id) : "");
+    setEditError(null);
+  }
+
+  const editingParty = editingId != null ? parties.find((p) => p.id === editingId) : undefined;
+
+  useFormSaveRevertShortcuts({
     createFormRef,
     editFormRef,
     editingId,
@@ -112,9 +125,13 @@ export function PartiesSection({
     requestEditSubmit: () => {
       editFormRef.current?.requestSubmit();
     },
-    requestEditDiscard: () => {
-      cancelEdit();
+    requestEditRevert: () => {
+      if (editingParty) {
+        revertEdit(editingParty);
+      }
     },
+    requestEditClose: cancelEdit,
+    escapeActive: editingId !== null,
   });
 
   const revenueEquityAccounts = useMemo(
@@ -432,7 +449,13 @@ export function PartiesSection({
             Active
           </label>
 
-          <button disabled={createSubmitting} type="submit">
+          <button
+            disabled={createSubmitting}
+            type="submit"
+            title={saveActionTooltip(isMac)}
+            aria-label={isMac ? "Create party (⌘+S)" : "Create party (Ctrl+S)"}
+            aria-keyshortcuts={saveAriaKeyShortcuts(isMac)}
+          >
             {createSubmitting ? "Creating..." : "Create party"}
           </button>
 

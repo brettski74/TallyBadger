@@ -2,8 +2,14 @@ import { FormEvent, Fragment, MouseEvent, useCallback, useEffect, useMemo, useRe
 import { FilePlus2, RefreshCcw } from "lucide-react";
 
 import type { Account } from "../api/accounts";
-import { useFormSaveDiscardShortcuts } from "../hooks/useFormSaveDiscardShortcuts";
+import { useChequeCreateModalShortcuts } from "../hooks/useChequeCreateModalShortcuts";
+import { useFormSaveRevertShortcuts } from "../hooks/useFormSaveRevertShortcuts";
 import {
+  newActionTooltip,
+  newAriaKeyShortcuts,
+  newEntityAriaLabel,
+  previewReturnToFormActionTooltip,
+  previewReturnToFormAriaKeyShortcuts,
   discardActionTooltip,
   discardAriaKeyShortcuts,
   saveActionTooltip,
@@ -146,6 +152,21 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
 
   const createFormRef = useRef<HTMLFormElement>(null);
   const editFormRef = useRef<HTMLFormElement>(null);
+  const createFormBaselineRef = useRef<{
+    creditId: string;
+    debitId: string;
+    summary: string;
+    chequeNumber: string;
+    issueDate: string;
+    amount: string;
+    partyId: string;
+    seriesEnabled: boolean;
+    incrementUnit: ChequeIncrementUnit;
+    incrementN: string;
+    seriesStopMode: "count" | "end";
+    seriesCount: string;
+    seriesEndDate: string;
+  } | null>(null);
   const isMac = useMemo(() => isMacLikeUserAgent(), []);
 
   const eligibleCreditAccounts = useMemo(
@@ -237,6 +258,31 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
     setPartyId("");
   }
 
+  function restoreCreateFormBaseline() {
+    const baseline = createFormBaselineRef.current;
+    if (!baseline) {
+      clearForm();
+      setSeriesEnabled(false);
+      return;
+    }
+    setCreditId(baseline.creditId);
+    setDebitId(baseline.debitId);
+    setSummary(baseline.summary);
+    setChequeNumber(baseline.chequeNumber);
+    setIssueDate(baseline.issueDate);
+    setAmount(baseline.amount);
+    setPartyId(baseline.partyId);
+    setSeriesEnabled(baseline.seriesEnabled);
+    setIncrementUnit(baseline.incrementUnit);
+    setIncrementN(baseline.incrementN);
+    setSeriesStopMode(baseline.seriesStopMode);
+    setSeriesCount(baseline.seriesCount);
+    setSeriesEndDate(baseline.seriesEndDate);
+    setSeriesPreview(null);
+    setFormError(null);
+    setCreateDialogView("form");
+  }
+
   function closeCreateDialog() {
     setCreateDialogOpen(false);
     setIsCreating(false);
@@ -253,6 +299,21 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
     setSeriesPreview(null);
     setCreateDialogView("form");
     clearForm();
+    createFormBaselineRef.current = {
+      creditId: pickEligibleDefault(defaultCreditId, eligibleCreditAccounts),
+      debitId: pickEligibleDefault(defaultDebitId, eligibleDebitAccounts),
+      summary: "",
+      chequeNumber: "",
+      issueDate: new Date().toISOString().slice(0, 10),
+      amount: "",
+      partyId: "",
+      seriesEnabled: false,
+      incrementUnit: "months",
+      incrementN: "1",
+      seriesStopMode: "count",
+      seriesCount: "5",
+      seriesEndDate: "",
+    };
     setCreateDialogOpen(true);
   }
 
@@ -565,16 +626,30 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
     summary,
   ]);
 
-  useFormSaveDiscardShortcuts({
-    createFormRef,
+  useFormSaveRevertShortcuts({
+    createFormRef: editFormRef,
     editFormRef,
     editingId,
-    createDialogActive: createDialogOpen,
-    canSubmitCreate,
+    canSubmitCreate: false,
     canSubmitEdit,
-    createSubmitting: formBusy || seriesPreviewLoading,
+    createSubmitting: false,
     editSubmitting: formBusy,
-    requestCreateSubmit: () => {
+    requestCreateSubmit: () => {},
+    requestEditSubmit: () => {
+      editFormRef.current?.requestSubmit();
+    },
+    requestEditRevert: () => {
+      // Inline edit revert — [#164](https://github.com/brettski74/TallyBadger/issues/164).
+    },
+  });
+
+  useChequeCreateModalShortcuts({
+    createDialogOpen,
+    createDialogView,
+    canSubmitCreate,
+    createSubmitting: formBusy || seriesPreviewLoading,
+    newShortcutActive: true,
+    onSave: () => {
       if (createDialogView === "preview") {
         createFormRef.current?.requestSubmit();
       } else if (seriesEnabled) {
@@ -583,13 +658,13 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
         createFormRef.current?.requestSubmit();
       }
     },
-    requestEditSubmit: () => {
-      editFormRef.current?.requestSubmit();
+    onClose: closeCreateDialog,
+    onReturnToForm: () => {
+      setCreateDialogView("form");
+      setFormError(null);
     },
-    requestEditDiscard: () => {
-      // Edit discard is out of scope for #132.
-    },
-    requestCreateDiscard: closeCreateDialog,
+    onRevertForm: restoreCreateFormBaseline,
+    onNewCheque: handleNewCheque,
   });
 
   function clearSeriesPreview() {
@@ -924,7 +999,13 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
             >
               <RefreshCcw size={18} strokeWidth={2} aria-hidden />
             </TableRowIconButton>
-            <TableRowIconButton type="button" aria-label="New cheque" title="New cheque" onClick={handleNewCheque}>
+            <TableRowIconButton
+              type="button"
+              aria-label={newEntityAriaLabel("New cheque", isMac)}
+              title={newActionTooltip(isMac)}
+              aria-keyshortcuts={newAriaKeyShortcuts(isMac)}
+              onClick={handleNewCheque}
+            >
               <FilePlus2 size={18} strokeWidth={2} aria-hidden />
             </TableRowIconButton>
           </div>
@@ -1153,8 +1234,11 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
                     setCreateDialogView("form");
                     setFormError(null);
                   }}
+                  title={previewReturnToFormActionTooltip(isMac)}
+                  aria-label={previewReturnToFormActionTooltip(isMac)}
+                  aria-keyshortcuts={previewReturnToFormAriaKeyShortcuts(isMac)}
                 >
-                  Edit
+                  Back to form
                 </button>
                 <button
                   type="submit"

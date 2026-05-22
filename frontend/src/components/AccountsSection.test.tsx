@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { AccountsSection } from "./AccountsSection";
@@ -125,7 +125,7 @@ describe("AccountsSection", () => {
     expect(onAccountCreated).toHaveBeenCalledWith(created);
   });
 
-  it("discard on inline create does not call fetch", async () => {
+  it("revert on inline create clears draft but keeps the row open", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     render(
       <AccountsSection
@@ -142,7 +142,59 @@ describe("AccountsSection", () => {
     await user.click(screen.getByRole("button", { name: /Discard \(Ctrl\+Shift\+D\)|Discard \(⌘\+Shift\+D\)/ }));
 
     expect(fetchSpy).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("New account name")).toHaveValue("");
+  });
+
+  it("Escape on inline create closes without saving", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    render(
+      <AccountsSection
+        accounts={[]}
+        loading={false}
+        error={null}
+        onAccountCreated={vi.fn()}
+        onAccountUpdated={vi.fn()}
+      />,
+    );
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /Create account/i }));
+    await user.type(screen.getByLabelText("New account name"), "Draft");
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    expect(fetchSpy).not.toHaveBeenCalled();
     expect(screen.queryByLabelText("New account name")).not.toBeInTheDocument();
+  });
+
+  it("Ctrl+Shift+N opens inline create when not already creating", async () => {
+    render(
+      <AccountsSection
+        accounts={[]}
+        loading={false}
+        error={null}
+        onAccountCreated={vi.fn()}
+        onAccountUpdated={vi.fn()}
+      />,
+    );
+    fireEvent.keyDown(document, { key: "n", code: "KeyN", ctrlKey: true, shiftKey: true });
+    const nameInput = screen.getByLabelText("New account name");
+    expect(nameInput).toBeInTheDocument();
+    expect(nameInput).toHaveFocus();
+  });
+
+  it("focuses the name field when Create account is clicked", async () => {
+    render(
+      <AccountsSection
+        accounts={[baseAccount]}
+        loading={false}
+        error={null}
+        onAccountCreated={vi.fn()}
+        onAccountUpdated={vi.fn()}
+      />,
+    );
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /Create account/i }));
+    const nameInput = screen.getByLabelText("New account name");
+    expect(nameInput).toHaveFocus();
   });
 
   it("PATCHes is_active from list deactivate after confirm", async () => {

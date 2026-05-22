@@ -1,4 +1,12 @@
-"""Integration tests for GET /accrual-plans/{id} with summary rollups (#169)."""
+"""Integration tests for GET /accrual-plans/{id} with summary rollups (#169).
+
+Tests that call ``date.today()`` and assign obligation ``source_entry_date`` to "today"
+compare rollups against calendar boundaries in the API (past_due / not_yet_due / unearned
+exclude CURRENT_DATE). Running this module around local midnight can flake: the obligation
+row and rollup SQL may disagree on which side of the date boundary "today" falls if the
+clock rolls during the test. Not worth pinning a fake clock for every run; be aware when
+triaging failures after late-night ``make test`` / ``make test-integration``.
+"""
 
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -225,6 +233,7 @@ def test_get_accrual_plan_detail_today_excluded_from_date_bucket_rollups(
 ) -> None:
     """Obligation on CURRENT_DATE contributes zero to past_due, not_yet_due, and unearned."""
     ids = _seed_chart(ledger_service)
+    # See module docstring: ``date.today()`` — sensitive to running tests near midnight.
     today = date.today()
 
     plan = ledger_service.create_accrual_plan(

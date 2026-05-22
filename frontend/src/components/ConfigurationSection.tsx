@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import type { Account } from "../api/accounts";
 import {
@@ -10,6 +10,13 @@ import {
 } from "../api/backup";
 import { getLedgerSettings, updateLedgerSettings } from "../api/settlements";
 import { accountsForSettingPicker } from "../journal/accountSelect";
+import {
+  discardActionTooltip,
+  discardAriaKeyShortcuts,
+  saveActionTooltip,
+  saveAriaKeyShortcuts,
+} from "../lib/keyboardHints";
+import { isMacLikeUserAgent } from "../lib/platformKeyboard";
 
 interface ConfigurationSectionProps {
   accounts: Account[];
@@ -34,6 +41,38 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
   const [backupExportType, setBackupExportType] = useState<BackupExportType>("complete");
   const [restoreMode, setRestoreMode] = useState<RestoreMode>("abort");
   const restoreInputRef = useRef<HTMLInputElement>(null);
+  const settingsFormRef = useRef<HTMLFormElement>(null);
+  const isMac = useMemo(() => isMacLikeUserAgent(), []);
+
+  function revertSettings() {
+    setArId(arBaseline);
+    setApId(apBaseline);
+    setUrId(urBaseline);
+    setUnallocDrId(unallocDrBaseline);
+    setUnallocCrId(unallocCrBaseline);
+    setSettingsError(null);
+    setSavedMessage(null);
+  }
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const saveChord =
+        (e.key === "s" || e.key === "S") && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey;
+      const revertChord =
+        (e.key === "d" || e.key === "D") && (e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey;
+      if (saveChord) {
+        e.preventDefault();
+        settingsFormRef.current?.requestSubmit();
+        return;
+      }
+      if (revertChord) {
+        e.preventDefault();
+        revertSettings();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => document.removeEventListener("keydown", onKeyDown, true);
+  }, [arBaseline, apBaseline, urBaseline, unallocDrBaseline, unallocCrBaseline]);
 
   useEffect(() => {
     async function loadSettings() {
@@ -113,7 +152,7 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
         Settlement workflow accounts (A/R, A/P, unearned revenue) and CSV import suspense buckets. Unallocated
         accounts must use the <strong>suspense</strong> type; configure those on the Accounts tab first.
       </p>
-      <form onSubmit={(e) => void handleSaveSettings(e)}>
+      <form ref={settingsFormRef} onSubmit={(e) => void handleSaveSettings(e)}>
         <h3 className="config-subheading">Settlement roles</h3>
         <label>
           Accounts receivable
@@ -182,7 +221,26 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
           </select>
         </label>
 
-        <button type="submit">Save configuration</button>
+        <div className="form-actions-inline">
+          <button
+            type="submit"
+            title={saveActionTooltip(isMac)}
+            aria-label={isMac ? "Save configuration (⌘+S)" : "Save configuration (Ctrl+S)"}
+            aria-keyshortcuts={saveAriaKeyShortcuts(isMac)}
+          >
+            Save configuration
+          </button>
+          <button
+            type="button"
+            className="button-secondary"
+            onClick={revertSettings}
+            title={discardActionTooltip(isMac)}
+            aria-label={discardActionTooltip(isMac)}
+            aria-keyshortcuts={discardAriaKeyShortcuts(isMac)}
+          >
+            Discard
+          </button>
+        </div>
         {settingsError && (
           <p className="error" role="alert">
             {settingsError}

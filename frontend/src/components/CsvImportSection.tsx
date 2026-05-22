@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { Account } from "../api/accounts";
 import { listCelRuleSets, type CelRuleSetSummary } from "../api/celRuleSets";
@@ -23,6 +23,8 @@ import {
   type ImportBatchListItem,
 } from "../api/importBatches";
 import { csvFileRowNumber, parseCsv } from "../lib/csvParse";
+import { saveActionTooltip, saveAriaKeyShortcuts } from "../lib/keyboardHints";
+import { isMacLikeUserAgent } from "../lib/platformKeyboard";
 import { readFileAsText } from "../lib/readFileAsText";
 
 type Step = "start" | "preview";
@@ -230,6 +232,24 @@ export function CsvImportSection({ accounts, onImportSucceeded }: CsvImportSecti
   const canSaveNamed = templateNameInput.trim().length > 0;
   const saveDisabled =
     saving || !canSaveNamed || (loadedTemplateId != null && !isDirty) || columns.length === 0;
+  const saveFormRef = useRef<HTMLFormElement>(null);
+  const isMac = useMemo(() => isMacLikeUserAgent(), []);
+
+  useEffect(() => {
+    if (step !== "preview") {
+      return;
+    }
+    const onKeyDown = (e: KeyboardEvent) => {
+      const saveChord =
+        (e.key === "s" || e.key === "S") && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey;
+      if (saveChord && !saveDisabled) {
+        e.preventDefault();
+        saveFormRef.current?.requestSubmit();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => document.removeEventListener("keydown", onKeyDown, true);
+  }, [step, saveDisabled]);
 
   function resetPreviewState() {
     setRawRows([]);
@@ -851,7 +871,7 @@ export function CsvImportSection({ accounts, onImportSucceeded }: CsvImportSecti
               </table>
             </div>
 
-            <form className="csv-save-form" onSubmit={(e) => void handleSaveTemplate(e)}>
+            <form ref={saveFormRef} className="csv-save-form" onSubmit={(e) => void handleSaveTemplate(e)}>
               <label>
                 Rule set (optional)
                 <select
@@ -973,7 +993,13 @@ export function CsvImportSection({ accounts, onImportSucceeded }: CsvImportSecti
               ) : null}
 
               <div className="form-actions-inline">
-                <button type="submit" disabled={saveDisabled}>
+                <button
+                  type="submit"
+                  disabled={saveDisabled}
+                  title={saveActionTooltip(isMac)}
+                  aria-label={isMac ? "Save template (⌘+S)" : "Save template (Ctrl+S)"}
+                  aria-keyshortcuts={saveAriaKeyShortcuts(isMac)}
+                >
                   {saving ? "Saving…" : "Save template"}
                 </button>
                 <button type="button" onClick={() => void handleExecuteImport()} disabled={executing || columns.length === 0}>

@@ -1,5 +1,7 @@
 import { useEffect, useRef } from "react";
 
+import { isNewChord } from "../lib/keyboardChords";
+
 export type AccrualPlanDialogView = "form" | "preview";
 
 export interface AccrualPlanModalShortcutOptions {
@@ -19,13 +21,16 @@ export interface AccrualPlanModalShortcutOptions {
   onViewClose: () => void;
   onCreateReturnToForm: () => void;
   onEditReturnToForm: () => void;
+  /** Ctrl/Cmd+Shift+N on the list when no modal is open. */
+  onNewPlan?: () => void;
 }
 
 /**
- * Accrual plan create/edit/view modals:
+ * Accrual plan list and create/edit/view modals:
+ * - Ctrl/Cmd+Shift+N: new plan on list when no modal is open
  * - Esc: always close the open modal
  * - Ctrl/Cmd+S: preview (form) or save (preview) — active while any plan modal is open
- * - Ctrl/Cmd+Shift+D: discard preview and return to form (preview step only)
+ * - Ctrl/Cmd+Shift+D: return from preview to form (preview step only)
  */
 export function useAccrualPlanModalShortcuts(opts: AccrualPlanModalShortcutOptions): void {
   const optsRef = useRef(opts);
@@ -35,13 +40,20 @@ export function useAccrualPlanModalShortcuts(opts: AccrualPlanModalShortcutOptio
     const onKeyDown = (e: KeyboardEvent) => {
       const o = optsRef.current;
       const modalOpen = o.createDialogOpen || o.editDialogOpen || o.viewDialogOpen;
+
+      if (!modalOpen && isNewChord(e) && o.onNewPlan) {
+        e.preventDefault();
+        o.onNewPlan();
+        return;
+      }
+
       if (!modalOpen) {
         return;
       }
 
       const saveChord =
         (e.key === "s" || e.key === "S") && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey;
-      const previewEditChord =
+      const previewRevertChord =
         (e.key === "d" || e.key === "D") && (e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey;
 
       if (e.key === "Escape") {
@@ -73,7 +85,7 @@ export function useAccrualPlanModalShortcuts(opts: AccrualPlanModalShortcutOptio
         return;
       }
 
-      if (previewEditChord) {
+      if (previewRevertChord) {
         if (o.createDialogOpen && o.createDialogView === "preview" && !o.createSubmitting) {
           e.preventDefault();
           o.onCreateReturnToForm();

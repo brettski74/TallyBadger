@@ -21,7 +21,7 @@ import {
   type CelRuleSetSummary,
 } from "../api/celRuleSets";
 import { ApiHttpError } from "../api/errors";
-import { useFormSaveDiscardShortcuts } from "../hooks/useFormSaveDiscardShortcuts";
+import { useFormSaveRevertShortcuts } from "../hooks/useFormSaveRevertShortcuts";
 import {
   discardActionTooltip,
   discardAriaKeyShortcuts,
@@ -232,7 +232,7 @@ export function CelRuleSetsSection() {
     }
   }, [hasSelection, editingId, selectKey, applyExisting, applyNew]);
 
-  useFormSaveDiscardShortcuts({
+  useFormSaveRevertShortcuts({
     createFormRef: formRef,
     editFormRef: formRef,
     editingId,
@@ -246,8 +246,8 @@ export function CelRuleSetsSection() {
     requestEditSubmit: () => {
       formRef.current?.requestSubmit();
     },
-    requestEditDiscard: handleRevert,
-    requestCreateDiscard: handleRevert,
+    requestEditRevert: handleRevert,
+    requestCreateRevert: handleRevert,
   });
 
   function handleSelectKey(next: string) {
@@ -571,7 +571,7 @@ export function CelRuleSetsSection() {
                     >
                       {/*
                         Issue #121 originally called for immediate API persist when toggling enabled on a rule row.
-                        We keep enabled in the draft until Save instead so Revert applies to the whole rule set form.
+                        We keep enabled in the draft until Save instead so Discard applies to the whole rule set form.
                       */}
                       <div className="rule-sets-rule-row-layout">
                         <div className="rule-sets-rule-side-col rule-sets-rule-side-col--left" role="group" aria-label="Reorder rule">

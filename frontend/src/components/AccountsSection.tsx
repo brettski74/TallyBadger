@@ -1,5 +1,5 @@
 import type { CSSProperties } from "react";
-import { FormEvent, Fragment, useMemo, useRef, useState } from "react";
+import { FormEvent, Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { FilePlus, Pencil, Save, SquareCheckBig, SquareX, Undo2 } from "lucide-react";
 
 import {
@@ -9,8 +9,11 @@ import {
   updateAccount,
   UpdateAccountInput,
 } from "../api/accounts";
-import { useFormSaveDiscardShortcuts } from "../hooks/useFormSaveDiscardShortcuts";
+import { useFormSaveRevertShortcuts } from "../hooks/useFormSaveRevertShortcuts";
 import {
+  newActionTooltip,
+  newAriaKeyShortcuts,
+  newEntityAriaLabel,
   discardActionTooltip,
   discardAriaKeyShortcuts,
   saveActionTooltip,
@@ -91,9 +94,10 @@ export function AccountsSection({
   onAccountUpdated,
 }: AccountsSectionProps) {
   const createFormRef = useRef<HTMLFormElement>(null);
+  const createNameInputRef = useRef<HTMLInputElement>(null);
   const editFormRef = useRef<HTMLFormElement>(null);
-  /** Ignore Discard clicks for a beat after opening edit (stray completion click can land on Discard). */
-  const suppressDiscardUntilRef = useRef(0);
+  /** Ignore Revert clicks for a beat after opening edit (stray completion click can land on Revert). */
+  const suppressRevertUntilRef = useRef(0);
 
   const [isCreating, setIsCreating] = useState(false);
   const [createDraftName, setCreateDraftName] = useState("");
@@ -118,6 +122,13 @@ export function AccountsSection({
 
   const isMac = useMemo(() => isMacLikeUserAgent(), []);
 
+  useEffect(() => {
+    if (!isCreating) {
+      return;
+    }
+    createNameInputRef.current?.focus();
+  }, [isCreating]);
+
   const displayAccounts = useMemo(
     () =>
       accounts.filter(
@@ -128,7 +139,7 @@ export function AccountsSection({
     [accounts, namePattern, typeFilterIds, activeVisibility, editingId],
   );
 
-  function discardInlineCreate() {
+  function closeInlineCreate() {
     setIsCreating(false);
     setCreateDraftName("");
     setCreateDraftType("asset");
@@ -137,17 +148,31 @@ export function AccountsSection({
     setCreateSubmitting(false);
   }
 
-  function cancelEdit() {
+  function revertInlineCreate() {
+    setCreateDraftName("");
+    setCreateDraftType("asset");
+    setCreateDraftActive(true);
+    setCreateError(null);
+  }
+
+  function closeEdit() {
     setEditingId(null);
+    setEditError(null);
+  }
+
+  function revertEdit(account: Account) {
+    setDraftName(account.name);
+    setDraftType(account.type);
+    setDraftActive(account.is_active);
     setEditError(null);
   }
 
   function startCreate() {
     if (isCreating) {
-      discardInlineCreate();
+      closeInlineCreate();
     }
     if (editingId !== null) {
-      cancelEdit();
+      closeEdit();
     }
     setIsCreating(true);
     setCreateDraftName("");
@@ -163,10 +188,10 @@ export function AccountsSection({
       return;
     }
     if (isCreating) {
-      discardInlineCreate();
+      closeInlineCreate();
     }
     if (editingId !== null && editingId !== rowId) {
-      cancelEdit();
+      closeEdit();
     }
     setEditingId(rowId);
     setDraftName(account.name);
@@ -176,7 +201,7 @@ export function AccountsSection({
     setRowActionError(null);
   }
 
-  useFormSaveDiscardShortcuts({
+  useFormSaveRevertShortcuts({
     createFormRef,
     editFormRef,
     editingId,
@@ -191,12 +216,18 @@ export function AccountsSection({
     requestEditSubmit: () => {
       editFormRef.current?.requestSubmit();
     },
-    requestEditDiscard: () => {
-      cancelEdit();
+    requestEditRevert: () => {
+      const account = accounts.find((a) => rowIdOf(a) === editingId);
+      if (account) {
+        revertEdit(account);
+      }
     },
-    requestCreateDiscard: () => {
-      discardInlineCreate();
-    },
+    requestCreateRevert: revertInlineCreate,
+    requestEditClose: closeEdit,
+    requestCreateClose: closeInlineCreate,
+    escapeActive: isCreating || editingId !== null,
+    requestNew: startCreate,
+    newShortcutActive: !isCreating,
   });
 
   async function patchAccountActive(account: Account, nextActive: boolean) {
@@ -248,7 +279,7 @@ export function AccountsSection({
         is_active: createDraftActive,
       });
       onAccountCreated(created);
-      discardInlineCreate();
+      closeInlineCreate();
     } catch (err) {
       setCreateError(err instanceof Error ? err.message : "Failed to create account");
     } finally {
@@ -287,7 +318,7 @@ export function AccountsSection({
     }
 
     if (Object.keys(body).length === 0) {
-      cancelEdit();
+      closeEdit();
       return;
     }
 
@@ -295,7 +326,7 @@ export function AccountsSection({
     try {
       const updated = await updateAccount(original.id, body);
       onAccountUpdated(updated);
-      cancelEdit();
+      closeEdit();
     } catch (err) {
       setEditError(err instanceof Error ? err.message : "Failed to update account");
     } finally {
@@ -371,7 +402,13 @@ export function AccountsSection({
             </select>
           </label>
         </div>
-        <TableRowIconButton type="button" onClick={startCreate} title="Create Account" aria-label="Create account">
+        <TableRowIconButton
+          type="button"
+          onClick={startCreate}
+          title={newActionTooltip(isMac)}
+          aria-label={newEntityAriaLabel("Create account", isMac)}
+          aria-keyshortcuts={newAriaKeyShortcuts(isMac)}
+        >
           <FilePlus size={18} strokeWidth={2} aria-hidden />
         </TableRowIconButton>
       </div>
@@ -412,6 +449,7 @@ export function AccountsSection({
                       hidden
                     />
                     <input
+                      ref={createNameInputRef}
                       form={CREATE_FORM_ID}
                       aria-label="New account name"
                       value={createDraftName}
@@ -460,7 +498,7 @@ export function AccountsSection({
                         title={discardActionTooltip(isMac)}
                         aria-keyshortcuts={discardAriaKeyShortcuts(isMac)}
                         disabled={createSubmitting}
-                        onClick={discardInlineCreate}
+                        onClick={revertInlineCreate}
                       >
                         <Undo2 size={18} strokeWidth={2} aria-hidden />
                       </TableRowIconButton>
@@ -555,10 +593,10 @@ export function AccountsSection({
                             aria-keyshortcuts={discardAriaKeyShortcuts(isMac)}
                             disabled={editSubmitting}
                             onClick={() => {
-                              if (performance.now() < suppressDiscardUntilRef.current) {
+                              if (performance.now() < suppressRevertUntilRef.current) {
                                 return;
                               }
-                              cancelEdit();
+                              revertEdit(account);
                             }}
                           >
                             <Undo2 size={18} strokeWidth={2} aria-hidden />
@@ -609,7 +647,7 @@ export function AccountsSection({
                             return;
                           }
                           const row = account;
-                          suppressDiscardUntilRef.current = performance.now() + 150;
+                          suppressRevertUntilRef.current = performance.now() + 150;
                           window.setTimeout(() => {
                             startEdit(row);
                           }, 0);
