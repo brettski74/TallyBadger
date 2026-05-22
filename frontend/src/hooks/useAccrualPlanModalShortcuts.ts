@@ -1,0 +1,90 @@
+import { useEffect, useRef } from "react";
+
+export type AccrualPlanDialogView = "form" | "preview";
+
+export interface AccrualPlanModalShortcutOptions {
+  createDialogOpen: boolean;
+  createDialogView: AccrualPlanDialogView;
+  editDialogOpen: boolean;
+  editDialogView: AccrualPlanDialogView;
+  viewDialogOpen: boolean;
+  canSubmitCreate: boolean;
+  canSubmitEdit: boolean;
+  createSubmitting: boolean;
+  editSubmitting: boolean;
+  onCreateSave: () => void;
+  onEditSave: () => void;
+  onCreateClose: () => void;
+  onEditClose: () => void;
+  onViewClose: () => void;
+  onCreateReturnToForm: () => void;
+  onEditReturnToForm: () => void;
+}
+
+/**
+ * Accrual plan create/edit/view modals:
+ * - Esc: always close the open modal
+ * - Ctrl/Cmd+S: preview (form) or save (preview) — active while any plan modal is open
+ * - Ctrl/Cmd+Shift+D: discard preview and return to form (preview step only)
+ */
+export function useAccrualPlanModalShortcuts(opts: AccrualPlanModalShortcutOptions): void {
+  const optsRef = useRef(opts);
+  optsRef.current = opts;
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const o = optsRef.current;
+      const modalOpen = o.createDialogOpen || o.editDialogOpen || o.viewDialogOpen;
+      if (!modalOpen) {
+        return;
+      }
+
+      const saveChord =
+        (e.key === "s" || e.key === "S") && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey;
+      const previewEditChord =
+        (e.key === "d" || e.key === "D") && (e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey;
+
+      if (e.key === "Escape") {
+        if (o.viewDialogOpen) {
+          e.preventDefault();
+          o.onViewClose();
+          return;
+        }
+        if (o.editDialogOpen) {
+          e.preventDefault();
+          o.onEditClose();
+          return;
+        }
+        if (o.createDialogOpen) {
+          e.preventDefault();
+          o.onCreateClose();
+          return;
+        }
+      }
+
+      if (saveChord) {
+        if (o.createDialogOpen && !o.createSubmitting && o.canSubmitCreate) {
+          e.preventDefault();
+          o.onCreateSave();
+        } else if (o.editDialogOpen && !o.editSubmitting && o.canSubmitEdit) {
+          e.preventDefault();
+          o.onEditSave();
+        }
+        return;
+      }
+
+      if (previewEditChord) {
+        if (o.createDialogOpen && o.createDialogView === "preview" && !o.createSubmitting) {
+          e.preventDefault();
+          o.onCreateReturnToForm();
+        } else if (o.editDialogOpen && o.editDialogView === "preview" && !o.editSubmitting) {
+          e.preventDefault();
+          o.onEditReturnToForm();
+        }
+      }
+    };
+
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => document.removeEventListener("keydown", onKeyDown, true);
+  }, []);
+}

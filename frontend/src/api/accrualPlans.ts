@@ -182,3 +182,24 @@ export async function getAccrualPlanDetail(planId: number): Promise<AccrualPlanD
   }
   return response.json() as Promise<AccrualPlanDetailResponse>;
 }
+
+export async function updateAccrualPlan(planId: number, payload: AccrualPlanWrite): Promise<AccrualPlan> {
+  const response = await fetch(`${getApiBase()}/accrual-plans/${planId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error(await readApiErrorMessage(response));
+  }
+  return response.json();
+}
+
+export async function cancelAccrualPlan(planId: number): Promise<void> {
+  const response = await fetch(`${getApiBase()}/accrual-plans/${planId}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    throw new Error(await readApiErrorMessage(response));
+  }
+}
