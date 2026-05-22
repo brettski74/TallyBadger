@@ -63,7 +63,7 @@ describe("ConfigurationSection", () => {
     await user.selectOptions(screen.getByLabelText("Unearned revenue"), "4");
     await user.selectOptions(screen.getByLabelText("Unallocated debits (default debit side)"), "10");
     await user.selectOptions(screen.getByLabelText("Unallocated credits (default credit side)"), "11");
-    await user.click(screen.getByRole("button", { name: "Save configuration" }));
+    await user.click(screen.getByRole("button", { name: /Save configuration/i }));
 
     const patchCall = (globalThis.fetch as ReturnType<typeof vi.spyOn>).mock.calls.find(
       (c) => (c[1] as RequestInit | undefined)?.method === "PATCH",

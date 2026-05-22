@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isTargetAssociatedWithForm } from "./useFormSaveDiscardShortcuts";
+import { isTargetAssociatedWithForm } from "./useFormSaveRevertShortcuts";
 
 describe("isTargetAssociatedWithForm", () => {
   it("treats light-DOM descendants of the form as associated", () => {

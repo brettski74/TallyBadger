@@ -25,7 +25,7 @@ export interface AccrualPlanModalShortcutOptions {
  * Accrual plan create/edit/view modals:
  * - Esc: always close the open modal
  * - Ctrl/Cmd+S: preview (form) or save (preview) — active while any plan modal is open
- * - Ctrl/Cmd+Shift+D: discard preview and return to form (preview step only)
+ * - Ctrl/Cmd+Shift+D: return from preview to form (preview step only)
  */
 export function useAccrualPlanModalShortcuts(opts: AccrualPlanModalShortcutOptions): void {
   const optsRef = useRef(opts);
@@ -41,7 +41,7 @@ export function useAccrualPlanModalShortcuts(opts: AccrualPlanModalShortcutOptio
 
       const saveChord =
         (e.key === "s" || e.key === "S") && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey;
-      const previewEditChord =
+      const previewRevertChord =
         (e.key === "d" || e.key === "D") && (e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey;
 
       if (e.key === "Escape") {
@@ -73,7 +73,7 @@ export function useAccrualPlanModalShortcuts(opts: AccrualPlanModalShortcutOptio
         return;
       }
 
-      if (previewEditChord) {
+      if (previewRevertChord) {
         if (o.createDialogOpen && o.createDialogView === "preview" && !o.createSubmitting) {
           e.preventDefault();
           o.onCreateReturnToForm();

@@ -216,7 +216,7 @@ describe("App", () => {
     await user.click(await screen.findByRole("button", { name: "Configuration" }));
 
     expect(await screen.findByRole("heading", { name: "Configuration" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Save configuration" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Save configuration/i })).toBeInTheDocument();
   });
 
   it("shows settlements tab without account role form", async () => {

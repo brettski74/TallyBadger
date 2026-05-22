@@ -98,7 +98,7 @@ describe("PartiesSection", () => {
     const user = userEvent.setup();
     await user.type(screen.getByLabelText("Party name"), "Vendor Co");
     await user.selectOptions(screen.getByLabelText("Party role"), "vendor");
-    await user.click(screen.getByRole("button", { name: "Create party" }));
+    await user.click(screen.getByRole("button", { name: /Create party/i }));
 
     await waitFor(() => {
       expect(onPartyCreated).toHaveBeenCalledWith(

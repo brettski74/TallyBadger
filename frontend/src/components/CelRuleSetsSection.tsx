@@ -21,10 +21,10 @@ import {
   type CelRuleSetSummary,
 } from "../api/celRuleSets";
 import { ApiHttpError } from "../api/errors";
-import { useFormSaveDiscardShortcuts } from "../hooks/useFormSaveDiscardShortcuts";
+import { useFormSaveRevertShortcuts } from "../hooks/useFormSaveRevertShortcuts";
 import {
-  discardActionTooltip,
-  discardAriaKeyShortcuts,
+  revertActionTooltip,
+  revertAriaKeyShortcuts,
   saveActionTooltip,
   saveAriaKeyShortcuts,
 } from "../lib/keyboardHints";
@@ -232,7 +232,7 @@ export function CelRuleSetsSection() {
     }
   }, [hasSelection, editingId, selectKey, applyExisting, applyNew]);
 
-  useFormSaveDiscardShortcuts({
+  useFormSaveRevertShortcuts({
     createFormRef: formRef,
     editFormRef: formRef,
     editingId,
@@ -246,8 +246,8 @@ export function CelRuleSetsSection() {
     requestEditSubmit: () => {
       formRef.current?.requestSubmit();
     },
-    requestEditDiscard: handleRevert,
-    requestCreateDiscard: handleRevert,
+    requestEditRevert: handleRevert,
+    requestCreateRevert: handleRevert,
   });
 
   function handleSelectKey(next: string) {
@@ -526,8 +526,8 @@ export function CelRuleSetsSection() {
                 className="button-secondary"
                 onClick={handleRevert}
                 disabled={saving || !dirty}
-                title={discardActionTooltip(isMac)}
-                aria-keyshortcuts={discardAriaKeyShortcuts(isMac)}
+                title={revertActionTooltip(isMac)}
+                aria-keyshortcuts={revertAriaKeyShortcuts(isMac)}
               >
                 Revert
               </button>

@@ -254,7 +254,7 @@ describe("ChequesSection #105 — picker eligibility and last-used defaults", ()
     await screen.findByRole("table");
 
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "New cheque" }));
+    await user.click(screen.getByRole("button", { name: /New cheque/i }));
 
     const creditSelect = await screen.findByLabelText(/Credit account/i);
     const optionNames = within(creditSelect)
@@ -277,7 +277,7 @@ describe("ChequesSection #105 — picker eligibility and last-used defaults", ()
     await screen.findByRole("table");
 
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "New cheque" }));
+    await user.click(screen.getByRole("button", { name: /New cheque/i }));
 
     const debitSelect = await screen.findByLabelText(/^Debit account/i);
     const optionNames = within(debitSelect)
@@ -303,7 +303,7 @@ describe("ChequesSection #105 — picker eligibility and last-used defaults", ()
     await screen.findByRole("table");
 
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "New cheque" }));
+    await user.click(screen.getByRole("button", { name: /New cheque/i }));
 
     const creditSelect = (await screen.findByLabelText(/Credit account/i)) as HTMLSelectElement;
     const debitSelect = (await screen.findByLabelText(/^Debit account/i)) as HTMLSelectElement;
@@ -323,7 +323,7 @@ describe("ChequesSection #105 — picker eligibility and last-used defaults", ()
     await screen.findByRole("table");
 
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "New cheque" }));
+    await user.click(screen.getByRole("button", { name: /New cheque/i }));
 
     const creditSelect = (await screen.findByLabelText(/Credit account/i)) as HTMLSelectElement;
     const debitSelect = (await screen.findByLabelText(/^Debit account/i)) as HTMLSelectElement;
@@ -413,7 +413,7 @@ describe("ChequesSection #141 — cheque series", () => {
     render(<ChequesSection accounts={accounts} parties={parties} />);
     const user = userEvent.setup();
     await screen.findByRole("table");
-    await user.click(screen.getByRole("button", { name: "New cheque" }));
+    await user.click(screen.getByRole("button", { name: /New cheque/i }));
     await user.click(screen.getByRole("checkbox", { name: /Create as series/i }));
     await user.selectOptions(screen.getByLabelText(/^Credit account/i), "1");
     await user.selectOptions(screen.getByLabelText(/^Debit account/i), "2");
@@ -488,7 +488,7 @@ describe("ChequesSection #141 — cheque series", () => {
     render(<ChequesSection accounts={accounts} parties={parties} />);
     const user = userEvent.setup();
     await screen.findByRole("table");
-    await user.click(screen.getByRole("button", { name: "New cheque" }));
+    await user.click(screen.getByRole("button", { name: /New cheque/i }));
     await user.click(screen.getByRole("checkbox", { name: /Create as series/i }));
     await user.selectOptions(screen.getByLabelText(/^Credit account/i), "1");
     await user.selectOptions(screen.getByLabelText(/^Debit account/i), "2");
@@ -595,7 +595,7 @@ describe("ChequesSection #132 — keyboard shortcuts", () => {
     render(<ChequesSection accounts={accounts} parties={parties} />);
     const user = userEvent.setup();
     await screen.findByRole("table");
-    await user.click(screen.getByRole("button", { name: "New cheque" }));
+    await user.click(screen.getByRole("button", { name: /New cheque/i }));
     await user.selectOptions(screen.getByLabelText(/^Credit account/i), "1");
     await user.selectOptions(screen.getByLabelText(/^Debit account/i), "2");
     await user.type(screen.getByLabelText(/^Summary/i), "Keyboard create");
@@ -655,7 +655,7 @@ describe("ChequesSection #132 — keyboard shortcuts", () => {
     render(<ChequesSection accounts={accounts} parties={parties} />);
     const user = userEvent.setup();
     await screen.findByRole("table");
-    await user.click(screen.getByRole("button", { name: "New cheque" }));
+    await user.click(screen.getByRole("button", { name: /New cheque/i }));
     await user.click(screen.getByRole("checkbox", { name: /Create as series/i }));
     await user.selectOptions(screen.getByLabelText(/^Credit account/i), "1");
     await user.selectOptions(screen.getByLabelText(/^Debit account/i), "2");
@@ -716,7 +716,7 @@ describe("ChequesSection #132 — keyboard shortcuts", () => {
     render(<ChequesSection accounts={accounts} parties={parties} />);
     const user = userEvent.setup();
     await screen.findByRole("table");
-    await user.click(screen.getByRole("button", { name: "New cheque" }));
+    await user.click(screen.getByRole("button", { name: /New cheque/i }));
     await user.click(screen.getByRole("checkbox", { name: /Create as series/i }));
     await user.selectOptions(screen.getByLabelText(/^Credit account/i), "1");
     await user.selectOptions(screen.getByLabelText(/^Debit account/i), "2");
@@ -741,26 +741,32 @@ describe("ChequesSection #132 — keyboard shortcuts", () => {
     fetchMock.mockRestore();
   });
 
-  it("closes the create dialog when Ctrl+Shift+D is pressed", async () => {
+  it("closes the create dialog when Escape is pressed", async () => {
     installFetchMock();
 
     render(<ChequesSection accounts={accounts} parties={parties} />);
     const user = userEvent.setup();
     await screen.findByRole("table");
-    await user.click(screen.getByRole("button", { name: "New cheque" }));
-    await user.type(screen.getByLabelText(/^Summary/i), "Discard me");
-    const summaryInput = screen.getByLabelText(/^Summary/i);
-    summaryInput.focus();
-    fireEvent.keyDown(summaryInput, {
-      key: "d",
-      code: "KeyD",
-      ctrlKey: true,
-      shiftKey: true,
-      bubbles: true,
-    });
+    await user.click(screen.getByRole("button", { name: /New cheque/i }));
+    await user.type(screen.getByLabelText(/^Summary/i), "Draft summary");
+    fireEvent.keyDown(document, { key: "Escape" });
 
     await waitFor(() => {
       expect(screen.queryByRole("heading", { name: "New cheque" })).not.toBeInTheDocument();
     });
+  });
+
+  it("reverts create form fields in place when Ctrl+Shift+D is pressed on the form step", async () => {
+    installFetchMock();
+
+    render(<ChequesSection accounts={accounts} parties={parties} />);
+    const user = userEvent.setup();
+    await screen.findByRole("table");
+    await user.click(screen.getByRole("button", { name: /New cheque/i }));
+    await user.type(screen.getByLabelText(/^Summary/i), "Changed");
+    fireEvent.keyDown(document, { key: "d", ctrlKey: true, shiftKey: true });
+
+    expect(screen.getByRole("heading", { name: "New cheque" })).toBeInTheDocument();
+    expect(screen.getByLabelText(/^Summary/i)).toHaveValue("");
   });
 });

@@ -124,6 +124,7 @@ describe("JournalEntryForm", () => {
         initialLines={null}
         onSubmit={onSubmit}
         onCancel={() => {}}
+        onRevert={() => {}}
       />,
     );
 
@@ -172,6 +173,7 @@ describe("JournalEntryForm", () => {
         initialLines={null}
         onSubmit={onSubmit}
         onCancel={() => {}}
+        onRevert={() => {}}
       />,
     );
 
@@ -205,6 +207,7 @@ describe("JournalEntryForm", () => {
         initialLines={null}
         onSubmit={onSubmit}
         onCancel={() => {}}
+        onRevert={() => {}}
       />,
     );
 
@@ -243,6 +246,7 @@ describe("JournalEntryForm", () => {
         initialLines={initialLines}
         onSubmit={onSubmit}
         onCancel={() => {}}
+        onRevert={() => {}}
       />,
     );
 
@@ -278,6 +282,7 @@ describe("JournalEntryForm", () => {
         initialLines={null}
         onSubmit={onSubmit}
         onCancel={() => {}}
+        onRevert={() => {}}
       />,
     );
 
@@ -302,8 +307,8 @@ describe("JournalEntryForm", () => {
     });
   });
 
-  it("invokes onCancel when Ctrl+Shift+D is pressed while focus is inside the form", () => {
-    const onCancel = vi.fn();
+  it("invokes onRevert when Ctrl+Shift+D is pressed while focus is inside the form", () => {
+    const onRevert = vi.fn();
     render(
       <JournalEntryForm
         mode="create"
@@ -315,7 +320,8 @@ describe("JournalEntryForm", () => {
         reviewMessages={[]}
         initialLines={null}
         onSubmit={vi.fn()}
-        onCancel={onCancel}
+        onCancel={() => {}}
+        onRevert={onRevert}
       />,
     );
 
@@ -329,11 +335,11 @@ describe("JournalEntryForm", () => {
       bubbles: true,
     });
 
-    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(onRevert).toHaveBeenCalledTimes(1);
   });
 
-  it("invokes onCancel with Ctrl+Shift+D when the entry is unbalanced", () => {
-    const onCancel = vi.fn();
+  it("invokes onRevert with Ctrl+Shift+D when the entry is unbalanced", () => {
+    const onRevert = vi.fn();
     render(
       <JournalEntryForm
         mode="create"
@@ -345,7 +351,8 @@ describe("JournalEntryForm", () => {
         reviewMessages={[]}
         initialLines={null}
         onSubmit={vi.fn()}
-        onCancel={onCancel}
+        onCancel={() => {}}
+        onRevert={onRevert}
       />,
     );
 
@@ -359,11 +366,11 @@ describe("JournalEntryForm", () => {
       bubbles: true,
     });
 
-    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(onRevert).toHaveBeenCalledTimes(1);
   });
 
-  it("invokes onCancel when Ctrl+Shift+D is pressed from an input inside a shadow root in the form", () => {
-    const onCancel = vi.fn();
+  it("invokes onRevert when Ctrl+Shift+D is pressed from an input inside a shadow root in the form", () => {
+    const onRevert = vi.fn();
     const { container } = render(
       <JournalEntryForm
         mode="edit"
@@ -378,7 +385,8 @@ describe("JournalEntryForm", () => {
           { key: "jl-2", account_id: 2, party_id: "", amount: "-40" },
         ]}
         onSubmit={vi.fn()}
-        onCancel={onCancel}
+        onCancel={() => {}}
+        onRevert={onRevert}
       />,
     );
 
@@ -399,11 +407,11 @@ describe("JournalEntryForm", () => {
       bubbles: true,
     });
 
-    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(onRevert).toHaveBeenCalledTimes(1);
   });
 
-  it("invokes onCancel when Ctrl+Shift+D is pressed with keydown target document.body (no field focused)", () => {
-    const onCancel = vi.fn();
+  it("invokes onRevert when Ctrl+Shift+D is pressed with keydown target document.body (no field focused)", () => {
+    const onRevert = vi.fn();
     render(
       <JournalEntryForm
         mode="edit"
@@ -418,7 +426,8 @@ describe("JournalEntryForm", () => {
           { key: "jl-2", account_id: 2, party_id: "", amount: "-40" },
         ]}
         onSubmit={vi.fn()}
-        onCancel={onCancel}
+        onCancel={() => {}}
+        onRevert={onRevert}
       />,
     );
 
@@ -430,48 +439,11 @@ describe("JournalEntryForm", () => {
       bubbles: true,
     });
 
-    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(onRevert).toHaveBeenCalledTimes(1);
   });
 
-  it("invokes onCancel when Ctrl+Shift+D is pressed while focus is on main tab nav", () => {
-    const onCancel = vi.fn();
-    render(
-      <>
-        <nav className="app-nav" aria-label="Main">
-          <button type="button">Journal</button>
-        </nav>
-        <JournalEntryForm
-          mode="edit"
-          accounts={accounts}
-          parties={parties}
-          initialEntryDate="2026-03-01"
-          initialSummary="Monthly rent"
-          initialDescription=""
-          reviewMessages={[]}
-          initialLines={[
-            { key: "jl-1", account_id: 1, party_id: "", amount: "40" },
-            { key: "jl-2", account_id: 2, party_id: "", amount: "-40" },
-          ]}
-          onSubmit={vi.fn()}
-          onCancel={onCancel}
-        />
-      </>,
-    );
-
-    screen.getByRole("button", { name: "Journal" }).focus();
-    fireEvent.keyDown(document.activeElement ?? document.body, {
-      key: "d",
-      code: "KeyD",
-      ctrlKey: true,
-      shiftKey: true,
-      bubbles: true,
-    });
-
-    expect(onCancel).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not invoke onCancel when Ctrl+Shift+D is pressed with focus outside the form", () => {
-    const onCancel = vi.fn();
+  it("invokes onRevert when Ctrl+Shift+D is pressed while focus is outside the form", () => {
+    const onRevert = vi.fn();
     render(
       <div>
         <JournalEntryForm
@@ -484,7 +456,8 @@ describe("JournalEntryForm", () => {
           reviewMessages={[]}
           initialLines={null}
           onSubmit={vi.fn()}
-          onCancel={onCancel}
+          onCancel={() => {}}
+          onRevert={onRevert}
         />
         <button type="button">Outside</button>
       </div>,
@@ -499,10 +472,10 @@ describe("JournalEntryForm", () => {
       bubbles: true,
     });
 
-    expect(onCancel).not.toHaveBeenCalled();
+    expect(onRevert).toHaveBeenCalledTimes(1);
   });
 
-  it("invokes onCancel when Meta+Shift+D is pressed while focus is inside the form", () => {
+  it("invokes onCancel when Escape is pressed", () => {
     const onCancel = vi.fn();
     render(
       <JournalEntryForm
@@ -519,6 +492,32 @@ describe("JournalEntryForm", () => {
         ]}
         onSubmit={vi.fn()}
         onCancel={onCancel}
+        onRevert={() => {}}
+      />,
+    );
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("invokes onRevert when Meta+Shift+D is pressed while focus is inside the form", () => {
+    const onRevert = vi.fn();
+    render(
+      <JournalEntryForm
+        mode="edit"
+        accounts={accounts}
+        parties={parties}
+        initialEntryDate="2026-03-01"
+        initialSummary="Monthly rent"
+        initialDescription=""
+        reviewMessages={[]}
+        initialLines={[
+          { key: "jl-1", account_id: 1, party_id: "", amount: "40" },
+          { key: "jl-2", account_id: 2, party_id: "", amount: "-40" },
+        ]}
+        onSubmit={vi.fn()}
+        onCancel={() => {}}
+        onRevert={onRevert}
       />,
     );
 
@@ -532,7 +531,7 @@ describe("JournalEntryForm", () => {
       bubbles: true,
     });
 
-    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(onRevert).toHaveBeenCalledTimes(1);
   });
 
   it("does not list inactive accounts unless they appear on loaded lines", () => {
@@ -548,6 +547,7 @@ describe("JournalEntryForm", () => {
         initialLines={null}
         onSubmit={vi.fn()}
         onCancel={() => {}}
+        onRevert={() => {}}
       />,
     );
     const options = screen.getAllByRole("option").map((o) => o.textContent);
@@ -571,6 +571,7 @@ describe("JournalEntryForm", () => {
         initialLines={initialLines}
         onSubmit={vi.fn()}
         onCancel={() => {}}
+        onRevert={() => {}}
       />,
     );
     const user = userEvent.setup();
@@ -622,6 +623,7 @@ describe("JournalEntryForm", () => {
         chequeLinkChoices={[openCheque]}
         onSubmit={vi.fn()}
         onCancel={() => {}}
+        onRevert={() => {}}
       />,
     );
 
@@ -681,6 +683,7 @@ describe("JournalEntryForm", () => {
         chequeLinkChoices={[bigCheque]}
         onSubmit={vi.fn()}
         onCancel={() => {}}
+        onRevert={() => {}}
       />,
     );
 
@@ -720,6 +723,7 @@ describe("JournalEntryForm", () => {
         chequeLinkChoices={[openCheque]}
         onSubmit={vi.fn()}
         onCancel={() => {}}
+        onRevert={() => {}}
       />,
     );
 

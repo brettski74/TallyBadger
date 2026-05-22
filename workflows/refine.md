@@ -25,4 +25,5 @@ Use this workflow when turning a **feature** GitHub issue into a single, agreed 
 - Refinement ends with the **issue body** updated; long procedural detail stays in this file and in **STYLE.md** / **ARCH.md**, not duplicated across every comment.
 - If requirements change materially later, either run this workflow again or treat the change as implementation detail per **implement.md**, as the team prefers.
 - The github issue should not be labelled READY unless and until the user has explicitly agreed that the requirements are correct and complete and we're ready to finish off this workflow.
+- Build the detailed requirements on the issue description. It's easier for the user to read and review it there than in the chat.
 

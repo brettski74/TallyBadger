@@ -63,7 +63,7 @@ function accrualPlanListCalls(fetchMock: ReturnType<typeof vi.spyOn>) {
 }
 
 async function openCreateDialog(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(screen.getByRole("button", { name: "New accrual plan" }));
+  await user.click(screen.getByRole("button", { name: /New accrual plan/i }));
   expect(screen.getByRole("heading", { name: "New accrual plan" })).toBeInTheDocument();
 }
 

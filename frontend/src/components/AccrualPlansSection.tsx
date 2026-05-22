@@ -22,8 +22,10 @@ import {
 import type { Party } from "../api/parties";
 import { useAccrualPlanModalShortcuts } from "../hooks/useAccrualPlanModalShortcuts";
 import {
-  previewEditActionTooltip,
-  previewEditAriaKeyShortcuts,
+  newActionTooltip,
+  newAriaKeyShortcuts,
+  previewReturnToFormActionTooltip,
+  previewReturnToFormAriaKeyShortcuts,
   saveActionTooltip,
   saveAriaKeyShortcuts,
 } from "../lib/keyboardHints";
@@ -614,6 +616,22 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
     onEditReturnToForm: returnToEditForm,
   });
 
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (createDialogOpen || editDialogOpen || viewDialogOpen) {
+        return;
+      }
+      const newChord =
+        (e.key === "n" || e.key === "N") && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey;
+      if (newChord) {
+        e.preventDefault();
+        handleNewPlan();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => document.removeEventListener("keydown", onKeyDown, true);
+  }, [createDialogOpen, editDialogOpen, viewDialogOpen]);
+
   function formatAmount(value: string): string {
     const n = Number.parseFloat(value);
     if (!Number.isFinite(n)) {
@@ -1014,8 +1032,9 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
             </TableRowIconButton>
             <TableRowIconButton
               type="button"
-              aria-label="New accrual plan"
-              title="New accrual plan"
+              aria-label={isMac ? "New accrual plan (⌘+N)" : "New accrual plan (Ctrl+N)"}
+              title={newActionTooltip(isMac)}
+              aria-keyshortcuts={newAriaKeyShortcuts(isMac)}
               onClick={handleNewPlan}
             >
               <FilePlus2 size={18} strokeWidth={2} aria-hidden />
@@ -1255,9 +1274,9 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
                     type="button"
                     className="button-secondary"
                     onClick={returnToCreateForm}
-                    title={previewEditActionTooltip(isMac)}
-                    aria-label={previewEditActionTooltip(isMac)}
-                    aria-keyshortcuts={previewEditAriaKeyShortcuts(isMac)}
+                    title={previewReturnToFormActionTooltip(isMac)}
+                    aria-label={previewReturnToFormActionTooltip(isMac)}
+                    aria-keyshortcuts={previewReturnToFormAriaKeyShortcuts(isMac)}
                   >
                     Edit
                   </button>
@@ -1346,9 +1365,9 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
                     type="button"
                     className="button-secondary"
                     onClick={returnToEditForm}
-                    title={previewEditActionTooltip(isMac)}
-                    aria-label={previewEditActionTooltip(isMac)}
-                    aria-keyshortcuts={previewEditAriaKeyShortcuts(isMac)}
+                    title={previewReturnToFormActionTooltip(isMac)}
+                    aria-label={previewReturnToFormActionTooltip(isMac)}
+                    aria-keyshortcuts={previewReturnToFormAriaKeyShortcuts(isMac)}
                   >
                     Edit
                   </button>

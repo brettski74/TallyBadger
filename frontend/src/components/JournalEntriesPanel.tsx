@@ -24,6 +24,9 @@ import {
   type JournalEntryFilterPreset,
   type JournalEntryFilterPresetDefinition,
 } from "../api/journalEntryFilterPresets";
+import { useJournalListNewShortcut } from "../hooks/useJournalEntryFormShortcuts";
+import { newActionTooltip, newAriaKeyShortcuts } from "../lib/keyboardHints";
+import { isMacLikeUserAgent } from "../lib/platformKeyboard";
 import { JournalEntryAttachmentsDialog } from "./JournalEntryAttachmentsDialog";
 import { JournalEntryForm, type LineDraft } from "./JournalEntryForm";
 import { JournalFilterMultiDropdown } from "./JournalFilterMultiDropdown";
@@ -194,6 +197,8 @@ export function JournalEntriesPanel({
   const [formChequeChoices, setFormChequeChoices] = useState<Cheque[]>([]);
   const [formInitialChequeId, setFormInitialChequeId] = useState<number | null>(null);
   const [attachmentsEntryId, setAttachmentsEntryId] = useState<number | null>(null);
+  const [formResetKey, setFormResetKey] = useState(0);
+  const isMac = useMemo(() => isMacLikeUserAgent(), []);
 
   const listParams = useMemo(
     () => ({
@@ -476,6 +481,76 @@ export function JournalEntriesPanel({
     setFormInitialChequeId(null);
   }
 
+  async function revertFormEditor() {
+    if (editingId == null) {
+      setFormEntryDate(new Date().toISOString().slice(0, 10));
+      setFormSummary("");
+      setFormDescription("");
+      setFormReviewMessages([]);
+      setFormLines([
+        { key: `revert-${Date.now()}-a`, account_id: "", party_id: "", amount: "" },
+        { key: `revert-${Date.now()}-b`, account_id: "", party_id: "", amount: "" },
+      ]);
+      setFormInitialChequeId(null);
+      setFormResetKey((k) => k + 1);
+      return;
+    }
+    setFormLoading(true);
+    setFormLoadError(null);
+    try {
+      const [entry, open] = await Promise.all([
+        getJournalEntry(editingId),
+        listCheques({ status: "open" }),
+      ]);
+      let choices = [...open];
+      const cid = entry.cheque_id ?? null;
+      if (cid != null) {
+        const linked = await getCheque(cid);
+        if (!choices.some((c) => c.id === linked.id)) {
+          choices = [...choices, linked];
+        }
+      }
+      setFormChequeChoices(choices);
+      setFormInitialChequeId(cid);
+      setFormEntryDate(entry.entry_date);
+      setFormSummary(entry.summary);
+      setFormDescription(entry.description ?? "");
+      setFormReviewMessages(entry.review_messages ?? []);
+      setFormLines(linesFromEntry(entry.lines));
+      setFormResetKey((k) => k + 1);
+    } catch (err) {
+      setFormLoadError(err instanceof Error ? err.message : "Failed to reload entry");
+    } finally {
+      setFormLoading(false);
+    }
+  }
+
+  useJournalListNewShortcut({
+    listActive: view === "list" && accounts.length >= 2,
+    onNew: () => void openCreate(),
+  });
+
+  useEffect(() => {
+    if (!saveDialogOpen) {
+      return;
+    }
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setSaveDialogOpen(false);
+        return;
+      }
+      const saveChord =
+        (e.key === "s" || e.key === "S") && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey;
+      if (saveChord && !savePending) {
+        e.preventDefault();
+        saveDialogRef.current?.querySelector("form")?.requestSubmit();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => document.removeEventListener("keydown", onKeyDown, true);
+  }, [saveDialogOpen, savePending]);
+
   if (accountsLoading && accounts.length === 0) {
     return (
       <section className="card journal-card-wide">
@@ -531,7 +606,7 @@ export function JournalEntriesPanel({
         {attachmentsDialog}
         <section className="card journal-card-wide">
           <JournalEntryForm
-            key={editingId ?? "new"}
+            key={`${editingId ?? "new"}-${formResetKey}`}
             mode={editingId == null ? "create" : "edit"}
             accounts={accounts}
             parties={parties}
@@ -544,6 +619,7 @@ export function JournalEntriesPanel({
             initialLines={formLines}
             onSubmit={handleSubmit}
             onCancel={handleCancelForm}
+            onRevert={() => void revertFormEditor()}
             onOpenAttachments={
               editingId != null ? () => setAttachmentsEntryId(editingId) : undefined
             }
@@ -716,8 +792,9 @@ export function JournalEntriesPanel({
           type="button"
           onClick={() => void openCreate()}
           disabled={accounts.length < 2}
-          title="Add Journal Entry"
-          aria-label="Add Journal Entry"
+          title={newActionTooltip(isMac)}
+          aria-label={isMac ? "Add Journal Entry (⌘+N)" : "Add Journal Entry (Ctrl+N)"}
+          aria-keyshortcuts={newAriaKeyShortcuts(isMac)}
         >
           <NotebookPen size={18} strokeWidth={2} aria-hidden />
         </TableRowIconButton>

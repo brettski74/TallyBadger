@@ -205,7 +205,7 @@ describe("CsvImportSection", () => {
     await userEvent.click(screen.getByRole("button", { name: "Continue to preview" }));
 
     await screen.findByLabelText("Template name");
-    expect(screen.getByRole("button", { name: "Save template" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Save template/i })).toBeDisabled();
   });
 
   it("fills blank attribute names from header row when header is enabled", async () => {
@@ -293,7 +293,7 @@ describe("CsvImportSection", () => {
     await userEvent.selectOptions(screen.getByLabelText("Type for column 1"), "date");
     await userEvent.type(screen.getByLabelText("Date format for column 1"), "YYYY-MM-DD");
     await userEvent.type(screen.getByLabelText("Template name"), "My tpl");
-    await userEvent.click(screen.getByRole("button", { name: "Save template" }));
+    await userEvent.click(screen.getByRole("button", { name: /Save template/i }));
 
     await waitFor(() => {
       const posts = fetchMock.mock.calls.filter(([, init]) => init && init.method === "POST");
