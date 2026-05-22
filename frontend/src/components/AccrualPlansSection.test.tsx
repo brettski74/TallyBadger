@@ -542,7 +542,7 @@ describe("AccrualPlansSection create flow", () => {
     expect(await screen.findByRole("heading", { name: "Preview accrual entries" })).toBeInTheDocument();
 
     const dialog = screen.getByRole("dialog");
-    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await user.click(within(dialog).getByText("Cancel"));
 
     expect(screen.getByRole("heading", { name: "New accrual plan" })).toBeInTheDocument();
     expect(screen.getByLabelText("Plan name")).toHaveValue("Rent Plan");
@@ -585,7 +585,7 @@ describe("AccrualPlansSection create flow", () => {
     );
   });
 
-  it("closes the create dialog when Ctrl+Shift+D is pressed on the form", async () => {
+  it("closes the create dialog when Escape is pressed on the form", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(listPlansResponse());
     render(<AccrualPlansSection accounts={accounts} parties={parties} />);
     const user = userEvent.setup();
@@ -593,9 +593,86 @@ describe("AccrualPlansSection create flow", () => {
 
     await openCreateDialog(user);
     await user.type(screen.getByLabelText("Plan name"), "Discard me");
-    const nameInput = screen.getByLabelText("Plan name");
-    nameInput.focus();
-    fireEvent.keyDown(nameInput, {
+    fireEvent.keyDown(document, { key: "Escape", code: "Escape", bubbles: true });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("heading", { name: "New accrual plan" })).not.toBeInTheDocument();
+    });
+  });
+
+  it("closes the create dialog when Escape is pressed on preview", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(listPlansResponse())
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([
+            {
+              entry_date: "2026-01-01",
+              summary: "Plan 2026-01",
+              description: null,
+              lines: [
+                { account_id: 1, party_id: 1, amount: "100.00" },
+                { account_id: 2, party_id: 1, amount: "-100.00" },
+              ],
+            },
+          ]),
+          { status: 200 },
+        ),
+      );
+
+    render(<AccrualPlansSection accounts={accounts} parties={parties} />);
+    const user = userEvent.setup();
+    await waitFor(() => expect(screen.getByRole("table", { name: "Accrual plans register" })).toBeInTheDocument());
+
+    await openCreateDialog(user);
+    await user.type(screen.getByLabelText("Plan name"), "Rent Plan");
+    await user.selectOptions(screen.getByLabelText("Plan party"), "1");
+    await user.selectOptions(screen.getByLabelText("Plan target account"), "2");
+    await user.selectOptions(screen.getByLabelText("Plan bridge account"), "1");
+    await user.click(screen.getByRole("button", { name: /Preview entries/i }));
+    expect(await screen.findByRole("heading", { name: "Preview accrual entries" })).toBeInTheDocument();
+
+    fireEvent.keyDown(document, { key: "Escape", code: "Escape", bubbles: true });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("heading", { name: "Preview accrual entries" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "New accrual plan" })).not.toBeInTheDocument();
+    });
+  });
+
+  it("returns to the create form when Ctrl+Shift+D is pressed on preview", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(listPlansResponse())
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([
+            {
+              entry_date: "2026-01-01",
+              summary: "Plan 2026-01",
+              description: null,
+              lines: [
+                { account_id: 1, party_id: 1, amount: "100.00" },
+                { account_id: 2, party_id: 1, amount: "-100.00" },
+              ],
+            },
+          ]),
+          { status: 200 },
+        ),
+      );
+
+    render(<AccrualPlansSection accounts={accounts} parties={parties} />);
+    const user = userEvent.setup();
+    await waitFor(() => expect(screen.getByRole("table", { name: "Accrual plans register" })).toBeInTheDocument());
+
+    await openCreateDialog(user);
+    await user.type(screen.getByLabelText("Plan name"), "Rent Plan");
+    await user.selectOptions(screen.getByLabelText("Plan party"), "1");
+    await user.selectOptions(screen.getByLabelText("Plan target account"), "2");
+    await user.selectOptions(screen.getByLabelText("Plan bridge account"), "1");
+    await user.click(screen.getByRole("button", { name: /Preview entries/i }));
+    expect(await screen.findByRole("heading", { name: "Preview accrual entries" })).toBeInTheDocument();
+
+    fireEvent.keyDown(document, {
       key: "d",
       code: "KeyD",
       ctrlKey: true,
@@ -603,8 +680,146 @@ describe("AccrualPlansSection create flow", () => {
       bubbles: true,
     });
 
+    expect(screen.getByRole("heading", { name: "New accrual plan" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Plan name")).toHaveValue("Rent Plan");
+    expect(screen.queryByRole("table", { name: "Accrual preview" })).not.toBeInTheDocument();
+  });
+});
+
+const unsettledPlanRow = {
+  id: 3,
+  name: "Fresh Plan",
+  direction: "revenue" as const,
+  party_id: 1,
+  target_account_id: 2,
+  bridge_account_id: 1,
+  frequency: "monthly_day" as const,
+  start_date: "2026-01-01",
+  end_date: "2026-12-31",
+  amount: "100.00",
+  summary_template: "{plan}",
+  description_template: null,
+  day_of_week: null,
+  day_of_month: 1,
+  month_of_year: null,
+  business_day_adjust: false,
+  created_at: "",
+  updated_at: "",
+  has_settlement_allocations: false,
+};
+
+const previewResponse = new Response(
+  JSON.stringify([
+    {
+      entry_date: "2026-01-01",
+      summary: "Plan 2026-01",
+      description: null,
+      lines: [
+        { account_id: 1, party_id: 1, amount: "100.00" },
+        { account_id: 2, party_id: 1, amount: "-100.00" },
+      ],
+    },
+  ]),
+  { status: 200 },
+);
+
+describe("AccrualPlansSection edit and cancel", () => {
+  it("shows Edit and Cancel for unsettled plans and hides View", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(listPlansResponse([unsettledPlanRow]));
+
+    render(<AccrualPlansSection accounts={accounts} parties={parties} />);
+    await waitFor(() => expect(screen.getByText("Fresh Plan")).toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Edit plan Fresh Plan" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cancel plan Fresh Plan" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /View plan/i })).not.toBeInTheDocument();
+  });
+
+  it("hides Edit and Cancel when plan has settlement allocations", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      listPlansResponse([
+        {
+          ...unsettledPlanRow,
+          id: 7,
+          name: "Settled Rent",
+          has_settlement_allocations: true,
+        },
+      ]),
+    );
+
+    render(<AccrualPlansSection accounts={accounts} parties={parties} />);
+    await waitFor(() => expect(screen.getByText("Settled Rent")).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: /Edit plan/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Cancel plan/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "View plan Settled Rent" })).toBeInTheDocument();
+  });
+
+  it("previews then saves an edit via PATCH and refreshes the list", async () => {
+    const updatedPlan = { ...unsettledPlanRow, amount: "150.00" };
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(listPlansResponse([unsettledPlanRow]))
+      .mockResolvedValueOnce(previewResponse)
+      .mockResolvedValueOnce(new Response(JSON.stringify(updatedPlan), { status: 200 }))
+      .mockResolvedValueOnce(listPlansResponse([updatedPlan]));
+
+    render(<AccrualPlansSection accounts={accounts} parties={parties} />);
+    const user = userEvent.setup();
+    await waitFor(() => expect(screen.getByText("Fresh Plan")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "Edit plan Fresh Plan" }));
+    expect(await screen.findByRole("heading", { name: "Edit accrual plan" })).toBeInTheDocument();
+    await user.clear(screen.getByLabelText("Plan amount"));
+    await user.type(screen.getByLabelText("Plan amount"), "150.00");
+    await user.click(screen.getByRole("button", { name: /Preview entries/i }));
+    expect(await screen.findByRole("heading", { name: "Preview accrual entries" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Save plan/i }));
+
+    const register = await screen.findByRole("table", { name: "Accrual plans register" });
+    await waitFor(() => expect(within(register).getByText("Fresh Plan")).toBeInTheDocument());
+    expect(screen.queryByRole("heading", { name: "Edit accrual plan" })).not.toBeInTheDocument();
+
+    const patchCalls = vi.mocked(globalThis.fetch).mock.calls.filter(
+      (c) => String(c[0]).includes("/accrual-plans/3") && (c[1] as RequestInit | undefined)?.method === "PATCH",
+    );
+    expect(patchCalls).toHaveLength(1);
+  });
+
+  it("removes the plan from the list after cancel is confirmed", async () => {
+    vi.spyOn(globalThis, "confirm").mockReturnValue(true);
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(listPlansResponse([unsettledPlanRow]))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(listPlansResponse([]));
+
+    render(<AccrualPlansSection accounts={accounts} parties={parties} />);
+    const user = userEvent.setup();
+    await waitFor(() => expect(screen.getByText("Fresh Plan")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "Cancel plan Fresh Plan" }));
+
     await waitFor(() => {
-      expect(screen.queryByRole("heading", { name: "New accrual plan" })).not.toBeInTheDocument();
+      expect(screen.getByText("No plans for this filter.")).toBeInTheDocument();
     });
+    const deleteCalls = vi.mocked(globalThis.fetch).mock.calls.filter(
+      (c) => String(c[0]).includes("/accrual-plans/3") && (c[1] as RequestInit | undefined)?.method === "DELETE",
+    );
+    expect(deleteCalls).toHaveLength(1);
+  });
+
+  it("does not DELETE when cancel confirmation is declined", async () => {
+    vi.spyOn(globalThis, "confirm").mockReturnValue(false);
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(listPlansResponse([unsettledPlanRow]));
+
+    render(<AccrualPlansSection accounts={accounts} parties={parties} />);
+    const user = userEvent.setup();
+    await waitFor(() => expect(screen.getByText("Fresh Plan")).toBeInTheDocument());
+    fetchMock.mockClear();
+
+    await user.click(screen.getByRole("button", { name: "Cancel plan Fresh Plan" }));
+
+    const deleteCalls = fetchMock.mock.calls.filter(
+      (c) => String(c[0]).includes("/accrual-plans/3") && (c[1] as RequestInit | undefined)?.method === "DELETE",
+    );
+    expect(deleteCalls).toHaveLength(0);
+    expect(screen.getByText("Fresh Plan")).toBeInTheDocument();
   });
 });

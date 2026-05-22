@@ -13,3 +13,11 @@ export function saveAriaKeyShortcuts(isMac: boolean): string {
 export function discardAriaKeyShortcuts(isMac: boolean): string {
   return isMac ? "Meta+Shift+D" : "Control+Shift+D";
 }
+
+export function previewEditActionTooltip(isMac: boolean): string {
+  return isMac ? "Edit (⌘+Shift+D)" : "Edit (Ctrl+Shift+D)";
+}
+
+export function previewEditAriaKeyShortcuts(isMac: boolean): string {
+  return isMac ? "Meta+Shift+D" : "Control+Shift+D";
+}

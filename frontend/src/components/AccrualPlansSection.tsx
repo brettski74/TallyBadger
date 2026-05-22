@@ -1,12 +1,14 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Eye, FilePlus2, RefreshCcw } from "lucide-react";
+import { Eye, FilePlus2, Pencil, RefreshCcw, Trash2 } from "lucide-react";
 
 import type { Account } from "../api/accounts";
 import {
+  cancelAccrualPlan,
   createAccrualPlan,
   getAccrualPlanDetail,
   listAccrualPlans,
   previewAccrualPlan,
+  updateAccrualPlan,
   type AccrualDirection,
   type AccrualFrequency,
   type AccrualPlan,
@@ -18,10 +20,10 @@ import {
   type AccrualPreviewItem,
 } from "../api/accrualPlans";
 import type { Party } from "../api/parties";
-import { useFormSaveDiscardShortcuts } from "../hooks/useFormSaveDiscardShortcuts";
+import { useAccrualPlanModalShortcuts } from "../hooks/useAccrualPlanModalShortcuts";
 import {
-  discardActionTooltip,
-  discardAriaKeyShortcuts,
+  previewEditActionTooltip,
+  previewEditAriaKeyShortcuts,
   saveActionTooltip,
   saveAriaKeyShortcuts,
 } from "../lib/keyboardHints";
@@ -71,12 +73,16 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
 
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [createDialogView, setCreateDialogView] = useState<"form" | "preview">("form");
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [editDialogView, setEditDialogView] = useState<"form" | "preview">("form");
+  const [editingPlanId, setEditingPlanId] = useState<number | null>(null);
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [viewPlanId, setViewPlanId] = useState<number | null>(null);
   const [viewDetail, setViewDetail] = useState<AccrualPlanDetailResponse | null>(null);
   const [viewLoading, setViewLoading] = useState(false);
   const [viewError, setViewError] = useState<string | null>(null);
   const createDialogRef = useRef<HTMLDialogElement>(null);
+  const editDialogRef = useRef<HTMLDialogElement>(null);
   const viewDialogRef = useRef<HTMLDialogElement>(null);
   const createFormRef = useRef<HTMLFormElement>(null);
   const editFormRef = useRef<HTMLFormElement>(null);
@@ -102,6 +108,8 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [cancellingPlanId, setCancellingPlanId] = useState<number | null>(null);
 
   const accountNameById = useMemo(
     () => new Map(accounts.map((account) => [account.id, account.name])),
@@ -177,6 +185,16 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
   }, [createDialogOpen]);
 
   useEffect(() => {
+    if (!editDialogOpen) {
+      return;
+    }
+    const el = editDialogRef.current;
+    if (el && !el.open) {
+      el.showModal();
+    }
+  }, [editDialogOpen]);
+
+  useEffect(() => {
     if (!viewDialogOpen) {
       return;
     }
@@ -234,7 +252,7 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
     return accounts.filter((a) => idSet.has(a.id)).sort((a, b) => a.name.localeCompare(b.name));
   }
 
-  function clearCreateForm() {
+  function clearPlanForm() {
     setName("");
     setDirection("revenue");
     setPartyId("");
@@ -255,12 +273,52 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
     setSubmitError(null);
   }
 
+  function loadPlanIntoForm(plan: AccrualPlan) {
+    setName(plan.name);
+    setDirection(plan.direction);
+    setPartyId(String(plan.party_id));
+    setTargetAccountId(String(plan.target_account_id));
+    setBridgeAccountId(String(plan.bridge_account_id));
+    setFrequency(plan.frequency);
+    setDayOfWeek(plan.day_of_week != null ? String(plan.day_of_week) : "0");
+    setDayOfMonth(plan.day_of_month != null ? String(plan.day_of_month) : "1");
+    setMonthOfYear(plan.month_of_year != null ? String(plan.month_of_year) : "1");
+    setStartDate(plan.start_date);
+    setEndDate(plan.end_date);
+    setAmount(plan.amount);
+    setSummaryTemplate(plan.summary_template);
+    setDescriptionTemplate(plan.description_template ?? "");
+    setBusinessDayAdjust(plan.business_day_adjust);
+    setPreviewRows([]);
+    setSubmitError(null);
+  }
+
   function closeCreateDialog() {
     setCreateDialogOpen(false);
     setCreateDialogView("form");
     setPreviewing(false);
     setCreating(false);
-    clearCreateForm();
+    clearPlanForm();
+  }
+
+  function closeEditDialog() {
+    setEditDialogOpen(false);
+    setEditDialogView("form");
+    setEditingPlanId(null);
+    setPreviewing(false);
+    setEditing(false);
+    clearPlanForm();
+  }
+
+  function isUnsettledPlan(plan: AccrualPlan): boolean {
+    return !plan.has_settlement_allocations;
+  }
+
+  function openEditPlan(plan: AccrualPlan) {
+    loadPlanIntoForm(plan);
+    setEditingPlanId(plan.id);
+    setEditDialogView("form");
+    setEditDialogOpen(true);
   }
 
   function openViewPlan(plan: AccrualPlan) {
@@ -297,7 +355,7 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
   }
 
   function handleNewPlan() {
-    clearCreateForm();
+    clearPlanForm();
     setCreateDialogView("form");
     setCreateDialogOpen(true);
   }
@@ -390,7 +448,11 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
     try {
       const rows = await previewAccrualPlan(buildPayload());
       setPreviewRows(rows);
-      setCreateDialogView("preview");
+      if (editDialogOpen) {
+        setEditDialogView("preview");
+      } else {
+        setCreateDialogView("preview");
+      }
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : "Failed to preview plan");
       setPreviewRows([]);
@@ -427,15 +489,77 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
     }
   }
 
-  async function handleDialogSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleUpdatePlan() {
+    if (editingPlanId === null) {
+      return;
+    }
+    setSubmitError(null);
+    if (previewRows.length === 0) {
+      setSubmitError("Preview entries before saving the plan.");
+      return;
+    }
+    const formError = validateForm();
+    if (formError) {
+      setSubmitError(formError);
+      return;
+    }
+    const guardrailError = validateAccountGuardrail();
+    if (guardrailError) {
+      setSubmitError(guardrailError);
+      return;
+    }
+    setEditing(true);
+    try {
+      await updateAccrualPlan(editingPlanId, buildPayload());
+      closeEditDialog();
+      await reloadList();
+    } catch (err) {
+      setSubmitError(err instanceof Error ? err.message : "Failed to update plan");
+    } finally {
+      setEditing(false);
+    }
+  }
+
+  async function handleCancelPlan(plan: AccrualPlan) {
+    const confirmed = window.confirm(
+      `Cancel accrual plan "${plan.name}"? This removes the plan and its accrual journal entries.`,
+    );
+    if (!confirmed) {
+      return;
+    }
+    setListError(null);
+    setCancellingPlanId(plan.id);
+    try {
+      await cancelAccrualPlan(plan.id);
+      await reloadList();
+    } catch (err) {
+      setListError(err instanceof Error ? err.message : `Failed to cancel plan "${plan.name}"`);
+    } finally {
+      setCancellingPlanId(null);
+    }
+  }
+
+  async function handleCreateDialogSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (createDialogView === "preview") {
       await handleCreatePlan();
     }
   }
 
+  async function handleEditDialogSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (editDialogView === "preview") {
+      await handleUpdatePlan();
+    }
+  }
+
   function returnToCreateForm() {
     setCreateDialogView("form");
+    setSubmitError(null);
+  }
+
+  function returnToEditForm() {
+    setEditDialogView("form");
     setSubmitError(null);
   }
 
@@ -449,25 +573,45 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
     return !previewing;
   }, [createDialogOpen, createDialogView, previewRows.length, creating, previewing]);
 
-  useFormSaveDiscardShortcuts({
-    createFormRef,
-    editFormRef,
-    editingId: null,
-    createDialogActive: createDialogOpen,
+  const canSubmitEdit = useMemo(() => {
+    if (!editDialogOpen || editingPlanId === null) {
+      return false;
+    }
+    if (editDialogView === "preview") {
+      return previewRows.length > 0 && !editing;
+    }
+    return !previewing;
+  }, [editDialogOpen, editDialogView, editingPlanId, previewRows.length, editing, previewing]);
+
+  useAccrualPlanModalShortcuts({
+    createDialogOpen,
+    createDialogView,
+    editDialogOpen,
+    editDialogView,
+    viewDialogOpen,
     canSubmitCreate,
-    canSubmitEdit: false,
+    canSubmitEdit,
     createSubmitting: previewing || creating,
-    editSubmitting: false,
-    requestCreateSubmit: () => {
+    editSubmitting: previewing || editing,
+    onCreateSave: () => {
       if (createDialogView === "preview") {
         createFormRef.current?.requestSubmit();
       } else {
         void handleShowPreview();
       }
     },
-    requestEditSubmit: () => undefined,
-    requestEditDiscard: () => undefined,
-    requestCreateDiscard: closeCreateDialog,
+    onEditSave: () => {
+      if (editDialogView === "preview") {
+        editFormRef.current?.requestSubmit();
+      } else {
+        void handleShowPreview();
+      }
+    },
+    onCreateClose: closeCreateDialog,
+    onEditClose: closeEditDialog,
+    onViewClose: closeViewDialog,
+    onCreateReturnToForm: returnToCreateForm,
+    onEditReturnToForm: returnToEditForm,
   });
 
   function formatAmount(value: string): string {
@@ -997,7 +1141,27 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
                     <td>{p.frequency}</td>
                     <td>
                       <div className="table-row-actions">
-                        {p.has_settlement_allocations ? (
+                        {isUnsettledPlan(p) ? (
+                          <>
+                            <TableRowIconButton
+                              type="button"
+                              aria-label={`Edit plan ${p.name}`}
+                              title="Edit plan"
+                              onClick={() => openEditPlan(p)}
+                            >
+                              <Pencil size={18} strokeWidth={2} aria-hidden />
+                            </TableRowIconButton>
+                            <TableRowIconButton
+                              type="button"
+                              aria-label={`Cancel plan ${p.name}`}
+                              title="Cancel plan"
+                              disabled={cancellingPlanId === p.id}
+                              onClick={() => void handleCancelPlan(p)}
+                            >
+                              <Trash2 size={18} strokeWidth={2} aria-hidden />
+                            </TableRowIconButton>
+                          </>
+                        ) : (
                           <TableRowIconButton
                             type="button"
                             aria-label={`View plan ${p.name}`}
@@ -1006,7 +1170,7 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
                           >
                             <Eye size={18} strokeWidth={2} aria-hidden />
                           </TableRowIconButton>
-                        ) : null}
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -1029,7 +1193,7 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
             method="dialog"
             className="cheque-dialog-inner"
             noValidate
-            onSubmit={(e) => void handleDialogSubmit(e)}
+            onSubmit={(e) => void handleCreateDialogSubmit(e)}
           >
             <div className="cheque-dialog-header">
               <h2 id="accrual-create-dialog-title">
@@ -1054,9 +1218,7 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
                     type="button"
                     className="button-secondary"
                     onClick={closeCreateDialog}
-                    title={discardActionTooltip(isMac)}
-                    aria-label={discardActionTooltip(isMac)}
-                    aria-keyshortcuts={discardAriaKeyShortcuts(isMac)}
+                    aria-label="Close"
                   >
                     Cancel
                   </button>
@@ -1085,11 +1247,18 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
                     type="button"
                     className="button-secondary"
                     onClick={returnToCreateForm}
-                    aria-label="Cancel"
+                    aria-label="Close"
                   >
                     Cancel
                   </button>
-                  <button type="button" className="button-secondary" onClick={returnToCreateForm} aria-label="Edit">
+                  <button
+                    type="button"
+                    className="button-secondary"
+                    onClick={returnToCreateForm}
+                    title={previewEditActionTooltip(isMac)}
+                    aria-label={previewEditActionTooltip(isMac)}
+                    aria-keyshortcuts={previewEditAriaKeyShortcuts(isMac)}
+                  >
                     Edit
                   </button>
                   <button
@@ -1100,6 +1269,97 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
                     aria-keyshortcuts={saveAriaKeyShortcuts(isMac)}
                   >
                     {creating ? "Creating…" : "Create plan"}
+                  </button>
+                </div>
+              </>
+            )}
+          </form>
+        </dialog>
+      )}
+
+      {editDialogOpen && (
+        <dialog
+          ref={editDialogRef}
+          className={editDialogView === "preview" ? "cheque-dialog cheque-dialog-preview" : "cheque-dialog"}
+          aria-labelledby="accrual-edit-dialog-title"
+          onClose={closeEditDialog}
+        >
+          <form
+            ref={editFormRef}
+            method="dialog"
+            className="cheque-dialog-inner"
+            noValidate
+            onSubmit={(e) => void handleEditDialogSubmit(e)}
+          >
+            <div className="cheque-dialog-header">
+              <h2 id="accrual-edit-dialog-title">
+                {editDialogView === "preview" ? "Preview accrual entries" : "Edit accrual plan"}
+              </h2>
+              <button type="button" className="button-secondary" onClick={closeEditDialog}>
+                Close
+              </button>
+            </div>
+
+            {editDialogView === "form" ? (
+              <>
+                <p className="muted">Preview generated accrual entries, then save changes to the plan and schedule.</p>
+                {renderCreateFormFields()}
+                {submitError && (
+                  <p className="error" role="alert">
+                    {submitError}
+                  </p>
+                )}
+                <div className="dialog-actions">
+                  <button type="button" className="button-secondary" onClick={closeEditDialog} aria-label="Close">
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={previewing}
+                    onClick={() => void handleShowPreview()}
+                    title={saveActionTooltip(isMac)}
+                    aria-label={isMac ? "Preview entries (⌘+S)" : "Preview entries (Ctrl+S)"}
+                    aria-keyshortcuts={saveAriaKeyShortcuts(isMac)}
+                  >
+                    {previewing ? "Previewing…" : "Preview entries"}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                {renderPreviewTable()}
+                {submitError && (
+                  <p className="error" role="alert">
+                    {submitError}
+                  </p>
+                )}
+                <div className="dialog-actions">
+                  <button
+                    type="button"
+                    className="button-secondary"
+                    onClick={returnToEditForm}
+                    aria-label="Close"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="button-secondary"
+                    onClick={returnToEditForm}
+                    title={previewEditActionTooltip(isMac)}
+                    aria-label={previewEditActionTooltip(isMac)}
+                    aria-keyshortcuts={previewEditAriaKeyShortcuts(isMac)}
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={editing || previewRows.length === 0}
+                    title={saveActionTooltip(isMac)}
+                    aria-label={isMac ? "Save plan (⌘+S)" : "Save plan (Ctrl+S)"}
+                    aria-keyshortcuts={saveAriaKeyShortcuts(isMac)}
+                  >
+                    {editing ? "Saving…" : "Save plan"}
                   </button>
                 </div>
               </>
