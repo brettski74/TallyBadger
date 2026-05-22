@@ -694,6 +694,26 @@ describe("AccrualPlansSection create flow", () => {
     expect(screen.getByLabelText("Plan name")).toHaveValue("Rent Plan");
     expect(screen.queryByRole("table", { name: "Accrual preview" })).not.toBeInTheDocument();
   });
+
+  it("reverts create form fields to empty defaults when Ctrl+Shift+D is pressed on the form step", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(listPlansResponse());
+
+    render(<AccrualPlansSection accounts={accounts} parties={parties} />);
+    const user = userEvent.setup();
+    await waitFor(() => expect(screen.getByRole("table", { name: "Accrual plans register" })).toBeInTheDocument());
+
+    await openCreateDialog(user);
+    await user.type(screen.getByLabelText("Plan name"), "Changed");
+    fireEvent.keyDown(document, {
+      key: "d",
+      code: "KeyD",
+      ctrlKey: true,
+      shiftKey: true,
+      bubbles: true,
+    });
+
+    expect(screen.getByLabelText("Plan name")).toHaveValue("");
+  });
 });
 
 const unsettledPlanRow = {
@@ -831,5 +851,103 @@ describe("AccrualPlansSection edit and cancel", () => {
     );
     expect(deleteCalls).toHaveLength(0);
     expect(screen.getByText("Fresh Plan")).toBeInTheDocument();
+  });
+});
+
+describe("AccrualPlansSection duplicate", () => {
+  it("shows Duplicate on unsettled and settled rows", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      listPlansResponse([
+        unsettledPlanRow,
+        {
+          ...unsettledPlanRow,
+          id: 7,
+          name: "Settled Rent",
+          has_settlement_allocations: true,
+        },
+      ]),
+    );
+
+    render(<AccrualPlansSection accounts={accounts} parties={parties} />);
+    await waitFor(() => expect(screen.getByText("Fresh Plan")).toBeInTheDocument());
+
+    expect(screen.getByRole("button", { name: "Duplicate plan Fresh Plan" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Duplicate plan Settled Rent" })).toBeInTheDocument();
+  });
+
+  it("opens create dialog with rolled-forward name and dates from duplicate", async () => {
+    const sourcePlan = {
+      ...unsettledPlanRow,
+      id: 5,
+      name: "Rent 2028/9",
+      start_date: "2028-07-01",
+      end_date: "2029-06-30",
+      amount: "250.00",
+      summary_template: "Rent {month}",
+      description_template: "Quarterly",
+    };
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(listPlansResponse([sourcePlan]))
+      .mockResolvedValueOnce(
+        listPlansResponse([
+          sourcePlan,
+          { ...sourcePlan, id: 99, name: "Other Plan" },
+        ]),
+      );
+
+    render(<AccrualPlansSection accounts={accounts} parties={parties} />);
+    const user = userEvent.setup();
+    await waitFor(() => expect(screen.getByText("Rent 2028/9")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "Duplicate plan Rent 2028/9" }));
+
+    expect(await screen.findByRole("heading", { name: "New accrual plan" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Plan name")).toHaveValue("Rent 2029/30");
+    expect(screen.getByLabelText("Plan start date")).toHaveValue("2029-07-01");
+    expect(screen.getByLabelText("Plan end date")).toHaveValue("2030-06-30");
+    expect(screen.getByLabelText("Plan amount")).toHaveValue("250.00");
+    expect(screen.getByLabelText("Summary template")).toHaveValue("Rent {month}");
+    expect(screen.getByLabelText("Description template")).toHaveValue("Quarterly");
+
+    const anyListCalls = fetchMock.mock.calls.filter((c) => {
+      const url = String(c[0]);
+      return url.includes("/accrual-plans") && url.includes("settlement_status=any") && !url.includes("/accrual-plans/");
+    });
+    expect(anyListCalls.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("Ctrl+Shift+D on duplicate create restores initial pre-fill after edits", async () => {
+    const sourcePlan = {
+      ...unsettledPlanRow,
+      id: 5,
+      name: "Budget 2029",
+      start_date: "2029-01-01",
+      end_date: "2029-12-31",
+    };
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(listPlansResponse([sourcePlan]))
+      .mockResolvedValueOnce(listPlansResponse([sourcePlan]));
+
+    render(<AccrualPlansSection accounts={accounts} parties={parties} />);
+    const user = userEvent.setup();
+    await waitFor(() => expect(screen.getByText("Budget 2029")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "Duplicate plan Budget 2029" }));
+    expect(await screen.findByLabelText("Plan name")).toHaveValue("Budget 2030");
+
+    await user.clear(screen.getByLabelText("Plan name"));
+    await user.type(screen.getByLabelText("Plan name"), "Edited");
+    fireEvent.keyDown(document, {
+      key: "d",
+      code: "KeyD",
+      ctrlKey: true,
+      shiftKey: true,
+      bubbles: true,
+    });
+
+    expect(screen.getByLabelText("Plan name")).toHaveValue("Budget 2030");
+    expect(screen.getByLabelText("Plan start date")).toHaveValue("2030-01-01");
+    expect(screen.getByLabelText("Plan end date")).toHaveValue("2030-12-31");
   });
 });
