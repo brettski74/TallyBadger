@@ -1251,14 +1251,6 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
                     <td>{p.frequency}</td>
                     <td>
                       <div className="table-row-actions">
-                        <TableRowIconButton
-                          type="button"
-                          aria-label={`Duplicate plan ${p.name}`}
-                          title="Duplicate plan"
-                          onClick={() => void openDuplicatePlan(p)}
-                        >
-                          <BookCopy size={18} strokeWidth={2} aria-hidden />
-                        </TableRowIconButton>
                         {isUnsettledPlan(p) ? (
                           <>
                             <TableRowIconButton
@@ -1271,6 +1263,14 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
                             </TableRowIconButton>
                             <TableRowIconButton
                               type="button"
+                              aria-label={`Duplicate plan ${p.name}`}
+                              title="Duplicate plan"
+                              onClick={() => void openDuplicatePlan(p)}
+                            >
+                              <BookCopy size={18} strokeWidth={2} aria-hidden />
+                            </TableRowIconButton>
+                            <TableRowIconButton
+                              type="button"
                               aria-label={`Cancel plan ${p.name}`}
                               title="Cancel plan"
                               disabled={cancellingPlanId === p.id}
@@ -1280,14 +1280,24 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
                             </TableRowIconButton>
                           </>
                         ) : (
-                          <TableRowIconButton
-                            type="button"
-                            aria-label={`View plan ${p.name}`}
-                            title="View plan"
-                            onClick={() => openViewPlan(p)}
-                          >
-                            <Eye size={18} strokeWidth={2} aria-hidden />
-                          </TableRowIconButton>
+                          <>
+                            <TableRowIconButton
+                              type="button"
+                              aria-label={`View plan ${p.name}`}
+                              title="View plan"
+                              onClick={() => openViewPlan(p)}
+                            >
+                              <Eye size={18} strokeWidth={2} aria-hidden />
+                            </TableRowIconButton>
+                            <TableRowIconButton
+                              type="button"
+                              aria-label={`Duplicate plan ${p.name}`}
+                              title="Duplicate plan"
+                              onClick={() => void openDuplicatePlan(p)}
+                            >
+                              <BookCopy size={18} strokeWidth={2} aria-hidden />
+                            </TableRowIconButton>
+                          </>
                         )}
                       </div>
                     </td>
