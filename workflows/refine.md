@@ -16,7 +16,7 @@ Use this workflow when turning a **feature** GitHub issue into a single, agreed 
 1. **Classify** the issue: this workflow targets **features**, not bugs. If the issue reads as a defect report or is misclassified, call that out and agree with the user whether to treat it as refinement (possibly after re-scoping) or hand off to another process before rewriting scope.
 2. **Read** the issue (title, body, labels, and relevant comments) from GitHub.
 3. **Draft** a fully detailed story: user voice, context, explicit **out of scope**, **acceptance criteria**, and risks/limitations/caveats. Ground it in **[ARCH.md](../ARCH.md)** and **[STYLE.md](../STYLE.md)** only by reference—do not paste long policy.
-4. **Discuss gaps** with the user; revise the draft until the user agrees the requirements are complete.
+4. **Discuss gaps** with the user; revise the draft until the user agrees the requirements are complete. Put the draft requirements in the issue body, not in the chat. Discussion points can go in the chat, but I want to see the draft requirements on the issue on github.
 5. **Update the issue body** on GitHub with the agreed text so the issue remains the **single source of truth** (for example `issue_write` with `method: update` and the new `body`).
 6. When the user agrees that the issue details are complete and not before, label the issue as READY and inform the user that this workflow is complete.
 
