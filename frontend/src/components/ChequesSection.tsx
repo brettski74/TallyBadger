@@ -1,9 +1,8 @@
 import { FormEvent, Fragment, MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FilePlus2, RefreshCcw } from "lucide-react";
+import { Ban, Eye, FilePlus2, Pencil, RefreshCcw, SquareCheck } from "lucide-react";
 
 import type { Account } from "../api/accounts";
 import { useChequeCreateModalShortcuts } from "../hooks/useChequeCreateModalShortcuts";
-import { useFormSaveRevertShortcuts } from "../hooks/useFormSaveRevertShortcuts";
 import {
   newActionTooltip,
   newAriaKeyShortcuts,
@@ -122,6 +121,9 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
 
   const [isCreating, setIsCreating] = useState(false);
   const [selected, setSelected] = useState<Cheque | null>(null);
+  const [highlightedId, setHighlightedId] = useState<number | null>(null);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [viewDialogOpen, setViewDialogOpen] = useState(false);
 
   const [creditId, setCreditId] = useState("");
   const [debitId, setDebitId] = useState("");
@@ -140,7 +142,6 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
 
   const [seriesEnabled, setSeriesEnabled] = useState(false);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
-  const createDialogRef = useRef<HTMLDialogElement>(null);
   const [incrementUnit, setIncrementUnit] = useState<ChequeIncrementUnit>("months");
   const [incrementN, setIncrementN] = useState("1");
   const [seriesStopMode, setSeriesStopMode] = useState<"count" | "end">("count");
@@ -152,6 +153,9 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
 
   const createFormRef = useRef<HTMLFormElement>(null);
   const editFormRef = useRef<HTMLFormElement>(null);
+  const createDialogRef = useRef<HTMLDialogElement>(null);
+  const editDialogRef = useRef<HTMLDialogElement>(null);
+  const viewDialogRef = useRef<HTMLDialogElement>(null);
   const createFormBaselineRef = useRef<{
     creditId: string;
     debitId: string;
@@ -166,6 +170,15 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
     seriesStopMode: "count" | "end";
     seriesCount: string;
     seriesEndDate: string;
+  } | null>(null);
+  const editFormBaselineRef = useRef<{
+    creditId: string;
+    debitId: string;
+    summary: string;
+    chequeNumber: string;
+    issueDate: string;
+    amount: string;
+    partyId: string;
   } | null>(null);
   const isMac = useMemo(() => isMacLikeUserAgent(), []);
 
@@ -202,6 +215,12 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
         }
         return rows.find((c) => c.id === prev.id) ?? null;
       });
+      setHighlightedId((prev) => {
+        if (prev == null) {
+          return null;
+        }
+        return rows.some((c) => c.id === prev) ? prev : null;
+      });
     } catch (err) {
       setListError(err instanceof Error ? err.message : "Failed to load cheques");
       setCheques([]);
@@ -232,12 +251,6 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
     void refreshDefaults();
   }, [refreshDefaults]);
 
-  useEffect(() => {
-    if (selected) {
-      hydrateForm(selected);
-    }
-  }, [selected]);
-
   function hydrateForm(ch: Cheque) {
     setCreditId(String(ch.credit_account_id));
     setDebitId(String(ch.debit_account_id));
@@ -256,6 +269,80 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
     setIssueDate(new Date().toISOString().slice(0, 10));
     setAmount("");
     setPartyId("");
+  }
+
+  function captureEditFormBaselineFromCheque(ch: Cheque) {
+    editFormBaselineRef.current = {
+      creditId: String(ch.credit_account_id),
+      debitId: String(ch.debit_account_id),
+      summary: ch.summary,
+      chequeNumber: String(ch.cheque_number),
+      issueDate: ch.issue_date,
+      amount: ch.amount,
+      partyId: ch.party_id != null ? String(ch.party_id) : "",
+    };
+  }
+
+  function restoreEditFormBaseline() {
+    const baseline = editFormBaselineRef.current;
+    if (!baseline || !selected) {
+      return;
+    }
+    setCreditId(baseline.creditId);
+    setDebitId(baseline.debitId);
+    setSummary(baseline.summary);
+    setChequeNumber(baseline.chequeNumber);
+    setIssueDate(baseline.issueDate);
+    setAmount(baseline.amount);
+    setPartyId(baseline.partyId);
+    setFormError(null);
+  }
+
+  function closeEditDialog() {
+    setEditDialogOpen(false);
+    setFormError(null);
+    if (selected) {
+      hydrateForm(selected);
+    }
+  }
+
+  function closeViewDialog() {
+    setViewDialogOpen(false);
+    setFormError(null);
+    if (selected) {
+      hydrateForm(selected);
+    }
+  }
+
+  function openEditCheque(ch: Cheque) {
+    if (createDialogOpen) {
+      closeCreateDialog();
+    }
+    if (viewDialogOpen) {
+      closeViewDialog();
+    }
+    setFormError(null);
+    setIsCreating(false);
+    setSelected(ch);
+    setHighlightedId(ch.id);
+    hydrateForm(ch);
+    captureEditFormBaselineFromCheque(ch);
+    setEditDialogOpen(true);
+  }
+
+  function openViewCheque(ch: Cheque) {
+    if (createDialogOpen) {
+      closeCreateDialog();
+    }
+    if (editDialogOpen) {
+      closeEditDialog();
+    }
+    setFormError(null);
+    setIsCreating(false);
+    setSelected(ch);
+    setHighlightedId(ch.id);
+    hydrateForm(ch);
+    setViewDialogOpen(true);
   }
 
   function restoreCreateFormBaseline() {
@@ -292,6 +379,12 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
   }
 
   function handleNewCheque() {
+    if (editDialogOpen) {
+      closeEditDialog();
+    }
+    if (viewDialogOpen) {
+      closeViewDialog();
+    }
     setFormError(null);
     setIsCreating(true);
     setSelected(null);
@@ -326,6 +419,26 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
       el.showModal();
     }
   }, [createDialogOpen]);
+
+  useEffect(() => {
+    if (!editDialogOpen) {
+      return;
+    }
+    const el = editDialogRef.current;
+    if (el && !el.open) {
+      el.showModal();
+    }
+  }, [editDialogOpen]);
+
+  useEffect(() => {
+    if (!viewDialogOpen) {
+      return;
+    }
+    const el = viewDialogRef.current;
+    if (el && !el.open) {
+      el.showModal();
+    }
+  }, [viewDialogOpen]);
 
   function buildSeriesPayload(): ChequeSeriesCreateInput | null {
     const normalizedAmount = parseChequeAmount(amount);
@@ -404,7 +517,7 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
       closeCreateDialog();
     }
     setIsCreating(false);
-    setSelected(ch);
+    setHighlightedId(ch.id);
   }
 
   function accountName(id: number): string {
@@ -469,7 +582,7 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
         }
         await reloadList();
         await refreshDefaults();
-      } else {
+      } else if (editDialogOpen && selected) {
         const updated = await patchCheque(selected.id, {
           credit_account_id: Number(creditId),
           debit_account_id: Number(debitId),
@@ -480,6 +593,7 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
           party_id: partyId ? Number(partyId) : null,
         });
         setSelected(updated);
+        closeEditDialog();
         await reloadList();
         await refreshDefaults();
       }
@@ -505,6 +619,7 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
     try {
       const updated = await patchCheque(savedCheque.id, { status: "void" });
       setSelected(updated);
+      captureEditFormBaselineFromCheque(updated);
       await reloadList();
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Void failed");
@@ -525,6 +640,7 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
     try {
       const updated = await patchCheque(savedCheque.id, { status: "open" });
       setSelected(updated);
+      captureEditFormBaselineFromCheque(updated);
       await reloadList();
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Re-open failed");
@@ -546,6 +662,10 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
       const updated = await patchCheque(ch.id, { status: "void" });
       if (selected?.id === ch.id) {
         setSelected(updated);
+        if (editDialogOpen) {
+          hydrateForm(updated);
+          captureEditFormBaselineFromCheque(updated);
+        }
       }
       await reloadList();
     } catch (err) {
@@ -566,6 +686,10 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
       const updated = await patchCheque(ch.id, { status: "open" });
       if (selected?.id === ch.id) {
         setSelected(updated);
+        if (editDialogOpen) {
+          hydrateForm(updated);
+          captureEditFormBaselineFromCheque(updated);
+        }
       }
       await reloadList();
     } catch (err) {
@@ -583,8 +707,8 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
     accounts,
     selected ? selected.debit_account_id : null,
   );
-  const cleared = selected?.status === "cleared";
-  const editingId = !isCreating && selected ? selected.id : null;
+  const formReadOnly = viewDialogOpen;
+  const editingId = editDialogOpen && selected ? selected.id : null;
 
   const chequeFieldsValid = useMemo(() => {
     const normalizedAmount = parseChequeAmount(amount);
@@ -593,7 +717,7 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
     );
   }, [amount, chequeNumber, creditId, debitId, issueDate, summary]);
 
-  const canSubmitEdit = chequeFieldsValid && !cleared && editingId != null;
+  const canSubmitEdit = chequeFieldsValid && editDialogOpen && editingId != null;
   const canSubmitCreate = useMemo(() => {
     if (!createDialogOpen) {
       return false;
@@ -626,30 +750,17 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
     summary,
   ]);
 
-  useFormSaveRevertShortcuts({
-    createFormRef: editFormRef,
-    editFormRef,
-    editingId,
-    canSubmitCreate: false,
-    canSubmitEdit,
-    createSubmitting: false,
-    editSubmitting: formBusy,
-    requestCreateSubmit: () => {},
-    requestEditSubmit: () => {
-      editFormRef.current?.requestSubmit();
-    },
-    requestEditRevert: () => {
-      // Inline edit revert — [#164](https://github.com/brettski74/TallyBadger/issues/164).
-    },
-  });
-
   useChequeCreateModalShortcuts({
     createDialogOpen,
     createDialogView,
+    editDialogOpen,
+    viewDialogOpen,
     canSubmitCreate,
+    canSubmitEdit,
     createSubmitting: formBusy || seriesPreviewLoading,
-    newShortcutActive: true,
-    onSave: () => {
+    editSubmitting: formBusy,
+    newShortcutActive: !createDialogOpen && !editDialogOpen && !viewDialogOpen,
+    onCreateSave: () => {
       if (createDialogView === "preview") {
         createFormRef.current?.requestSubmit();
       } else if (seriesEnabled) {
@@ -658,12 +769,18 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
         createFormRef.current?.requestSubmit();
       }
     },
-    onClose: closeCreateDialog,
-    onReturnToForm: () => {
+    onEditSave: () => {
+      editFormRef.current?.requestSubmit();
+    },
+    onCreateClose: closeCreateDialog,
+    onEditClose: closeEditDialog,
+    onViewClose: closeViewDialog,
+    onCreateReturnToForm: () => {
       setCreateDialogView("form");
       setFormError(null);
     },
-    onRevertForm: restoreCreateFormBaseline,
+    onCreateRevertForm: restoreCreateFormBaseline,
+    onEditRevertForm: restoreEditFormBaseline,
     onNewCheque: handleNewCheque,
   });
 
@@ -695,7 +812,7 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
                 bumpSeries();
               }}
               required
-              disabled={cleared}
+              disabled={formReadOnly}
             />
           </label>
           <label>
@@ -710,7 +827,7 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
                 bumpSeries();
               }}
               required
-              disabled={cleared}
+              disabled={formReadOnly}
             />
           </label>
           <label>
@@ -728,7 +845,7 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
                 }
               }}
               required
-              disabled={cleared}
+              disabled={formReadOnly}
             />
           </label>
         </div>
@@ -742,7 +859,7 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
                 bumpSeries();
               }}
               required
-              disabled={cleared}
+              disabled={formReadOnly}
             >
               <option value="">Select account</option>
               {creditPickerOptions.map(({ account, eligible }) => (
@@ -761,7 +878,7 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
                 bumpSeries();
               }}
               required
-              disabled={cleared}
+              disabled={formReadOnly}
             >
               <option value="">Select account</option>
               {debitPickerOptions.map(({ account, eligible }) => (
@@ -779,7 +896,7 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
                 setPartyId(e.target.value);
                 bumpSeries();
               }}
-              disabled={cleared}
+              disabled={formReadOnly}
             >
               <option value="">None</option>
               {partyOptions.map((p) => (
@@ -799,7 +916,7 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
               bumpSeries();
             }}
             required
-            disabled={cleared}
+            disabled={formReadOnly}
           />
         </label>
       </div>
@@ -1068,7 +1185,7 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
                     onClick={() => handleSelectRow(ch)}
                     style={{
                       cursor: "pointer",
-                      background: selected?.id === ch.id ? "var(--bg-subtle)" : undefined,
+                      background: highlightedId === ch.id ? "var(--bg-subtle)" : undefined,
                     }}
                   >
                     <td>{statusLabel(ch.status)}</td>
@@ -1080,16 +1197,55 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
                     <td>{accountName(ch.debit_account_id)}</td>
                     <td>{partyName(ch.party_id)}</td>
                     <td>
-                      {ch.status === "open" && (
-                        <button type="button" className="button-link" onClick={(e) => void voidRow(ch, e)}>
-                          Void
-                        </button>
-                      )}
-                      {ch.status === "void" && (
-                        <button type="button" className="button-link" onClick={(e) => void reopenRow(ch, e)}>
-                          Re-open
-                        </button>
-                      )}
+                      <div className="table-row-actions">
+                        {ch.status === "cleared" ? (
+                          <TableRowIconButton
+                            type="button"
+                            aria-label={`View cheque #${ch.cheque_number}`}
+                            title="View cheque"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openViewCheque(ch);
+                            }}
+                          >
+                            <Eye size={18} strokeWidth={2} aria-hidden />
+                          </TableRowIconButton>
+                        ) : (
+                          <>
+                            <TableRowIconButton
+                              type="button"
+                              aria-label={`Edit cheque #${ch.cheque_number}`}
+                              title="Edit cheque"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openEditCheque(ch);
+                              }}
+                            >
+                              <Pencil size={18} strokeWidth={2} aria-hidden />
+                            </TableRowIconButton>
+                            {ch.status === "open" && (
+                              <TableRowIconButton
+                                type="button"
+                                aria-label={`Void cheque #${ch.cheque_number}`}
+                                title="Void cheque"
+                                onClick={(e) => void voidRow(ch, e)}
+                              >
+                                <Ban size={18} strokeWidth={2} aria-hidden />
+                              </TableRowIconButton>
+                            )}
+                            {ch.status === "void" && (
+                              <TableRowIconButton
+                                type="button"
+                                aria-label={`Re-open cheque #${ch.cheque_number}`}
+                                title="Re-open cheque"
+                                onClick={(e) => void reopenRow(ch, e)}
+                              >
+                                <SquareCheck size={18} strokeWidth={2} aria-hidden />
+                              </TableRowIconButton>
+                            )}
+                          </>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -1099,17 +1255,31 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
         </div>
       </section>
 
-      {selected && !isCreating && (
-        <section className="card journal-card-wide">
-          <h2>{`Edit cheque #${selected.cheque_number}`}</h2>
-          <p>
-            <strong>Status:</strong> {statusLabel(selected.status)}
-            {selected.status === "cleared" && selected.cleared_date && (
-              <span className="muted"> (cleared {selected.cleared_date})</span>
-            )}
-          </p>
+      {editDialogOpen && selected && (
+        <dialog
+          ref={editDialogRef}
+          className="cheque-dialog"
+          aria-labelledby="cheque-edit-dialog-title"
+          onClose={closeEditDialog}
+        >
+          <form
+            ref={editFormRef}
+            method="dialog"
+            className="cheque-dialog-inner"
+            noValidate
+            onSubmit={(e) => void handleSave(e)}
+          >
+            <div className="cheque-dialog-header">
+              <h2 id="cheque-edit-dialog-title">{`Edit cheque #${selected.cheque_number}`}</h2>
+              <button type="button" className="button-secondary" onClick={closeEditDialog}>
+                Close
+              </button>
+            </div>
 
-          <form ref={editFormRef} noValidate onSubmit={(e) => void handleSave(e)}>
+            <p>
+              <strong>Status:</strong> {statusLabel(selected.status)}
+            </p>
+
             {renderChequeFields({
               issueDateLabel: "Issue date",
               startingNumberLabel: "Cheque number",
@@ -1119,8 +1289,18 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
 
             <div className="dialog-actions">
               <button
+                type="button"
+                className="button-secondary"
+                onClick={closeEditDialog}
+                title={discardActionTooltip(isMac)}
+                aria-label={discardActionTooltip(isMac)}
+                aria-keyshortcuts={discardAriaKeyShortcuts(isMac)}
+              >
+                Cancel
+              </button>
+              <button
                 type="submit"
-                disabled={formBusy || cleared}
+                disabled={formBusy}
                 title={saveActionTooltip(isMac)}
                 aria-label={isMac ? "Save changes (⌘+S)" : "Save changes (Ctrl+S)"}
                 aria-keyshortcuts={saveAriaKeyShortcuts(isMac)}
@@ -1139,7 +1319,43 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
               )}
             </div>
           </form>
-        </section>
+        </dialog>
+      )}
+
+      {viewDialogOpen && selected && (
+        <dialog
+          ref={viewDialogRef}
+          className="cheque-dialog"
+          aria-labelledby="cheque-view-dialog-title"
+          onClose={closeViewDialog}
+        >
+          <div className="cheque-dialog-inner">
+            <div className="cheque-dialog-header">
+              <h2 id="cheque-view-dialog-title">{`View cheque #${selected.cheque_number}`}</h2>
+              <button type="button" className="button-secondary" onClick={closeViewDialog}>
+                Close
+              </button>
+            </div>
+
+            <p>
+              <strong>Status:</strong> {statusLabel(selected.status)}
+              {selected.cleared_date && (
+                <span className="muted"> (cleared {selected.cleared_date})</span>
+              )}
+            </p>
+
+            {renderChequeFields({
+              issueDateLabel: "Issue date",
+              startingNumberLabel: "Cheque number",
+            })}
+
+            <div className="dialog-actions">
+              <button type="button" className="button-secondary" onClick={closeViewDialog} aria-label="Close">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </dialog>
       )}
 
       {createDialogOpen && (

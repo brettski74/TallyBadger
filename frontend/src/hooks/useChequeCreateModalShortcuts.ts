@@ -4,41 +4,50 @@ import { isNewChord } from "../lib/keyboardChords";
 
 export type ChequeCreateDialogView = "form" | "preview";
 
-export interface ChequeCreateModalShortcutOptions {
+export interface ChequeModalShortcutOptions {
   createDialogOpen: boolean;
   createDialogView: ChequeCreateDialogView;
+  editDialogOpen: boolean;
+  viewDialogOpen: boolean;
   canSubmitCreate: boolean;
+  canSubmitEdit: boolean;
   createSubmitting: boolean;
+  editSubmitting: boolean;
   newShortcutActive: boolean;
-  onSave: () => void;
-  onClose: () => void;
-  onReturnToForm: () => void;
-  onRevertForm: () => void;
+  onCreateSave: () => void;
+  onEditSave: () => void;
+  onCreateClose: () => void;
+  onEditClose: () => void;
+  onViewClose: () => void;
+  onCreateReturnToForm: () => void;
+  onCreateRevertForm: () => void;
+  onEditRevertForm: () => void;
   onNewCheque: () => void;
 }
 
 /**
- * Cheque create modal:
- * - Esc: close without save
- * - Ctrl/Cmd+S: preview (form) or submit (preview / single)
- * - Ctrl/Cmd+Shift+D: preview → form; form → revert fields toward last stable state
- * - Ctrl/Cmd+Shift+N: new cheque when dialog is closed (`newShortcutActive`)
+ * Cheque create / edit / view modals:
+ * - Esc: close without save (silent discard)
+ * - Ctrl/Cmd+S: preview or submit (create); save (edit)
+ * - Ctrl/Cmd+Shift+D: create preview → form; create/edit form → revert toward baseline
+ * - Ctrl/Cmd+Shift+N: new cheque when no modal is open (`newShortcutActive`)
  */
-export function useChequeCreateModalShortcuts(opts: ChequeCreateModalShortcutOptions): void {
+export function useChequeCreateModalShortcuts(opts: ChequeModalShortcutOptions): void {
   const optsRef = useRef(opts);
   optsRef.current = opts;
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const o = optsRef.current;
+      const modalOpen = o.createDialogOpen || o.editDialogOpen || o.viewDialogOpen;
 
-      if (isNewChord(e) && !o.createDialogOpen && o.newShortcutActive) {
+      if (isNewChord(e) && !modalOpen && o.newShortcutActive) {
         e.preventDefault();
         o.onNewCheque();
         return;
       }
 
-      if (!o.createDialogOpen) {
+      if (!modalOpen) {
         return;
       }
 
@@ -49,27 +58,42 @@ export function useChequeCreateModalShortcuts(opts: ChequeCreateModalShortcutOpt
 
       if (e.key === "Escape") {
         e.preventDefault();
-        o.onClose();
+        if (o.viewDialogOpen) {
+          o.onViewClose();
+        } else if (o.editDialogOpen) {
+          o.onEditClose();
+        } else if (o.createDialogOpen) {
+          o.onCreateClose();
+        }
         return;
       }
 
       if (saveChord) {
-        if (!o.createSubmitting && o.canSubmitCreate) {
+        if (o.createDialogOpen && !o.createSubmitting && o.canSubmitCreate) {
           e.preventDefault();
-          o.onSave();
+          o.onCreateSave();
+        } else if (o.editDialogOpen && !o.editSubmitting && o.canSubmitEdit) {
+          e.preventDefault();
+          o.onEditSave();
         }
         return;
       }
 
       if (revertChord) {
-        if (o.createSubmitting) {
+        if (o.createSubmitting || o.editSubmitting || o.viewDialogOpen) {
           return;
         }
         e.preventDefault();
-        if (o.createDialogView === "preview") {
-          o.onReturnToForm();
-        } else {
-          o.onRevertForm();
+        if (o.createDialogOpen) {
+          if (o.createDialogView === "preview") {
+            o.onCreateReturnToForm();
+          } else {
+            o.onCreateRevertForm();
+          }
+          return;
+        }
+        if (o.editDialogOpen) {
+          o.onEditRevertForm();
         }
       }
     };
