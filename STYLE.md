@@ -102,13 +102,85 @@ Error messages should be **brief** but **informative**. They should always inclu
 
 For implementation to be complete:
 - All requirements must have been implemented.
-- Tests must have been added or updated to adequately test new functionality or fixed bugs.
-- All tests have been run. You must run them yourself, not ask the user to do it for you. You can use the test and frontend-test targets in the Makefile for this.
-- All tests must be run. This includes the integration tests. Everything that is needed to execute them is installed. If you have issues with Docker or other components, you need to try to diagnose/fix the problem and continue.
-- Targeted testing only is never sufficient. Really! I want you to run all available automated tests before considering any feature or bugfix and they must all pass before you are done.
-- It doesn't matter whether a test was failing prior to implementing the current feature or bugfix. All tests passing is **still** a requirement to consider a bugfix or feature done.
-- It doesn't matter if the current bugfix or feature only involves back end or only involves front end changes. You still need to run **all** tests before you are done.
-- If it's not already clear, you need to run all tests and they must all pass before you are done, regardless of whether you think it's useful or not.
+- Tests must have been added or updated to adequately test new functionality or fixed bugs (not required when the change set is **markdown-only**; see exception below).
+
+### Running the full test suite (default — mandatory)
+
+Whenever the change set includes **anything other than Markdown** (any file that is not `*.md`), **all** of the following apply before the work is done:
+
+- **Run every automated test yourself** — do not ask the user to run them. Use `make test` and `make frontend-test` in the Makefile (or equivalent full-suite commands if those targets change).
+- **Include integration tests.** `make test` runs the integration suite against Postgres (Docker). If Docker or another dependency is missing, **diagnose and fix it and continue** — do not treat integration tests as optional.
+- **No targeted-only runs.** Running a single test file or a subset because the change “looks local” is **not** sufficient.
+- **Backend-only or frontend-only changes still require the full suite** — run backend and frontend tests every time.
+- **Pre-existing failures do not excuse skipping.** All tests must **pass** before the feature or bugfix is done, even if a failure existed before your branch (fix it or get explicit user direction to defer).
+
+**Markdown-only exception (narrow):** If and only if every file changed in the branch/PR is a **`*.md`** file (e.g. `STYLE.md`, `ARCH.md`, `README.md`, `workflows/*.md`, `docs/*.md`), you **do not** need to run the test suite for that change. The moment **any** non-Markdown file is touched — code, config, SQL, lockfiles, snapshots, CI, etc. — this exception **does not** apply and the full suite is **mandatory**, with no exceptions for “docs-only PR that also tweaks one line of code.”
+
+## Register and list UI
+
+Norms for **filterable, sortable entity registers** in the SPA. The **cheque register** ([`ChequesSection`](frontend/src/components/ChequesSection.tsx)) is the reference implementation; **accrual plans** and **journal entries** should align over time where practical. Pull requests for cheque-register work under epic [#191](https://github.com/brettski74/TallyBadger/issues/191) should **cite this section** in the PR body.
+
+**Aligning existing registers (opportunistic only):** When a PR **already changes** a given register or its modals, bring **that surface** in line with this section as part of the same work—for example, switching cheque re-open from `SquareCheck` to `SquareCheckBig` while implementing cheque-register features. **Do not** use unrelated changes (accounts, journal entries, rule sets, configuration, etc.) to drive wholesale standards alignment on registers you are not touching. If you notice drift elsewhere, note it on a follow-up ticket rather than “fixing icons while you’re here.” Refactoring every existing screen in one go is **out of scope** unless explicitly scoped.
+
+### Page shell
+
+- Wrap the register in a **`section.card`**; use **`journal-card-wide`** when the table needs horizontal room.
+- Put the table inside a horizontal-scroll container when columns may overflow (`overflowX: auto` on a wrapper div).
+
+### Toolbar
+
+- **Left:** `<h2>` with the section title (e.g. “Cheque register”, “Accrual plans”).
+- **Right:** a compact actions cluster (e.g. `cheque-register-toolbar` / `cheque-register-actions` or `journal-list-toolbar` patterns).
+- **Refresh** and **New** belong in that right cluster, implemented as [`TableRowIconButton`](frontend/src/components/TableRowIconButton.tsx) with [lucide-react](https://lucide.dev/) icons at **`size={18}`** and **`strokeWidth={2}`**:
+  - **Refresh list** — `RefreshCcw`; disable while the list request is in flight; `aria-label` / `title` describe refresh (e.g. “Refresh list”).
+  - **New** — `FilePlus2` (prefer this over `FilePlus` on **new** registers; older surfaces may still use `FilePlus` until updated).
+- Wire **New** to the keyboard helpers in [`keyboardHints.ts`](frontend/src/lib/keyboardHints.ts): `newEntityAriaLabel`, `newActionTooltip`, `newAriaKeyShortcuts` so **Ctrl+Shift+N** (⌘+Shift+N on macOS) matches the **Keyboard shortcuts** section below—**not** plain Ctrl+N.
+- Optional **muted** helper text under the toolbar is fine for domain-specific status rules (see cheque register).
+
+### Filters row
+
+- Place filters **below** the toolbar (e.g. `cheque-register-filters` or `journal-filters-line` on `journal-list-toolbar-with-filters`).
+- Include **status** or bucket filters where the entity has lifecycle states (cheque status, accrual settlement bucket, account active visibility, etc.).
+- Add **entity-specific** filters (party, account multi-selects, date range, name pattern, etc.) using the same control sizing as journal entries (`journal-filter-slot`, `journal-filter-control`) when reusing that layout.
+- **Filter presets** (optional): follow the journal-entries pattern—**Save** icon (`Save` from lucide-react) on `TableRowIconButton` opens save/update preset UI; a **Filter preset** dropdown applies stored definitions. Saving presets is **not** bound to **Ctrl+S** (see **Keyboard shortcuts**).
+
+### Table
+
+- Use a semantic `<table>` with `<thead>` / `<tbody>`.
+- **Sortable column headers:** when client-side sort is supported, headers should be clickable controls that toggle sort direction; implement per ticket (not all registers sort yet). Keep sort state visible (e.g. indicator on the active column).
+- **Actions** is the **rightmost** column. Row actions live in `table-row-actions` as `TableRowIconButton`s. Use **`e.stopPropagation()`** on action clicks when the row itself is clickable.
+- **Standard row icons** (lucide-react, 18px, stroke 2):
+
+| Action | Icon | When |
+|--------|------|------|
+| Deactivate | `SquareX` | Mark inactive where the entity supports soft-archive (e.g. accounts/parties in draft editors) |
+| Delete | `Trash2` | For actions with delete-like semantics like cancelling an accrual plan. |
+| Duplicate | `BookCopy` | Duplicate an entity, with intelligent incrementing where appropriate (eg. accrual plans, cheques) |
+| Edit | `Pencil` | Editable open/draft rows |
+| Reactivate | `SquareCheckBig` | For actions with reactivate type semantics like reactivating an account or re-opening a cheque. |
+| View | `Eye` | Read-only detail (cleared/void/settled rows, etc.) |
+| Void / cancel | `Ban` | Void cheque or similar destructive cancel on an open row |
+
+- **Entity-specific** actions are allowed when documented in the PR; use consistent icons where possible.
+- Existing code may use non-standard icons until that register is next edited; the table above is the **target**, not a mandate to chase every drift in drive-by PRs (see **Aligning existing registers** above).
+- Give each button a specific **`aria-label`** (include entity id or name where helpful) and a **`title`** tool tip.
+
+### Empty, loading, and error states
+
+- **List fetch errors:** show above the table as `<p className="error-text">` (or `error` with `role="alert"` where already established on that surface).
+- **Loading:** when loading and the in-memory list is still empty, one body row spanning all columns, `className="muted"`, text **Loading…**
+- **Empty:** when not loading and the filtered list is empty, same colspan row, text like **No cheques for this filter.** / **No plans for this filter.** — tailor the entity and filter context.
+- Do not show an empty message while the first page is still loading.
+
+### Create / edit / view modals
+
+- Use native **`<dialog>`** with shared layout classes (`cheque-dialog`, `cheque-dialog-inner`, `cheque-dialog-header`, `dialog-actions` in [`styles.css`](frontend/src/styles.css)) unless a surface has a strong reason to differ.
+- **Size** the dialog so the form fits without vertical scrolling when possible. Scrolling is acceptable for **long embedded lists** (e.g. cheque series preview, accrual entry preview); use `cheque-dialog-preview` where preview content needs extra height.
+- **Full-width** controls for free-text fields: summary, description, name, memos (`cheque-form-summary` or equivalent block-level labels).
+- **Two- or three-column** layout for compact fields: currency, number, date, picklists—`cheque-form-grid` with `cheque-form-col` columns (see cheque and accrual plan modals).
+- **Group related fields** visually (accounts together, dates together, party + accounts on one row, etc.).
+- Header: dialog title (`<h2>` with `aria-labelledby` on the dialog) and a **Close** secondary button; footer: **Cancel** + primary **Save** / **Create** in `dialog-actions`. View-only dialogs omit save actions.
+- Modal **keyboard shortcuts** (Save, Discard, New, Esc) follow the **Keyboard shortcuts** section; shortcuts apply regardless of focus inside the dialog.
 
 ## Keyboard Shortcuts
 
@@ -142,5 +214,6 @@ Use this table when preparing a PR; extend it as the repo evolves.
 | **Public API or stable JSON** | Routes or response shapes consumed by clients | Contract/API tests; docs that promise the shape; **STYLE.md** if testing or contract expectations change. |
 | **Architecture vs style / delivery** | Boundaries, trust, integrations, lifecycle vs day-to-day conventions | **ARCH.md** for boundaries/lifecycle; **STYLE.md** for conventions, testing bar, or PR hygiene. **`.cursor/rules/`** only for **wiring** (pointers, tool constraints)—not duplicate policy text. |
 | **Feature-level domain docs** | Subtle or cross-cutting behaviour | Extend the relevant file under `docs/`; link from **ARCH.md** when it helps navigation. |
+| **Register / list UI** | New or revised filterable entity register | Follow **Register and list UI**; cite that section in PR body when part of cheque-register epic work. |
 
 Never undo user commits or remove them from a branch using git reset or similar commands unless the user explicitly requests you to do so. Assume that the user knows what he/she is doing and if he/she committed something on a branch it's because that is what he/she wanted done.
