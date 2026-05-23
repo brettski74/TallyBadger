@@ -151,14 +151,15 @@ Norms for **filterable, sortable entity registers** in the SPA. The **cheque reg
 
 | Action | Icon | When |
 |--------|------|------|
-| View | `Eye` | Read-only detail (cleared/void/settled rows, etc.) |
-| Edit | `Pencil` | Editable open/draft rows |
-| Void / cancel | `Ban` | Void cheque or similar destructive cancel on an open row |
 | Deactivate | `SquareX` | Mark inactive where the entity supports soft-archive (e.g. accounts/parties in draft editors) |
+| Delete | `Trash2` | For actions with delete-like semantics like cancelling an accrual plan. |
+| Duplicate | `BookCopy` | Duplicate an entity, with intelligent incrementing where appropriate (eg. accrual plans, cheques) |
+| Edit | `Pencil` | Editable open/draft rows |
+| Reactivate | `SquareCheckBig` | For actions with reactivate type semantics like reactivating an account or re-opening a check. |
+| View | `Eye` | Read-only detail (cleared/void/settled rows, etc.) |
+| Void / cancel | `Ban` | Void cheque or similar destructive cancel on an open row |
 
-- **Entity-specific** actions are allowed when documented in the PR; use consistent icons where possible:
-  - Cheques — **Re-open** `SquareCheck` on void rows.
-  - Accrual plans — **Duplicate** `BookCopy`; **Cancel plan** `Trash2` on unsettled rows (not `Ban`).
+- **Entity-specific** actions are allowed when documented in the PR; use consistent icons where possible.
 - Give each button a specific **`aria-label`** (include entity id or name where helpful) and a **`title`** tool tip.
 
 ### Empty, loading, and error states
