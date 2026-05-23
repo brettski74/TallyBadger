@@ -102,13 +102,19 @@ Error messages should be **brief** but **informative**. They should always inclu
 
 For implementation to be complete:
 - All requirements must have been implemented.
-- Tests must have been added or updated to adequately test new functionality or fixed bugs.
-- All tests have been run. You must run them yourself, not ask the user to do it for you. You can use the test and frontend-test targets in the Makefile for this.
-- All tests must be run. This includes the integration tests. Everything that is needed to execute them is installed. If you have issues with Docker or other components, you need to try to diagnose/fix the problem and continue.
-- Targeted testing only is never sufficient. Really! I want you to run all available automated tests before considering any feature or bugfix and they must all pass before you are done.
-- It doesn't matter whether a test was failing prior to implementing the current feature or bugfix. All tests passing is **still** a requirement to consider a bugfix or feature done.
-- It doesn't matter if the current bugfix or feature only involves back end or only involves front end changes. You still need to run **all** tests before you are done.
-- If it's not already clear, you need to run all tests and they must all pass before you are done, regardless of whether you think it's useful or not.
+- Tests must have been added or updated to adequately test new functionality or fixed bugs (not required when the change set is **markdown-only**; see exception below).
+
+### Running the full test suite (default — mandatory)
+
+Whenever the change set includes **anything other than Markdown** (any file that is not `*.md`), **all** of the following apply before the work is done:
+
+- **Run every automated test yourself** — do not ask the user to run them. Use `make test` and `make frontend-test` in the Makefile (or equivalent full-suite commands if those targets change).
+- **Include integration tests.** `make test` runs the integration suite against Postgres (Docker). If Docker or another dependency is missing, **diagnose and fix it and continue** — do not treat integration tests as optional.
+- **No targeted-only runs.** Running a single test file or a subset because the change “looks local” is **not** sufficient.
+- **Backend-only or frontend-only changes still require the full suite** — run backend and frontend tests every time.
+- **Pre-existing failures do not excuse skipping.** All tests must **pass** before the feature or bugfix is done, even if a failure existed before your branch (fix it or get explicit user direction to defer).
+
+**Markdown-only exception (narrow):** If and only if every file changed in the branch/PR is a **`*.md`** file (e.g. `STYLE.md`, `ARCH.md`, `README.md`, `workflows/*.md`, `docs/*.md`), you **do not** need to run the test suite for that change. The moment **any** non-Markdown file is touched — code, config, SQL, lockfiles, snapshots, CI, etc. — this exception **does not** apply and the full suite is **mandatory**, with no exceptions for “docs-only PR that also tweaks one line of code.”
 
 ## Register and list UI
 
