@@ -142,10 +142,11 @@ describe("ChequesSection", () => {
 
     const table = await screen.findByRole("table");
     const row = within(table).getByRole("row", { name: /Cleared one/i });
-    expect(within(row).queryByRole("button", { name: "Void" })).not.toBeInTheDocument();
+    expect(within(row).queryByRole("button", { name: /Void cheque/i })).not.toBeInTheDocument();
+    expect(within(row).getByRole("button", { name: "View cheque #3" })).toBeInTheDocument();
   });
 
-  it("shows Re-open for void cheque rows", async () => {
+  it("shows View and Re-open for void cheque rows but not Edit", async () => {
     installFetchMock({
       cheques: [
         {
@@ -168,10 +169,44 @@ describe("ChequesSection", () => {
     render(<ChequesSection accounts={accounts} parties={parties} />);
 
     const table = await screen.findByRole("table");
-    expect(within(table).getByRole("button", { name: "Re-open" })).toBeInTheDocument();
+    const row = within(table).getByRole("row", { name: /Voided/i });
+    expect(within(row).getByRole("button", { name: "View cheque #2" })).toBeInTheDocument();
+    expect(within(row).getByRole("button", { name: "Re-open cheque #2" })).toBeInTheDocument();
+    expect(within(row).queryByRole("button", { name: "Edit cheque #2" })).not.toBeInTheDocument();
   });
 
-  it("has no status dropdown on the edit form", async () => {
+  it("opens void cheque in read-only view dialog via Eye", async () => {
+    installFetchMock({
+      cheques: [
+        {
+          id: 8,
+          credit_account_id: 1,
+          debit_account_id: 2,
+          summary: "Voided",
+          cheque_number: 2,
+          issue_date: "2026-05-02",
+          cleared_date: null,
+          amount: "12.00",
+          party_id: null,
+          status: "void",
+          created_at: "2026-04-01T00:00:00Z",
+          updated_at: "2026-04-01T00:00:00Z",
+        },
+      ],
+    });
+
+    render(<ChequesSection accounts={accounts} parties={parties} />);
+
+    const user = userEvent.setup();
+    const table = await screen.findByRole("table");
+    await user.click(within(table).getByRole("button", { name: "View cheque #2" }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("heading", { name: "View cheque #2" })).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: /Save changes/i })).not.toBeInTheDocument();
+  });
+
+  it("row click highlights only and does not open edit dialog", async () => {
     installFetchMock({
       cheques: [
         {
@@ -197,9 +232,71 @@ describe("ChequesSection", () => {
     const table = await screen.findByRole("table");
     await user.click(within(table).getByText("Open one"));
 
-    const selects = screen.getAllByRole("combobox");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("opens edit via Pencil and has no status dropdown on the edit form", async () => {
+    installFetchMock({
+      cheques: [
+        {
+          id: 7,
+          credit_account_id: 1,
+          debit_account_id: 2,
+          summary: "Open one",
+          cheque_number: 1,
+          issue_date: "2026-05-02",
+          cleared_date: null,
+          amount: "25.00",
+          party_id: null,
+          status: "open",
+          created_at: "2026-04-01T00:00:00Z",
+          updated_at: "2026-04-01T00:00:00Z",
+        },
+      ],
+    });
+
+    render(<ChequesSection accounts={accounts} parties={parties} />);
+
+    const user = userEvent.setup();
+    const table = await screen.findByRole("table");
+    await user.click(within(table).getByRole("button", { name: "Edit cheque #1" }));
+
+    const dialog = await screen.findByRole("dialog");
+    const selects = within(dialog).getAllByRole("combobox");
     const statusField = selects.find((el) => el.getAttribute("aria-label") === "Cheque status");
     expect(statusField).toBeUndefined();
+  });
+
+  it("opens cleared cheque in read-only view dialog via Eye", async () => {
+    installFetchMock({
+      cheques: [
+        {
+          id: 9,
+          credit_account_id: 1,
+          debit_account_id: 2,
+          summary: "Cleared one",
+          cheque_number: 3,
+          issue_date: "2026-05-02",
+          cleared_date: "2026-05-03",
+          amount: "40.00",
+          party_id: null,
+          status: "cleared",
+          created_at: "2026-04-01T00:00:00Z",
+          updated_at: "2026-04-01T00:00:00Z",
+        },
+      ],
+    });
+
+    render(<ChequesSection accounts={accounts} parties={parties} />);
+
+    const user = userEvent.setup();
+    const table = await screen.findByRole("table");
+    await user.click(within(table).getByRole("button", { name: "View cheque #3" }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("heading", { name: "View cheque #3" })).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: /Save changes/i })).not.toBeInTheDocument();
+    expect(within(dialog).getByLabelText(/^Summary/i)).toBeDisabled();
   });
 });
 
@@ -355,9 +452,10 @@ describe("ChequesSection #105 — picker eligibility and last-used defaults", ()
 
     const user = userEvent.setup();
     const table = await screen.findByRole("table");
-    await user.click(within(table).getByText("Legacy cheque"));
+    await user.click(within(table).getByRole("button", { name: "Edit cheque #99" }));
 
-    const creditSelect = (await screen.findByLabelText(/Credit account/i)) as HTMLSelectElement;
+    const dialog = await screen.findByRole("dialog");
+    const creditSelect = (await within(dialog).findByLabelText(/Credit account/i)) as HTMLSelectElement;
     expect(creditSelect.value).toBe("5");
     const optionNames = within(creditSelect)
       .getAllByRole("option")
@@ -530,7 +628,7 @@ const openCheque = {
 };
 
 describe("ChequesSection #132 — keyboard shortcuts", () => {
-  it("saves the edit form when Ctrl+S is pressed while focus is inside the edit form", async () => {
+  it("saves the edit form when Ctrl+S is pressed in the edit dialog", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
       if (url.includes("/ledger-settings")) {
@@ -555,8 +653,9 @@ describe("ChequesSection #132 — keyboard shortcuts", () => {
 
     const user = userEvent.setup();
     const table = await screen.findByRole("table");
-    await user.click(within(table).getByText("Open one"));
-    const summaryInput = screen.getByLabelText(/^Summary/i);
+    await user.click(within(table).getByRole("button", { name: "Edit cheque #1" }));
+    const dialog = await screen.findByRole("dialog");
+    const summaryInput = within(dialog).getByLabelText(/^Summary/i);
     await user.clear(summaryInput);
     await user.type(summaryInput, "Updated via keyboard");
     summaryInput.focus();
@@ -569,6 +668,89 @@ describe("ChequesSection #132 — keyboard shortcuts", () => {
     });
 
     fetchMock.mockRestore();
+  });
+
+  it("closes the edit dialog after a successful save", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.includes("/ledger-settings")) {
+        return new Response(JSON.stringify(defaultSettings()), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.includes("/cheques/7") && init?.method === "PATCH") {
+        return new Response(
+          JSON.stringify({ ...openCheque, summary: "Saved in modal" }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      return new Response(JSON.stringify([openCheque]), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    render(<ChequesSection accounts={accounts} parties={parties} />);
+
+    const user = userEvent.setup();
+    const table = await screen.findByRole("table");
+    await user.click(within(table).getByRole("button", { name: "Edit cheque #1" }));
+    const dialog = await screen.findByRole("dialog");
+    const summaryInput = within(dialog).getByLabelText(/^Summary/i);
+    await user.clear(summaryInput);
+    await user.type(summaryInput, "Saved in modal");
+    await user.click(within(dialog).getByRole("button", { name: /Save changes/i }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+
+    fetchMock.mockRestore();
+  });
+
+  it("discards edit changes silently when Escape is pressed", async () => {
+    installFetchMock({
+      cheques: [openCheque],
+    });
+
+    render(<ChequesSection accounts={accounts} parties={parties} />);
+
+    const user = userEvent.setup();
+    const table = await screen.findByRole("table");
+    await user.click(within(table).getByRole("button", { name: "Edit cheque #1" }));
+    const dialog = await screen.findByRole("dialog");
+    const summaryInput = within(dialog).getByLabelText(/^Summary/i);
+    await user.clear(summaryInput);
+    await user.type(summaryInput, "Draft change");
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+
+    await user.click(within(table).getByRole("button", { name: "Edit cheque #1" }));
+    const reopened = await screen.findByRole("dialog");
+    expect(within(reopened).getByLabelText(/^Summary/i)).toHaveValue("Open one");
+  });
+
+  it("reverts edit form fields when Ctrl+Shift+D is pressed in the edit dialog", async () => {
+    installFetchMock({
+      cheques: [openCheque],
+    });
+
+    render(<ChequesSection accounts={accounts} parties={parties} />);
+
+    const user = userEvent.setup();
+    const table = await screen.findByRole("table");
+    await user.click(within(table).getByRole("button", { name: "Edit cheque #1" }));
+    const dialog = await screen.findByRole("dialog");
+    const summaryInput = within(dialog).getByLabelText(/^Summary/i);
+    await user.clear(summaryInput);
+    await user.type(summaryInput, "Changed");
+    fireEvent.keyDown(document, { key: "d", ctrlKey: true, shiftKey: true });
+
+    expect(within(dialog).getByLabelText(/^Summary/i)).toHaveValue("Open one");
   });
 
   it("creates a single cheque when Ctrl+S is pressed in the create dialog", async () => {
