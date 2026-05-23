@@ -118,7 +118,9 @@ Whenever the change set includes **anything other than Markdown** (any file that
 
 ## Register and list UI
 
-Norms for **filterable, sortable entity registers** in the SPA. The **cheque register** ([`ChequesSection`](frontend/src/components/ChequesSection.tsx)) is the reference implementation; **accrual plans** and **journal entries** should align over time where practical. Pull requests for cheque-register work under epic [#191](https://github.com/brettski74/TallyBadger/issues/191) should **cite this section** in the PR body. Refactoring every existing screen to match is **out of scope** here—align opportunistically or in follow-up tickets.
+Norms for **filterable, sortable entity registers** in the SPA. The **cheque register** ([`ChequesSection`](frontend/src/components/ChequesSection.tsx)) is the reference implementation; **accrual plans** and **journal entries** should align over time where practical. Pull requests for cheque-register work under epic [#191](https://github.com/brettski74/TallyBadger/issues/191) should **cite this section** in the PR body.
+
+**Aligning existing registers (opportunistic only):** When a PR **already changes** a given register or its modals, bring **that surface** in line with this section as part of the same work—for example, switching cheque re-open from `SquareCheck` to `SquareCheckBig` while implementing cheque-register features. **Do not** use unrelated changes (accounts, journal entries, rule sets, configuration, etc.) to drive wholesale standards alignment on registers you are not touching. If you notice drift elsewhere, note it on a follow-up ticket rather than “fixing icons while you’re here.” Refactoring every existing screen in one go is **out of scope** unless explicitly scoped.
 
 ### Page shell
 
@@ -155,11 +157,12 @@ Norms for **filterable, sortable entity registers** in the SPA. The **cheque reg
 | Delete | `Trash2` | For actions with delete-like semantics like cancelling an accrual plan. |
 | Duplicate | `BookCopy` | Duplicate an entity, with intelligent incrementing where appropriate (eg. accrual plans, cheques) |
 | Edit | `Pencil` | Editable open/draft rows |
-| Reactivate | `SquareCheckBig` | For actions with reactivate type semantics like reactivating an account or re-opening a check. |
+| Reactivate | `SquareCheckBig` | For actions with reactivate type semantics like reactivating an account or re-opening a cheque. |
 | View | `Eye` | Read-only detail (cleared/void/settled rows, etc.) |
 | Void / cancel | `Ban` | Void cheque or similar destructive cancel on an open row |
 
 - **Entity-specific** actions are allowed when documented in the PR; use consistent icons where possible.
+- Existing code may use non-standard icons until that register is next edited; the table above is the **target**, not a mandate to chase every drift in drive-by PRs (see **Aligning existing registers** above).
 - Give each button a specific **`aria-label`** (include entity id or name where helpful) and a **`title`** tool tip.
 
 ### Empty, loading, and error states
