@@ -146,7 +146,7 @@ describe("ChequesSection", () => {
     expect(within(row).getByRole("button", { name: "View cheque #3" })).toBeInTheDocument();
   });
 
-  it("shows Re-open for void cheque rows", async () => {
+  it("shows View and Re-open for void cheque rows but not Edit", async () => {
     installFetchMock({
       cheques: [
         {
@@ -169,7 +169,41 @@ describe("ChequesSection", () => {
     render(<ChequesSection accounts={accounts} parties={parties} />);
 
     const table = await screen.findByRole("table");
-    expect(within(table).getByRole("button", { name: "Re-open cheque #2" })).toBeInTheDocument();
+    const row = within(table).getByRole("row", { name: /Voided/i });
+    expect(within(row).getByRole("button", { name: "View cheque #2" })).toBeInTheDocument();
+    expect(within(row).getByRole("button", { name: "Re-open cheque #2" })).toBeInTheDocument();
+    expect(within(row).queryByRole("button", { name: "Edit cheque #2" })).not.toBeInTheDocument();
+  });
+
+  it("opens void cheque in read-only view dialog via Eye", async () => {
+    installFetchMock({
+      cheques: [
+        {
+          id: 8,
+          credit_account_id: 1,
+          debit_account_id: 2,
+          summary: "Voided",
+          cheque_number: 2,
+          issue_date: "2026-05-02",
+          cleared_date: null,
+          amount: "12.00",
+          party_id: null,
+          status: "void",
+          created_at: "2026-04-01T00:00:00Z",
+          updated_at: "2026-04-01T00:00:00Z",
+        },
+      ],
+    });
+
+    render(<ChequesSection accounts={accounts} parties={parties} />);
+
+    const user = userEvent.setup();
+    const table = await screen.findByRole("table");
+    await user.click(within(table).getByRole("button", { name: "View cheque #2" }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("heading", { name: "View cheque #2" })).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: /Save changes/i })).not.toBeInTheDocument();
   });
 
   it("row click highlights only and does not open edit dialog", async () => {

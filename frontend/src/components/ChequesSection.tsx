@@ -315,6 +315,10 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
   }
 
   function openEditCheque(ch: Cheque) {
+    if (ch.status !== "open") {
+      openViewCheque(ch);
+      return;
+    }
     if (createDialogOpen) {
       closeCreateDialog();
     }
@@ -619,31 +623,11 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
     try {
       const updated = await patchCheque(savedCheque.id, { status: "void" });
       setSelected(updated);
-      captureEditFormBaselineFromCheque(updated);
+      closeEditDialog();
+      openViewCheque(updated);
       await reloadList();
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Void failed");
-    } finally {
-      setFormBusy(false);
-    }
-  }
-
-  async function handleReopen() {
-    if (!savedCheque || savedCheque.status !== "void") {
-      return;
-    }
-    if (!window.confirm(`Re-open cheque #${savedCheque.cheque_number} (${savedCheque.summary})?`)) {
-      return;
-    }
-    setFormError(null);
-    setFormBusy(true);
-    try {
-      const updated = await patchCheque(savedCheque.id, { status: "open" });
-      setSelected(updated);
-      captureEditFormBaselineFromCheque(updated);
-      await reloadList();
-    } catch (err) {
-      setFormError(err instanceof Error ? err.message : "Re-open failed");
     } finally {
       setFormBusy(false);
     }
@@ -663,8 +647,8 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
       if (selected?.id === ch.id) {
         setSelected(updated);
         if (editDialogOpen) {
-          hydrateForm(updated);
-          captureEditFormBaselineFromCheque(updated);
+          closeEditDialog();
+          openViewCheque(updated);
         }
       }
       await reloadList();
@@ -686,7 +670,10 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
       const updated = await patchCheque(ch.id, { status: "open" });
       if (selected?.id === ch.id) {
         setSelected(updated);
-        if (editDialogOpen) {
+        if (viewDialogOpen) {
+          closeViewDialog();
+          openEditCheque(updated);
+        } else if (editDialogOpen) {
           hydrateForm(updated);
           captureEditFormBaselineFromCheque(updated);
         }
@@ -1198,18 +1185,30 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
                     <td>{partyName(ch.party_id)}</td>
                     <td>
                       <div className="table-row-actions">
-                        {ch.status === "cleared" ? (
-                          <TableRowIconButton
-                            type="button"
-                            aria-label={`View cheque #${ch.cheque_number}`}
-                            title="View cheque"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              openViewCheque(ch);
-                            }}
-                          >
-                            <Eye size={18} strokeWidth={2} aria-hidden />
-                          </TableRowIconButton>
+                        {ch.status === "cleared" || ch.status === "void" ? (
+                          <>
+                            <TableRowIconButton
+                              type="button"
+                              aria-label={`View cheque #${ch.cheque_number}`}
+                              title="View cheque"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openViewCheque(ch);
+                              }}
+                            >
+                              <Eye size={18} strokeWidth={2} aria-hidden />
+                            </TableRowIconButton>
+                            {ch.status === "void" && (
+                              <TableRowIconButton
+                                type="button"
+                                aria-label={`Re-open cheque #${ch.cheque_number}`}
+                                title="Re-open cheque"
+                                onClick={(e) => void reopenRow(ch, e)}
+                              >
+                                <SquareCheck size={18} strokeWidth={2} aria-hidden />
+                              </TableRowIconButton>
+                            )}
+                          </>
                         ) : (
                           <>
                             <TableRowIconButton
@@ -1223,26 +1222,14 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
                             >
                               <Pencil size={18} strokeWidth={2} aria-hidden />
                             </TableRowIconButton>
-                            {ch.status === "open" && (
-                              <TableRowIconButton
-                                type="button"
-                                aria-label={`Void cheque #${ch.cheque_number}`}
-                                title="Void cheque"
-                                onClick={(e) => void voidRow(ch, e)}
-                              >
-                                <Ban size={18} strokeWidth={2} aria-hidden />
-                              </TableRowIconButton>
-                            )}
-                            {ch.status === "void" && (
-                              <TableRowIconButton
-                                type="button"
-                                aria-label={`Re-open cheque #${ch.cheque_number}`}
-                                title="Re-open cheque"
-                                onClick={(e) => void reopenRow(ch, e)}
-                              >
-                                <SquareCheck size={18} strokeWidth={2} aria-hidden />
-                              </TableRowIconButton>
-                            )}
+                            <TableRowIconButton
+                              type="button"
+                              aria-label={`Void cheque #${ch.cheque_number}`}
+                              title="Void cheque"
+                              onClick={(e) => void voidRow(ch, e)}
+                            >
+                              <Ban size={18} strokeWidth={2} aria-hidden />
+                            </TableRowIconButton>
                           </>
                         )}
                       </div>
@@ -1310,11 +1297,6 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
               {canVoidOrReopen && savedCheque.status === "open" && (
                 <button type="button" onClick={() => void handleVoid()} disabled={formBusy}>
                   Void cheque
-                </button>
-              )}
-              {canVoidOrReopen && savedCheque.status === "void" && (
-                <button type="button" onClick={() => void handleReopen()} disabled={formBusy}>
-                  Re-open cheque
                 </button>
               )}
             </div>
