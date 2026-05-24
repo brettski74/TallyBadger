@@ -378,7 +378,7 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
         </p>
       )}
       {backupFormatWarning && (
-        <p className="backup-format-warning" role="status">
+        <p className="error-text" role="alert">
           {backupFormatWarning}
         </p>
       )}

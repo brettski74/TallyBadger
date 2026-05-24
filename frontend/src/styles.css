@@ -349,11 +349,6 @@ th {
   margin-top: 0.25rem;
 }
 
-.backup-format-warning {
-  margin-top: 0.5rem;
-  color: var(--color-text-muted, #6b7280);
-}
-
 .backup-actions {
   display: flex;
   flex-wrap: wrap;

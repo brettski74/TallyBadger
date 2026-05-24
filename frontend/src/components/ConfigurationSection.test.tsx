@@ -183,6 +183,8 @@ describe("ConfigurationSection", () => {
     });
     const success = screen.getByText(/Restore finished successfully/i);
     const warning = screen.getByText(deprecation);
+    expect(warning).toHaveClass("error-text");
+    expect(warning).toHaveAttribute("role", "alert");
     expect(
       success.compareDocumentPosition(warning) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
