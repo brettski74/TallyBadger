@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.machinery
 import importlib.util
+import json
 import os
 import sys
 import time
@@ -137,3 +138,49 @@ def test_tbload_no_timeout_warning_for_file_without_timeout_flag(
         timeout_specified=False,
     )
     assert capsys.readouterr().err == ""
+
+
+def test_tbload_extract_api_error_detail_from_fastapi_json() -> None:
+    body = json.dumps({"detail": "Snapshot import — database duplicate key (unique/PK): id=1"})
+    assert tbload.extract_api_error_detail(body) == (
+        "Snapshot import — database duplicate key (unique/PK): id=1"
+    )
+
+
+def test_tbload_format_import_http_error_surfaces_server_detail_for_409_abort() -> None:
+    body = json.dumps(
+        {
+            "detail": (
+                "Snapshot import — database duplicate key (unique/PK): "
+                "Key (id)=(1) already exists.; constraint=accounts_pkey; table=accounts"
+            )
+        }
+    )
+    message = tbload.format_import_http_error(409, body, restore_mode="abort")
+    assert "Import failed (HTTP 409)" in message
+    assert "duplicate keys or schema version mismatch" in message
+    assert "Server: Snapshot import — database duplicate key" in message
+    assert "--mode erase-reload" in message
+    assert "make dbclean" in message
+
+
+def test_tbload_format_import_http_error_schema_mismatch_hint() -> None:
+    body = json.dumps(
+        {
+            "detail": (
+                "snapshot has '016_foo', this database has '015_bar' "
+                "(snapshot is newer than this database; apply migrations or use an older release)"
+            )
+        }
+    )
+    message = tbload.format_import_http_error(409, body, restore_mode="abort")
+    assert "Server: snapshot has '016_foo'" in message
+    assert "tallybadger-migrate" in message
+    assert "--mode erase-reload" not in message
+
+
+def test_tbload_parse_curl_import_response() -> None:
+    raw = b'{"status":"imported"}\n200'
+    body, status = tbload.parse_curl_import_response(raw)
+    assert body == '{"status":"imported"}'
+    assert status == 200

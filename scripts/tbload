@@ -19,6 +19,7 @@ from urllib.parse import urljoin
 
 CANONICAL_RESTORE_MODES: tuple[str, ...] = ("abort", "overwrite", "erase-reload")
 STDIN_READ_TIMEOUT_SECONDS = 30.0
+IMPORT_CURL_WRITE_OUT = "\n%{http_code}"
 
 
 class TbloadError(Exception):
@@ -125,6 +126,77 @@ def preflight_health(base_url: str) -> None:
         _die(f"API health check failed for {url}: {err or proc.returncode}")
 
 
+def extract_api_error_detail(body_text: str) -> str | None:
+    """Return a human-readable API error from a FastAPI JSON body or raw text."""
+    if not body_text.strip():
+        return None
+    try:
+        payload = json.loads(body_text)
+    except json.JSONDecodeError:
+        return body_text.strip()
+    if not isinstance(payload, dict):
+        return body_text.strip()
+    detail = payload.get("detail")
+    if isinstance(detail, str):
+        return detail
+    if detail is not None:
+        return json.dumps(detail, ensure_ascii=False)
+    return body_text.strip()
+
+
+def format_import_http_error(status_code: int, body_text: str, *, restore_mode: str) -> str:
+    """Build operator-oriented import failure text from HTTP status and response body."""
+    lines: list[str] = [f"Import failed (HTTP {status_code})."]
+
+    if status_code == 409:
+        lines.append(
+            "The snapshot import conflicted with this database "
+            "(duplicate keys or schema version mismatch)."
+        )
+    elif status_code == 400:
+        lines.append(
+            "The request or snapshot was rejected "
+            "(invalid restore mode, format, integrity, or validation error)."
+        )
+    else:
+        lines.append("The import request was not successful.")
+
+    detail = extract_api_error_detail(body_text)
+    if detail:
+        lines.append(f"Server: {detail}")
+    elif body_text.strip():
+        lines.append(f"Server response: {body_text.strip()}")
+    else:
+        lines.append("The server did not return an error message in the response body.")
+
+    detail_lower = (detail or "").lower()
+    if status_code == 409 and restore_mode == "abort" and "duplicate key" in detail_lower:
+        lines.append(
+            "With restore mode abort, existing rows that share primary keys with the snapshot "
+            "are not replaced. Use --mode overwrite to replace matching keys, or "
+            "--mode erase-reload to wipe app data before loading (as make dbclean does)."
+        )
+    elif status_code == 409 and "snapshot has" in detail_lower and "database has" in detail_lower:
+        lines.append(
+            "Apply pending SQL migrations (make dbempty / tallybadger-migrate) or use a snapshot "
+            "exported from a database at the same schema version as this target."
+        )
+
+    return "\n".join(lines)
+
+
+def parse_curl_import_response(raw_stdout: bytes) -> tuple[str, int]:
+    """Split curl import stdout into response body text and trailing HTTP status code."""
+    if b"\n" not in raw_stdout:
+        raise TbloadError("unexpected empty response from API")
+    body_bytes, status_line = raw_stdout.rsplit(b"\n", 1)
+    try:
+        status_code = int(status_line.decode("ascii").strip())
+    except ValueError as exc:
+        raise TbloadError(f"invalid HTTP status from curl: {status_line!r}") from exc
+    return body_bytes.decode("utf-8", errors="replace"), status_code
+
+
 def import_snapshot(
     base_url: str,
     *,
@@ -134,9 +206,9 @@ def import_snapshot(
 ) -> dict[str, object]:
     url = urljoin(base_url + "/", "backup/import")
     curl_args = [
-        "-fsS",
+        "-sS",
         "-w",
-        "\n%{http_code}",
+        IMPORT_CURL_WRITE_OUT,
         "-X",
         "POST",
         "-F",
@@ -157,28 +229,17 @@ def import_snapshot(
     )
     if proc.returncode != 0:
         err = proc.stderr.decode("utf-8", errors="replace").strip()
-        _die(f"curl import failed: {err or proc.returncode}")
+        _die(f"Import request failed before a response was received: {err or proc.returncode}")
 
-    out = proc.stdout
-    if b"\n" not in out:
-        _die("unexpected empty response from API")
-    body_bytes, status_line = out.rsplit(b"\n", 1)
     try:
-        status_code = int(status_line.decode("ascii").strip())
-    except ValueError as exc:
-        raise TbloadError(f"invalid HTTP status from curl: {status_line!r}") from exc
+        body_text, status_code = parse_curl_import_response(proc.stdout)
+    except TbloadError as exc:
+        _die(str(exc))
 
-    body_text = body_bytes.decode("utf-8", errors="replace").strip()
     if status_code < 200 or status_code >= 300:
-        detail = body_text
-        try:
-            payload = json.loads(body_text)
-            if isinstance(payload, dict) and "detail" in payload:
-                detail = json.dumps(payload["detail"], ensure_ascii=False)
-        except json.JSONDecodeError:
-            pass
-        _die(f"import failed (HTTP {status_code}): {detail}")
+        _die(format_import_http_error(status_code, body_text, restore_mode=restore_mode))
 
+    body_text = body_text.strip()
     try:
         data = json.loads(body_text) if body_text else {}
     except json.JSONDecodeError as exc:
