@@ -1300,7 +1300,11 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
           </label>
         </div>
 
-        {listError && <p className="error-text">{listError}</p>}
+        {listError && (
+          <p className="error-text" role="alert">
+            {listError}
+          </p>
+        )}
 
         <div style={{ overflowX: "auto" }}>
           <table>
@@ -1439,7 +1443,11 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
               startingNumberLabel: "Cheque number",
             })}
 
-            {formError && <p className="error-text">{formError}</p>}
+            {formError && (
+              <p className="error-text" role="alert">
+                {formError}
+              </p>
+            )}
 
             <div className="dialog-actions">
               <button
@@ -1541,7 +1549,11 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
               {renderSeriesEnableCheckbox()}
               {renderSeriesScheduleFields()}
 
-              {formError && <p className="error-text">{formError}</p>}
+              {formError && (
+                <p className="error-text" role="alert">
+                  {formError}
+                </p>
+              )}
 
               <div className="dialog-actions">
                 <button
@@ -1579,7 +1591,11 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
             <>
               {renderSeriesPreviewPanel()}
 
-              {formError && <p className="error-text">{formError}</p>}
+              {formError && (
+                <p className="error-text" role="alert">
+                  {formError}
+                </p>
+              )}
 
               <div className="dialog-actions">
                 <button

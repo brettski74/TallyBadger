@@ -452,6 +452,34 @@ describe("ChequesSection", () => {
     expect(within(dialog).queryByRole("button", { name: /Save changes/i })).not.toBeInTheDocument();
     expect(within(dialog).getByLabelText(/^Summary/i)).toBeDisabled();
   });
+
+  it("shows list fetch errors with error-text styling", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/ledger-settings")) {
+        return new Response(JSON.stringify(defaultSettings()), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.includes("/cheques/filter-options")) {
+        return filterOptionsResponse();
+      }
+      if (url.includes("/cheques")) {
+        return new Response(JSON.stringify({ detail: "service unavailable" }), {
+          status: 503,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    render(<ChequesSection accounts={accounts} parties={parties} />);
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveClass("error-text");
+    expect(alert).toHaveTextContent("service unavailable");
+  });
 });
 
 describe("ChequesSection #105 — picker eligibility and last-used defaults", () => {
