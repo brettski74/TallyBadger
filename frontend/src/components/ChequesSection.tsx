@@ -1650,8 +1650,8 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
               setSelectedDebitAccountIds(ids);
             }}
           />
-          <label className="journal-filter-slot journal-filter-slot-date">
-            <span className="journal-filter-inline-label">Issue from</span>
+          <div className="journal-filter-range-group journal-filter-range-group-date">
+            <span className="journal-filter-inline-label">Issue from/to</span>
             <input
               className="journal-filter-control"
               type="date"
@@ -1662,9 +1662,9 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
               }}
               aria-label="Filter cheques issue from date"
             />
-          </label>
-          <label className="journal-filter-slot journal-filter-slot-date">
-            <span className="journal-filter-inline-label">Issue to</span>
+            <span className="journal-filter-range-separator" aria-hidden>
+              /
+            </span>
             <input
               className="journal-filter-control"
               type="date"
@@ -1675,9 +1675,9 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
               }}
               aria-label="Filter cheques issue to date"
             />
-          </label>
-          <label className="journal-filter-slot journal-filter-slot-date">
-            <span className="journal-filter-inline-label">Cleared from</span>
+          </div>
+          <div className="journal-filter-range-group journal-filter-range-group-date">
+            <span className="journal-filter-inline-label">Cleared from/to</span>
             <input
               className="journal-filter-control"
               type="date"
@@ -1688,9 +1688,9 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
               }}
               aria-label="Filter cheques cleared from date"
             />
-          </label>
-          <label className="journal-filter-slot journal-filter-slot-date">
-            <span className="journal-filter-inline-label">Cleared to</span>
+            <span className="journal-filter-range-separator" aria-hidden>
+              /
+            </span>
             <input
               className="journal-filter-control"
               type="date"
@@ -1701,9 +1701,9 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
               }}
               aria-label="Filter cheques cleared to date"
             />
-          </label>
-          <label className="journal-filter-slot journal-filter-slot-number">
-            <span className="journal-filter-inline-label">Min amount</span>
+          </div>
+          <div className="journal-filter-range-group journal-filter-range-group-number">
+            <span className="journal-filter-inline-label">Amount min/max</span>
             <input
               className="journal-filter-control"
               type="number"
@@ -1717,9 +1717,9 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
               }}
               aria-label="Filter cheques minimum amount"
             />
-          </label>
-          <label className="journal-filter-slot journal-filter-slot-number">
-            <span className="journal-filter-inline-label">Max amount</span>
+            <span className="journal-filter-range-separator" aria-hidden>
+              /
+            </span>
             <input
               className="journal-filter-control"
               type="number"
@@ -1733,7 +1733,7 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
               }}
               aria-label="Filter cheques maximum amount"
             />
-          </label>
+          </div>
           <label className="journal-filter-slot journal-filter-slot-select">
             <span className="journal-filter-inline-label">Summary</span>
             <input
