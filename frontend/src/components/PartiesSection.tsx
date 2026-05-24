@@ -666,20 +666,18 @@ export function PartiesSection({ accounts, onPartyCreated, onPartyUpdated }: Par
 
     return (
       <>
-        <label>
-          Name
-          <input
-            aria-label={mode === "create" ? "Party name" : mode === "edit" ? "Edit party name" : "Party name"}
-            value={formName}
-            onChange={readOnly ? undefined : (e) => setNameFn(e.target.value)}
-            readOnly={readOnly}
-            placeholder={mode === "create" ? "e.g. Acme Yard Maintenance" : undefined}
-            className="cheque-form-summary"
-          />
-        </label>
-
         <div className="cheque-form-grid">
           <div className="cheque-form-col">
+            <label>
+              Name
+              <input
+                aria-label={mode === "create" ? "Party name" : mode === "edit" ? "Edit party name" : "Party name"}
+                value={formName}
+                onChange={readOnly ? undefined : (e) => setNameFn(e.target.value)}
+                readOnly={readOnly}
+                placeholder={mode === "create" ? "e.g. Acme Yard Maintenance" : undefined}
+              />
+            </label>
             <label>
               Role
               {readOnly ? (
