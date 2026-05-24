@@ -94,31 +94,35 @@ describe("App", () => {
   });
 
   it("shows parties tab with loaded parties", async () => {
-    mockFetchImplementation([
-      () => new Response(JSON.stringify([]), { status: 200 }),
-      () =>
-        new Response(
-          JSON.stringify([
-            {
-              id: 1,
-              name: "Acme Yard Maintenance",
-              role: "customer",
-              is_active: true,
-              match_patterns: [],
-              created_at: "2026-04-01T00:00:00Z",
-              updated_at: "2026-04-01T00:00:00Z",
-            },
-          ]),
-          { status: 200 },
-        ),
-    ]);
+    const acme = {
+      id: 1,
+      name: "Acme Yard Maintenance",
+      role: "customer",
+      is_active: true,
+      match_patterns: [],
+      created_at: "2026-04-01T00:00:00Z",
+      updated_at: "2026-04-01T00:00:00Z",
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/accounts")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      if (url.includes("subtype-suggestions")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      if (url.includes("/parties")) {
+        return new Response(JSON.stringify([acme]), { status: 200 });
+      }
+      return new Response("not mocked", { status: 404 });
+    });
 
     render(<App />);
 
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: "Parties" }));
 
-    expect(await screen.findByRole("heading", { name: "Create party" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Parties" })).toBeInTheDocument();
     expect(screen.getByText("Acme Yard Maintenance")).toBeInTheDocument();
   });
 

@@ -370,11 +370,7 @@ class LedgerService:
                 raise LedgerConflictError("account name already exists") from exc
         return AccountOut.model_validate(row)
 
-    def list_parties(self) -> list[PartyOut]:
-        with self._connection_factory() as conn:
-            with conn.cursor(row_factory=dict_row) as cur:
-                cur.execute(
-                    """
+    _PARTY_LIST_SELECT = """
                     SELECT p.id, p.name, p.role, p.is_active, p.subtype,
                            p.default_revenue_account_id, p.default_expense_account_id,
                            ra.name AS default_revenue_account_name,
@@ -388,9 +384,102 @@ class LedgerService:
                     FROM parties p
                     LEFT JOIN accounts ra ON ra.id = p.default_revenue_account_id
                     LEFT JOIN accounts ea ON ea.id = p.default_expense_account_id
-                    ORDER BY p.name ASC
                     """
+
+    _PARTY_SORT_FIELDS: frozenset[str] = frozenset({"name", "role", "subtype", "is_active"})
+
+    _PARTY_SORT_SQL: dict[str, str] = {
+        "name": "p.name",
+        "role": "p.role",
+        "subtype": "p.subtype",
+        "is_active": "p.is_active",
+    }
+
+    @classmethod
+    def _party_list_order_by(cls, sort_tokens: list[str] | None) -> str:
+        if not sort_tokens:
+            return "ORDER BY p.name ASC, p.id ASC"
+        clauses: list[str] = []
+        saw_id = False
+        for token in sort_tokens:
+            if ":" not in token:
+                raise LedgerValidationError(
+                    f"invalid sort token {token!r}; use field:asc or field:desc",
                 )
+            field, direction = token.rsplit(":", 1)
+            if field not in cls._PARTY_SORT_FIELDS:
+                raise LedgerValidationError(f"unknown sort field: {field}")
+            if direction not in ("asc", "desc"):
+                raise LedgerValidationError(
+                    f"invalid sort direction for {field!r}; use asc or desc",
+                )
+            clauses.append(f"{cls._PARTY_SORT_SQL[field]} {direction.upper()}")
+            if field == "id":
+                saw_id = True
+        if not saw_id:
+            clauses.append("p.id ASC")
+        return "ORDER BY " + ", ".join(clauses)
+
+    def list_parties(
+        self,
+        *,
+        name_pattern: str | None = None,
+        is_active: bool | None = None,
+        roles: list[str] | None = None,
+        subtype_tokens: list[str] | None = None,
+        sort_tokens: list[str] | None = None,
+    ) -> list[PartyOut]:
+        conditions: list[str] = []
+        params: list[object] = []
+
+        if name_pattern is not None:
+            pattern = name_pattern.strip()
+            if not pattern:
+                raise LedgerValidationError("name pattern must be non-blank when provided")
+            conditions.append("p.name ~* %s")
+            params.append(pattern)
+
+        if is_active is not None:
+            conditions.append("p.is_active = %s")
+            params.append(is_active)
+
+        if roles:
+            conditions.append("p.role = ANY(%s)")
+            params.append(list(roles))
+
+        if subtype_tokens:
+            literal_subtypes: list[str] = []
+            include_null_subtype = False
+            for token in subtype_tokens:
+                if token == "__null__":
+                    include_null_subtype = True
+                else:
+                    literal_subtypes.append(token)
+            subtype_parts: list[str] = []
+            if literal_subtypes:
+                subtype_parts.append("BTRIM(p.subtype) = ANY(%s)")
+                params.append(literal_subtypes)
+            if include_null_subtype:
+                subtype_parts.append("(p.subtype IS NULL OR BTRIM(p.subtype) = '')")
+            if subtype_parts:
+                conditions.append(f"({' OR '.join(subtype_parts)})")
+
+        where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        order_by = self._party_list_order_by(sort_tokens)
+
+        with self._connection_factory() as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                try:
+                    cur.execute(
+                        f"""
+                        {self._PARTY_LIST_SELECT}
+                        {where_clause}
+                        {order_by}
+                        """,
+                        params,
+                    )
+                except errors.InvalidRegularExpression as exc:
+                    raise LedgerValidationError("name is not a valid regular expression") from exc
                 rows = cur.fetchall()
         return [_row_to_party_out(row) for row in rows]
 

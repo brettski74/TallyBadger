@@ -1813,6 +1813,14 @@ th.table-row-actions-heading {
   white-space: nowrap;
 }
 
+.cheque-dialog.party-dialog .cheque-dialog-inner {
+  max-height: min(90vh, 28rem);
+}
+
+.cheque-dialog.party-dialog.party-dialog-many-patterns .cheque-dialog-inner {
+  max-height: min(90vh, 36rem);
+}
+
 .cheque-dialog.accrual-view-dialog {
   max-width: min(62.4rem, calc(100vw - 2rem));
 }
