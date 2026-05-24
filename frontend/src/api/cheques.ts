@@ -86,10 +86,66 @@ export interface ChequeFilterOptions {
   debit_accounts: ChequeFilterOption[];
 }
 
-export async function listCheques(params: { status?: ChequeListStatus } = {}): Promise<Cheque[]> {
+export interface ChequeListParams {
+  status?: ChequeListStatus;
+  party_ids?: (number | null)[];
+  credit_account_ids?: number[];
+  debit_account_ids?: number[];
+  issue_from_date?: string;
+  issue_to_date?: string;
+  cleared_from_date?: string;
+  cleared_to_date?: string;
+  min_amount?: string;
+  max_amount?: string;
+  summary?: string;
+}
+
+function appendIdList(search: URLSearchParams, key: string, ids: number[] | undefined): void {
+  if (!ids?.length) {
+    return;
+  }
+  for (const id of ids) {
+    search.append(key, String(id));
+  }
+}
+
+function appendPartyIdList(search: URLSearchParams, ids: (number | null)[] | undefined): void {
+  if (!ids?.length) {
+    return;
+  }
+  for (const id of ids) {
+    search.append("party_ids", id === null ? "null" : String(id));
+  }
+}
+
+export async function listCheques(params: ChequeListParams = {}): Promise<Cheque[]> {
   const search = new URLSearchParams();
   if (params.status !== undefined) {
     search.set("status", params.status);
+  }
+  appendPartyIdList(search, params.party_ids);
+  appendIdList(search, "credit_account_ids", params.credit_account_ids);
+  appendIdList(search, "debit_account_ids", params.debit_account_ids);
+  if (params.issue_from_date) {
+    search.set("issue_from_date", params.issue_from_date);
+  }
+  if (params.issue_to_date) {
+    search.set("issue_to_date", params.issue_to_date);
+  }
+  if (params.cleared_from_date) {
+    search.set("cleared_from_date", params.cleared_from_date);
+  }
+  if (params.cleared_to_date) {
+    search.set("cleared_to_date", params.cleared_to_date);
+  }
+  if (params.min_amount?.trim()) {
+    search.set("min_amount", params.min_amount.trim());
+  }
+  if (params.max_amount?.trim()) {
+    search.set("max_amount", params.max_amount.trim());
+  }
+  if (params.summary?.trim()) {
+    search.set("summary", params.summary.trim());
   }
   const query = search.toString();
   const response = await fetch(`${getApiBase()}/cheques${query ? `?${query}` : ""}`);

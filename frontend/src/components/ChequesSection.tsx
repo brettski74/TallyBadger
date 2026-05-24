@@ -17,6 +17,7 @@ import {
 import { isMacLikeUserAgent } from "../lib/platformKeyboard";
 import {
   type Cheque,
+  type ChequeFilterOptions,
   type ChequeIncrementUnit,
   type ChequeListStatus,
   type ChequeSeriesCreateInput,
@@ -24,12 +25,15 @@ import {
   type ChequeSeriesPreviewRow,
   createCheque,
   createChequeSeries,
+  listChequeFilterOptions,
   listCheques,
   patchCheque,
   previewChequeSeries,
 } from "../api/cheques";
 import type { Party } from "../api/parties";
 import { type LedgerSettings, getLedgerSettings } from "../api/settlements";
+import { ChequePartyFilterMultiDropdown, type ChequePartyFilterId } from "./ChequePartyFilterMultiDropdown";
+import { JournalFilterMultiDropdown } from "./JournalFilterMultiDropdown";
 import { TableRowIconButton } from "./TableRowIconButton";
 
 interface ChequesSectionProps {
@@ -115,6 +119,21 @@ function formatChequeCurrency(amount: string | number): string {
 
 export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
   const [listStatus, setListStatus] = useState<ChequeListStatus>("open");
+  const [selectedPartyIds, setSelectedPartyIds] = useState<ChequePartyFilterId[]>([]);
+  const [selectedCreditAccountIds, setSelectedCreditAccountIds] = useState<number[]>([]);
+  const [selectedDebitAccountIds, setSelectedDebitAccountIds] = useState<number[]>([]);
+  const [issueFromDate, setIssueFromDate] = useState("");
+  const [issueToDate, setIssueToDate] = useState("");
+  const [clearedFromDate, setClearedFromDate] = useState("");
+  const [clearedToDate, setClearedToDate] = useState("");
+  const [minAmount, setMinAmount] = useState("");
+  const [maxAmount, setMaxAmount] = useState("");
+  const [summaryFilter, setSummaryFilter] = useState("");
+  const [filterOptions, setFilterOptions] = useState<ChequeFilterOptions>({
+    parties: [],
+    credit_accounts: [],
+    debit_accounts: [],
+  });
   const [cheques, setCheques] = useState<Cheque[]>([]);
   const [listError, setListError] = useState<string | null>(null);
   const [listLoading, setListLoading] = useState(true);
@@ -203,11 +222,40 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
     [parties],
   );
 
+  const listParams = useMemo(
+    () => ({
+      status: listStatus,
+      party_ids: selectedPartyIds.length > 0 ? selectedPartyIds : undefined,
+      credit_account_ids: selectedCreditAccountIds.length > 0 ? selectedCreditAccountIds : undefined,
+      debit_account_ids: selectedDebitAccountIds.length > 0 ? selectedDebitAccountIds : undefined,
+      issue_from_date: issueFromDate || undefined,
+      issue_to_date: issueToDate || undefined,
+      cleared_from_date: clearedFromDate || undefined,
+      cleared_to_date: clearedToDate || undefined,
+      min_amount: minAmount.trim() || undefined,
+      max_amount: maxAmount.trim() || undefined,
+      summary: summaryFilter.trim() || undefined,
+    }),
+    [
+      listStatus,
+      selectedPartyIds,
+      selectedCreditAccountIds,
+      selectedDebitAccountIds,
+      issueFromDate,
+      issueToDate,
+      clearedFromDate,
+      clearedToDate,
+      minAmount,
+      maxAmount,
+      summaryFilter,
+    ],
+  );
+
   const reloadList = useCallback(async () => {
     setListError(null);
     setListLoading(true);
     try {
-      const rows = await listCheques({ status: listStatus });
+      const rows = await listCheques(listParams);
       setCheques(rows);
       setSelected((prev) => {
         if (!prev) {
@@ -228,11 +276,25 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
     } finally {
       setListLoading(false);
     }
-  }, [listStatus]);
+  }, [listParams]);
 
   useEffect(() => {
     void reloadList();
   }, [reloadList]);
+
+  useEffect(() => {
+    void listChequeFilterOptions()
+      .then((body) => {
+        setFilterOptions({
+          parties: body.parties ?? [],
+          credit_accounts: body.credit_accounts ?? [],
+          debit_accounts: body.debit_accounts ?? [],
+        });
+      })
+      .catch(() => {
+        setFilterOptions({ parties: [], credit_accounts: [], debit_accounts: [] });
+      });
+  }, []);
 
   const refreshDefaults = useCallback(async () => {
     try {
@@ -1119,10 +1181,11 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
           posted against this cheque. Use <strong>Void</strong> or <strong>Re-open</strong> for void workflow only.
         </p>
 
-        <div className="cheque-register-filters">
-          <label>
-            Status filter
+        <div className="cheque-register-filters journal-filters-line">
+          <label className="journal-filter-slot journal-filter-slot-select">
+            <span className="journal-filter-inline-label">Status</span>
             <select
+              className="journal-filter-control"
               value={listStatus}
               onChange={(e) => setListStatus(e.target.value as ChequeListStatus)}
               aria-label="Filter cheques by status"
@@ -1132,6 +1195,108 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
               <option value="void">Void</option>
               <option value="all">All</option>
             </select>
+          </label>
+          <ChequePartyFilterMultiDropdown
+            label="Party"
+            ariaFilterLabel="Filter cheques by party"
+            options={filterOptions.parties}
+            selectedIds={selectedPartyIds}
+            onIdsChange={setSelectedPartyIds}
+          />
+          <JournalFilterMultiDropdown
+            label="Credit account"
+            ariaFilterLabel="Filter cheques by credit account"
+            options={filterOptions.credit_accounts.flatMap((a) =>
+              a.id == null ? [] : [{ id: a.id, name: a.name }],
+            )}
+            selectedIds={selectedCreditAccountIds}
+            onIdsChange={setSelectedCreditAccountIds}
+          />
+          <JournalFilterMultiDropdown
+            label="Debit account"
+            ariaFilterLabel="Filter cheques by debit account"
+            options={filterOptions.debit_accounts.flatMap((a) =>
+              a.id == null ? [] : [{ id: a.id, name: a.name }],
+            )}
+            selectedIds={selectedDebitAccountIds}
+            onIdsChange={setSelectedDebitAccountIds}
+          />
+          <label className="journal-filter-slot journal-filter-slot-date">
+            <span className="journal-filter-inline-label">Issue from</span>
+            <input
+              className="journal-filter-control"
+              type="date"
+              value={issueFromDate}
+              onChange={(e) => setIssueFromDate(e.target.value)}
+              aria-label="Filter cheques issue from date"
+            />
+          </label>
+          <label className="journal-filter-slot journal-filter-slot-date">
+            <span className="journal-filter-inline-label">Issue to</span>
+            <input
+              className="journal-filter-control"
+              type="date"
+              value={issueToDate}
+              onChange={(e) => setIssueToDate(e.target.value)}
+              aria-label="Filter cheques issue to date"
+            />
+          </label>
+          <label className="journal-filter-slot journal-filter-slot-date">
+            <span className="journal-filter-inline-label">Cleared from</span>
+            <input
+              className="journal-filter-control"
+              type="date"
+              value={clearedFromDate}
+              onChange={(e) => setClearedFromDate(e.target.value)}
+              aria-label="Filter cheques cleared from date"
+            />
+          </label>
+          <label className="journal-filter-slot journal-filter-slot-date">
+            <span className="journal-filter-inline-label">Cleared to</span>
+            <input
+              className="journal-filter-control"
+              type="date"
+              value={clearedToDate}
+              onChange={(e) => setClearedToDate(e.target.value)}
+              aria-label="Filter cheques cleared to date"
+            />
+          </label>
+          <label className="journal-filter-slot journal-filter-slot-number">
+            <span className="journal-filter-inline-label">Min amount</span>
+            <input
+              className="journal-filter-control"
+              type="number"
+              min={0}
+              step={0.01}
+              inputMode="decimal"
+              value={minAmount}
+              onChange={(e) => setMinAmount(e.target.value)}
+              aria-label="Filter cheques minimum amount"
+            />
+          </label>
+          <label className="journal-filter-slot journal-filter-slot-number">
+            <span className="journal-filter-inline-label">Max amount</span>
+            <input
+              className="journal-filter-control"
+              type="number"
+              min={0}
+              step={0.01}
+              inputMode="decimal"
+              value={maxAmount}
+              onChange={(e) => setMaxAmount(e.target.value)}
+              aria-label="Filter cheques maximum amount"
+            />
+          </label>
+          <label className="journal-filter-slot journal-filter-slot-select">
+            <span className="journal-filter-inline-label">Summary</span>
+            <input
+              className="journal-filter-control"
+              type="search"
+              value={summaryFilter}
+              onChange={(e) => setSummaryFilter(e.target.value)}
+              aria-label="Filter cheques by summary"
+              placeholder="Regex on summary"
+            />
           </label>
         </div>
 
@@ -1145,6 +1310,7 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
                 <th>#</th>
                 <th>Summary</th>
                 <th>Issue</th>
+                <th>Cleared</th>
                 <th>Amount</th>
                 <th>Credit</th>
                 <th>Debit</th>
@@ -1155,13 +1321,13 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
             <tbody>
               {listLoading && cheques.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="muted">
+                  <td colSpan={10} className="muted">
                     Loading…
                   </td>
                 </tr>
               ) : cheques.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="muted">
+                  <td colSpan={10} className="muted">
                     No cheques for this filter.
                   </td>
                 </tr>
@@ -1179,6 +1345,7 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
                     <td>{ch.cheque_number}</td>
                     <td>{ch.summary}</td>
                     <td>{ch.issue_date}</td>
+                    <td>{ch.cleared_date ?? "—"}</td>
                     <td className="cheque-amount-col">{formatChequeCurrency(ch.amount)}</td>
                     <td>{accountName(ch.credit_account_id)}</td>
                     <td>{accountName(ch.debit_account_id)}</td>
