@@ -1515,3 +1515,172 @@ describe("ChequesSection sort", () => {
     confirmSpy.mockRestore();
   });
 });
+
+describe("ChequesSection duplicate", () => {
+  const clearedCheque = {
+    ...openCheque,
+    id: 8,
+    summary: "Cleared one",
+    cheque_number: 2,
+    issue_date: "2026-06-01",
+    cleared_date: "2026-06-05",
+    status: "cleared" as const,
+  };
+
+  const voidCheque = {
+    ...openCheque,
+    id: 9,
+    summary: "Void one",
+    cheque_number: 3,
+    status: "void" as const,
+  };
+
+  it("shows Duplicate on open, cleared, and void rows", async () => {
+    installFetchMock({
+      cheques: [openCheque, clearedCheque, voidCheque],
+    });
+
+    render(<ChequesSection accounts={accounts} parties={parties} />);
+    await waitFor(() => expect(screen.getByText("Open one")).toBeInTheDocument());
+
+    expect(screen.getByRole("button", { name: "Duplicate cheque #1" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Duplicate cheque #2" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Duplicate cheque #3" })).toBeInTheDocument();
+  });
+
+  it("opens create dialog with account-wide max number and issue date +1 month", async () => {
+    const source = {
+      ...openCheque,
+      id: 5,
+      summary: "Monthly rent",
+      cheque_number: 4,
+      issue_date: "2026-01-31",
+      amount: "1200.00",
+    };
+    const accountChequesForMax = [
+      source,
+      { ...source, id: 6, cheque_number: 12, status: "void" as const },
+      { ...source, id: 7, cheque_number: 99, status: "cleared" as const, cleared_date: "2026-02-01" },
+    ];
+
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes("/ledger-settings")) {
+        return new Response(JSON.stringify(defaultSettings()), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.includes("/cheques/filter-options")) {
+        return filterOptionsResponse();
+      }
+      if (url.includes("/cheque-register-filter-presets")) {
+        return emptyChequeRegisterPresetsResponse();
+      }
+      if (isChequesListUrl(url)) {
+        const parsed = new URL(url, "http://localhost");
+        if (parsed.searchParams.get("status") === "all") {
+          return new Response(JSON.stringify({ cheques: accountChequesForMax }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        return new Response(JSON.stringify({ cheques: [source] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    render(<ChequesSection accounts={accounts} parties={parties} />);
+    const user = userEvent.setup();
+    await waitFor(() => expect(screen.getByText("Monthly rent")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "Duplicate cheque #4" }));
+
+    expect(await screen.findByRole("heading", { name: "New cheque" })).toBeInTheDocument();
+    const createDialog = screen.getByRole("dialog", { name: "New cheque" });
+    expect(within(createDialog).getByLabelText(/^Summary/i)).toHaveValue("Monthly rent");
+    expect(within(createDialog).getByLabelText(/Cheque number/i)).toHaveValue(100);
+    expect(within(createDialog).getByLabelText(/Issue date/i)).toHaveValue("2026-02-28");
+    expect(within(createDialog).getByLabelText(/^Amount/i)).toHaveValue("1200.00");
+    expect(within(createDialog).getByLabelText(/Credit account \(cheque\)/i)).toHaveValue("1");
+    expect(within(createDialog).getByLabelText(/^Debit account/i)).toHaveValue("2");
+
+    const duplicateListCalls = fetchMock.mock.calls.filter((call) => {
+      const url = String(call[0]);
+      return isChequesListUrl(url) && new URL(url, "http://localhost").searchParams.get("status") === "all";
+    });
+    expect(duplicateListCalls.length).toBeGreaterThanOrEqual(1);
+    const duplicateUrl = String(duplicateListCalls.at(-1)?.[0]);
+    expect(duplicateUrl).toContain("credit_account_ids=1");
+    expect(duplicateUrl).not.toContain("status=open");
+
+    fetchMock.mockRestore();
+  });
+
+  it("Ctrl+Shift+D on duplicate create restores initial pre-fill after edits", async () => {
+    const source = {
+      ...openCheque,
+      id: 5,
+      summary: "Repeat payee",
+      cheque_number: 2,
+      issue_date: "2026-03-15",
+    };
+
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes("/ledger-settings")) {
+        return new Response(JSON.stringify(defaultSettings()), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.includes("/cheques/filter-options")) {
+        return filterOptionsResponse();
+      }
+      if (url.includes("/cheque-register-filter-presets")) {
+        return emptyChequeRegisterPresetsResponse();
+      }
+      if (isChequesListUrl(url)) {
+        const parsed = new URL(url, "http://localhost");
+        if (parsed.searchParams.get("status") === "all") {
+          return new Response(JSON.stringify({ cheques: [source] }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        return new Response(JSON.stringify({ cheques: [source] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    render(<ChequesSection accounts={accounts} parties={parties} />);
+    const user = userEvent.setup();
+    await waitFor(() => expect(screen.getByText("Repeat payee")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "Duplicate cheque #2" }));
+    const createDialog = await screen.findByRole("dialog", { name: "New cheque" });
+    expect(within(createDialog).getByLabelText(/Cheque number/i)).toHaveValue(3);
+    expect(within(createDialog).getByLabelText(/Issue date/i)).toHaveValue("2026-04-15");
+
+    await user.clear(within(createDialog).getByLabelText(/^Summary/i));
+    await user.type(within(createDialog).getByLabelText(/^Summary/i), "Edited");
+    fireEvent.keyDown(document, {
+      key: "d",
+      code: "KeyD",
+      ctrlKey: true,
+      shiftKey: true,
+      bubbles: true,
+    });
+
+    expect(within(createDialog).getByLabelText(/^Summary/i)).toHaveValue("Repeat payee");
+    expect(within(createDialog).getByLabelText(/Cheque number/i)).toHaveValue(3);
+
+    fetchMock.mockRestore();
+  });
+});

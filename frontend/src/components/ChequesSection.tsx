@@ -3,6 +3,7 @@ import {
   Ban,
   ArrowDownNarrowWide,
   ArrowDownWideNarrow,
+  BookCopy,
   Eye,
   FilePlus2,
   Pencil,
@@ -33,6 +34,7 @@ import {
   type ChequeRegisterSortField,
   type ChequeSortKey,
 } from "../lib/chequeRegisterSort";
+import { addOneCalendarMonth, proposeNextChequeNumber } from "../lib/chequeDuplicate";
 import {
   type Cheque,
   type ChequeFilterOptions,
@@ -854,6 +856,58 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
       seriesEndDate: "",
     };
     setCreateDialogOpen(true);
+  }
+
+  async function openDuplicateCheque(ch: Cheque) {
+    setListError(null);
+    try {
+      if (editDialogOpen) {
+        closeEditDialog();
+      }
+      if (viewDialogOpen) {
+        closeViewDialog();
+      }
+      if (createDialogOpen) {
+        closeCreateDialog();
+      }
+
+      const accountCheques = await listCheques({
+        status: "all",
+        credit_account_ids: [ch.credit_account_id],
+      });
+      const proposedNumber = proposeNextChequeNumber(accountCheques);
+      const proposedIssueDate = addOneCalendarMonth(ch.issue_date);
+
+      setFormError(null);
+      setIsCreating(true);
+      setSelected(null);
+      setSeriesEnabled(false);
+      setSeriesPreview(null);
+      setCreateDialogView("form");
+      hydrateForm(ch);
+      setChequeNumber(String(proposedNumber));
+      setIssueDate(proposedIssueDate);
+      createFormBaselineRef.current = {
+        creditId: String(ch.credit_account_id),
+        debitId: String(ch.debit_account_id),
+        summary: ch.summary,
+        chequeNumber: String(proposedNumber),
+        issueDate: proposedIssueDate,
+        amount: ch.amount,
+        partyId: ch.party_id != null ? String(ch.party_id) : "",
+        seriesEnabled: false,
+        incrementUnit: "months",
+        incrementN: "1",
+        seriesStopMode: "count",
+        seriesCount: "5",
+        seriesEndDate: "",
+      };
+      setCreateDialogOpen(true);
+    } catch (err) {
+      setListError(
+        err instanceof Error ? err.message : `Failed to duplicate cheque #${ch.cheque_number}`,
+      );
+    }
   }
 
   useEffect(() => {
@@ -1874,6 +1928,17 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
                                 <SquareCheck size={18} strokeWidth={2} aria-hidden />
                               </TableRowIconButton>
                             )}
+                            <TableRowIconButton
+                              type="button"
+                              aria-label={`Duplicate cheque #${ch.cheque_number}`}
+                              title={`Duplicate cheque #${ch.cheque_number}`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void openDuplicateCheque(ch);
+                              }}
+                            >
+                              <BookCopy size={18} strokeWidth={2} aria-hidden />
+                            </TableRowIconButton>
                           </>
                         ) : (
                           <>
@@ -1895,6 +1960,17 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
                               onClick={(e) => void voidRow(ch, e)}
                             >
                               <Ban size={18} strokeWidth={2} aria-hidden />
+                            </TableRowIconButton>
+                            <TableRowIconButton
+                              type="button"
+                              aria-label={`Duplicate cheque #${ch.cheque_number}`}
+                              title={`Duplicate cheque #${ch.cheque_number}`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void openDuplicateCheque(ch);
+                              }}
+                            >
+                              <BookCopy size={18} strokeWidth={2} aria-hidden />
                             </TableRowIconButton>
                           </>
                         )}
