@@ -38,8 +38,10 @@ from tallybadger.backup.snapshot import (
     export_format_version,
     export_snapshot,
     financial_tables_for_format,
+    format_deprecation_warning,
     import_complete_snapshot,
     import_snapshot,
+    oldest_supported_import_format_version,
     snapshot_includes_attachment_tables,
     snapshot_table_counts,
     tables_for_import,
@@ -637,6 +639,78 @@ def test_backup_export_and_import_api_round_trip(
         assert counts["journal_lines"] == 2
     finally:
         core_config.get_settings.cache_clear()
+
+
+def test_backup_import_api_deprecation_warning_for_older_supported_format(
+    integration_db_url: str,
+    ledger_service: LedgerService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Successful import of an older supported format returns format_deprecation_warning (#202)."""
+    monkeypatch.setenv("TALLYBADGER_DATABASE_URL", integration_db_url)
+    core_config.get_settings.cache_clear()
+    try:
+        _seed_minimal_ledger(ledger_service)
+        with connect(integration_db_url, row_factory=dict_row) as conn:
+            zip_bytes = export_complete_snapshot(conn)
+        older_fmt = "1.5.0"
+        legacy_zip = _repack_snapshot_for_format(zip_bytes, older_fmt)
+
+        _truncate_all_data(integration_db_url)
+
+        client = TestClient(app)
+        imp = client.post(
+            "/backup/import",
+            files={"snapshot": ("legacy.zip", legacy_zip, "application/zip")},
+            data={"restore_mode": "erase_reload"},
+        )
+        assert imp.status_code == 200
+        body = imp.json()
+        assert body["status"] == "imported"
+        warning = body["format_deprecation_warning"]
+        expected = format_deprecation_warning(older_fmt)
+        assert expected is not None
+        assert warning == expected
+        assert export_format_version() in warning
+        assert older_fmt in warning
+        assert oldest_supported_import_format_version() in warning
+    finally:
+        core_config.get_settings.cache_clear()
+
+
+def test_backup_import_api_no_deprecation_on_unsupported_format(
+    integration_db_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TALLYBADGER_DATABASE_URL", integration_db_url)
+    core_config.get_settings.cache_clear()
+    try:
+        _truncate_all_data(integration_db_url)
+        _ensure_ledger_settings(integration_db_url)
+        with connect(integration_db_url, row_factory=dict_row) as conn:
+            zip_bytes = export_complete_snapshot(conn)
+        bad = _replace_metadata_only(zip_bytes, format_version="99.0.0")
+
+        client = TestClient(app)
+        imp = client.post(
+            "/backup/import",
+            files={"snapshot": ("bad.zip", bad, "application/zip")},
+        )
+        assert imp.status_code == 400
+        assert "format_deprecation_warning" not in imp.json()
+    finally:
+        core_config.get_settings.cache_clear()
+
+
+def test_import_snapshot_returns_no_warning_for_current_format(
+    integration_db_url: str,
+) -> None:
+    _truncate_all_data(integration_db_url)
+    _ensure_ledger_settings(integration_db_url)
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        zip_bytes = export_complete_snapshot(conn)
+        warning = import_complete_snapshot(conn, zip_bytes, restore_mode="erase_reload")
+    assert warning is None
 
 
 def test_backup_import_api_reports_duplicate_key_in_detail(

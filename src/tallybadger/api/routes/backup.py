@@ -68,9 +68,10 @@ async def backup_import(
     ),
 ) -> dict[str, str]:
     raw = await snapshot.read()
+    format_warning: str | None = None
     try:
         with get_connection() as conn:
-            import_snapshot(conn, raw, restore_mode=restore_mode)
+            format_warning = import_snapshot(conn, raw, restore_mode=restore_mode)
     except UnsupportedFormatVersionError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except IncompleteSnapshotError as exc:
@@ -101,4 +102,7 @@ async def backup_import(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Snapshot import — database NOT NULL violation: {_postgres_import_detail(exc)}",
         ) from exc
-    return {"status": "imported"}
+    body: dict[str, str] = {"status": "imported"}
+    if format_warning is not None:
+        body["format_deprecation_warning"] = format_warning
+    return body

@@ -48,6 +48,31 @@ def supported_import_format_versions() -> frozenset[str]:
     """``format_version`` values accepted on import (current plus up to three prior)."""
     return frozenset(FORMAT_VERSION_HISTORY[-4:])
 
+
+def oldest_supported_import_format_version() -> str:
+    """Minimum ``format_version`` in the import window (semver order)."""
+    return min(supported_import_format_versions(), key=_format_version_tuple)
+
+
+def format_deprecation_warning(archive_format_version: str) -> str | None:
+    """Operator message after a successful import of an older supported snapshot format (#202).
+
+    Returns ``None`` when the archive uses the current export ``format_version``.
+    """
+    current = export_format_version()
+    if _format_version_tuple(archive_format_version) >= _format_version_tuple(current):
+        return None
+    oldest = oldest_supported_import_format_version()
+    return (
+        f"This backup uses snapshot format version {archive_format_version}. "
+        f"The current export format for this TallyBadger release is {current}. "
+        f"The oldest format version still supported for import is {oldest}. "
+        f"Support for format {archive_format_version} is deprecated and will be removed "
+        f"in a future release. Re-export from a database on the current release is "
+        f"recommended to ensure continued support."
+    )
+
+
 CURRENCY_ASSUMPTION = "single_currency_numeric_18_2"
 
 ExportType = Literal["complete", "configuration", "financial"]
@@ -1163,7 +1188,7 @@ def import_snapshot(
     zip_bytes: bytes,
     *,
     restore_mode: str = "abort",
-) -> None:
+) -> str | None:
     """Import a snapshot; tables loaded match ``export_type`` in metadata.
 
     ``restore_mode`` applies only to this import and is never read from the ZIP:
@@ -1172,6 +1197,9 @@ def import_snapshot(
     snapshot (in FK-safe reverse order within the snapshot's table set).
     ``erase_reload`` — truncate all snapshot data tables, then load (requires a
     self-contained archive: not ``financial``-only).
+
+    Returns an optional format-deprecation warning for supported archives older than the
+    current export version (#202); ``None`` when the archive uses the current format.
     """
     mode = _normalize_restore_mode(restore_mode)
 
@@ -1275,15 +1303,17 @@ def import_snapshot(
 
         _resync_serials(conn)
 
+    return format_deprecation_warning(fmt)
+
 
 def import_complete_snapshot(
     conn: Connection,
     zip_bytes: bytes,
     *,
     restore_mode: str = "abort",
-) -> None:
+) -> str | None:
     """Import a snapshot (backward-compatible name; any ``export_type`` in the ZIP)."""
-    import_snapshot(conn, zip_bytes, restore_mode=restore_mode)
+    return import_snapshot(conn, zip_bytes, restore_mode=restore_mode)
 
 
 def _resync_serials(conn: Connection) -> None:

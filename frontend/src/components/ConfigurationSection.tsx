@@ -37,6 +37,7 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
   const [savedMessage, setSavedMessage] = useState<string | null>(null);
   const [backupError, setBackupError] = useState<string | null>(null);
   const [backupMessage, setBackupMessage] = useState<string | null>(null);
+  const [backupFormatWarning, setBackupFormatWarning] = useState<string | null>(null);
   const [backupBusy, setBackupBusy] = useState(false);
   const [backupExportType, setBackupExportType] = useState<BackupExportType>("complete");
   const [restoreMode, setRestoreMode] = useState<RestoreMode>("abort");
@@ -307,6 +308,7 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
             void (async () => {
               setBackupError(null);
               setBackupMessage(null);
+              setBackupFormatWarning(null);
               setBackupBusy(true);
               try {
                 const blob = await exportBackup(backupExportType);
@@ -339,10 +341,14 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
             void (async () => {
               setBackupError(null);
               setBackupMessage(null);
+              setBackupFormatWarning(null);
               setBackupBusy(true);
               try {
-                await importBackup(file, restoreMode);
-                setBackupMessage("Restore finished successfully. Reload the app to see imported data.");
+                const result = await importBackup(file, restoreMode);
+                setBackupMessage("Restore finished successfully.");
+                if (result.formatDeprecationWarning) {
+                  setBackupFormatWarning(result.formatDeprecationWarning);
+                }
               } catch (err) {
                 setBackupError(err instanceof Error ? err.message : "Restore failed");
               } finally {
@@ -369,6 +375,11 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
       {backupMessage && (
         <p className="muted" role="status">
           {backupMessage}
+        </p>
+      )}
+      {backupFormatWarning && (
+        <p className="error-text" role="alert">
+          {backupFormatWarning}
         </p>
       )}
     </section>
