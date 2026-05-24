@@ -14,7 +14,13 @@ from psycopg import connect
 from psycopg.rows import dict_row
 
 from tallybadger.db_migrations import apply_sql_migrations
-from tallybadger.ledger.models import AccountCreate, ChequeCreate, JournalEntryWrite, JournalLineIn
+from tallybadger.ledger.models import (
+    AccountCreate,
+    ChequeCreate,
+    JournalEntryWrite,
+    JournalLineIn,
+    PartyCreate,
+)
 from tallybadger.ledger.service import LedgerService, LedgerValidationError
 from tallybadger.main import app
 
@@ -135,15 +141,15 @@ def test_cheque_crud_and_void_reopen(api_client: TestClient, ledger_service: Led
 
     listed_default = api_client.get("/cheques")
     assert listed_default.status_code == 200
-    assert len(listed_default.json()) == 1
+    assert len(listed_default.json()["cheques"]) == 1
 
     listed_all = api_client.get("/cheques", params={"status": "all"})
     assert listed_all.status_code == 200
-    assert len(listed_all.json()) == 1
+    assert len(listed_all.json()["cheques"]) == 1
 
     listed_void = api_client.get("/cheques", params={"status": "void"})
     assert listed_void.status_code == 200
-    assert len(listed_void.json()) == 0
+    assert len(listed_void.json()["cheques"]) == 0
 
     patch_void = api_client.patch(f"/cheques/{cid}", json={"status": "void"})
     assert patch_void.status_code == 200
@@ -727,7 +733,7 @@ def test_cheque_series_create_atomic(
     assert len(created) == 3
     listed = api_client.get("/cheques")
     assert listed.status_code == 200
-    assert len(listed.json()) == 3
+    assert len(listed.json()["cheques"]) == 3
 
 
 def test_cheque_series_rejects_over_max_count(
@@ -775,10 +781,176 @@ def test_cheque_series_atomic_rollback_on_conflict(
     )
     assert conflict.status_code == 409, conflict.text
     listed = api_client.get("/cheques")
-    assert len(listed.json()) == 1
+    assert len(listed.json()["cheques"]) == 1
 
 
 def test_ledger_settings_exposes_max_cheque_series_count(api_client: TestClient) -> None:
     resp = api_client.get("/ledger-settings")
     assert resp.status_code == 200
     assert resp.json()["max_cheque_series_count"] == 60
+
+
+def _post_cheque(
+    api_client: TestClient,
+    cr_id: int,
+    dr_id: int,
+    **overrides: object,
+) -> dict[str, object]:
+    resp = api_client.post("/cheques", json=_cheque_body(cr_id, dr_id, **overrides))
+    assert resp.status_code == 201, resp.text
+    return resp.json()
+
+
+def test_list_cheques_omitted_status_returns_all_statuses(
+    api_client: TestClient,
+    ledger_service: LedgerService,
+) -> None:
+    cr_id, dr_id = _two_accounts(ledger_service)
+    open_row = _post_cheque(api_client, cr_id, dr_id, cheque_number=601, summary="Open one")
+    void_id = _post_cheque(api_client, cr_id, dr_id, cheque_number=602, summary="Void one")["id"]
+    cleared_id = _post_cheque(api_client, cr_id, dr_id, cheque_number=603, summary="Cleared one")["id"]
+
+    assert api_client.patch(f"/cheques/{void_id}", json={"status": "void"}).status_code == 200
+    assert (
+        api_client.patch(
+            f"/cheques/{cleared_id}",
+            json={"status": "cleared", "cleared_date": "2026-05-15"},
+        ).status_code
+        == 200
+    )
+
+    all_rows = api_client.get("/cheques").json()["cheques"]
+    assert len(all_rows) == 3
+    assert {row["status"] for row in all_rows} == {"open", "void", "cleared"}
+
+    open_rows = api_client.get("/cheques", params={"status": "open"}).json()["cheques"]
+    assert len(open_rows) == 1
+    assert open_rows[0]["id"] == open_row["id"]
+
+
+def test_list_cheques_party_ids_filter(
+    api_client: TestClient,
+    ledger_service: LedgerService,
+) -> None:
+    cr_id, dr_id = _two_accounts(ledger_service)
+    party_a = ledger_service.create_party(PartyCreate(name="Alice Tenant", role="customer"))
+    party_b = ledger_service.create_party(PartyCreate(name="Bob Vendor", role="vendor"))
+
+    alice_id = _post_cheque(
+        api_client,
+        cr_id,
+        dr_id,
+        cheque_number=701,
+        party_id=party_a.id,
+        summary="Alice cheque",
+    )["id"]
+    _post_cheque(
+        api_client,
+        cr_id,
+        dr_id,
+        cheque_number=702,
+        party_id=party_b.id,
+        summary="Bob cheque",
+    )
+    no_party_id = _post_cheque(
+        api_client,
+        cr_id,
+        dr_id,
+        cheque_number=703,
+        party_id=None,
+        summary="No party cheque",
+    )["id"]
+
+    by_a = api_client.get("/cheques", params=[("party_ids", str(party_a.id))]).json()["cheques"]
+    assert {row["id"] for row in by_a} == {alice_id}
+
+    by_null = api_client.get("/cheques", params=[("party_ids", "null")]).json()["cheques"]
+    assert {row["id"] for row in by_null} == {no_party_id}
+
+    combined = api_client.get(
+        "/cheques",
+        params=[("party_ids", str(party_a.id)), ("party_ids", "null")],
+    ).json()["cheques"]
+    assert {row["id"] for row in combined} == {alice_id, no_party_id}
+
+    bad = api_client.get("/cheques", params=[("party_ids", "nope")])
+    assert bad.status_code == 422
+
+
+def test_list_cheques_filter_options_global(
+    api_client: TestClient,
+    ledger_service: LedgerService,
+) -> None:
+    cr_id, dr_id = _two_accounts(ledger_service)
+    party = ledger_service.create_party(PartyCreate(name="Zara Zulu", role="customer"))
+    _post_cheque(api_client, cr_id, dr_id, cheque_number=801, party_id=party.id)
+    _post_cheque(api_client, cr_id, dr_id, cheque_number=802, party_id=None)
+
+    options = api_client.get("/cheques/filter-options")
+    assert options.status_code == 200
+    body = options.json()
+    assert body["parties"][0] == {"id": None, "name": "(no party)"}
+    assert body["parties"][1] == {"id": party.id, "name": "Zara Zulu"}
+    assert body["credit_accounts"] == [{"id": cr_id, "name": "Chequing"}]
+    assert body["debit_accounts"] == [{"id": dr_id, "name": "Expense"}]
+
+    empty_list = api_client.get(
+        "/cheques",
+        params={"summary": "^no-such-cheque$"},
+    ).json()["cheques"]
+    assert empty_list == []
+
+    options_after_filter = api_client.get("/cheques/filter-options").json()
+    assert options_after_filter == body
+
+
+def test_list_cheques_filters_sort_and_validation(
+    api_client: TestClient,
+    ledger_service: LedgerService,
+) -> None:
+    cr_id, dr_id = _two_accounts(ledger_service)
+    _post_cheque(
+        api_client,
+        cr_id,
+        dr_id,
+        cheque_number=901,
+        issue_date="2026-01-10",
+        amount="10.00",
+        summary="Alpha rent",
+    )
+    _post_cheque(
+        api_client,
+        cr_id,
+        dr_id,
+        cheque_number=902,
+        issue_date="2026-02-10",
+        amount="20.00",
+        summary="Beta rent",
+    )
+
+    filtered = api_client.get(
+        "/cheques",
+        params={
+            "issue_from_date": "2026-02-01",
+            "min_amount": "15.00",
+            "summary": "beta",
+            "sort": ["amount:desc"],
+        },
+    ).json()["cheques"]
+    assert len(filtered) == 1
+    assert filtered[0]["cheque_number"] == 902
+
+    default_sort = api_client.get("/cheques").json()["cheques"]
+    assert [row["cheque_number"] for row in default_sort] == [902, 901]
+
+    bad_range = api_client.get(
+        "/cheques",
+        params={"issue_from_date": "2026-03-01", "issue_to_date": "2026-01-01"},
+    )
+    assert bad_range.status_code == 422
+
+    bad_regex = api_client.get("/cheques", params={"summary": "[unclosed"})
+    assert bad_regex.status_code == 422
+
+    bad_sort = api_client.get("/cheques", params={"sort": ["not_a_field:asc"]})
+    assert bad_sort.status_code == 422

@@ -62,7 +62,7 @@ describe("JournalEntriesPanel", () => {
     vi.spyOn(global, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url.includes("/cheques")) {
-        return new Response(JSON.stringify([]), { status: 200 });
+        return new Response(JSON.stringify({ cheques: [] }), { status: 200 });
       }
       if (url.includes("/accrual-plans")) {
         return new Response(JSON.stringify({ plans: [] }), { status: 200 });
@@ -153,7 +153,7 @@ describe("JournalEntriesPanel", () => {
       const url = String(input);
       const method = init?.method ?? "GET";
       if (url.includes("/cheques")) {
-        return new Response(JSON.stringify([]), { status: 200 });
+        return new Response(JSON.stringify({ cheques: [] }), { status: 200 });
       }
       if (url.includes("/accrual-plans")) {
         return new Response(JSON.stringify({ plans: [] }), { status: 200 });
@@ -285,7 +285,7 @@ describe("JournalEntriesPanel", () => {
     vi.spyOn(global, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url.includes("/cheques")) {
-        return new Response(JSON.stringify([]), { status: 200 });
+        return new Response(JSON.stringify({ cheques: [] }), { status: 200 });
       }
       if (url.includes("/accrual-plans")) {
         return new Response(JSON.stringify({ plans: [] }), { status: 200 });
@@ -370,7 +370,7 @@ describe("JournalEntriesPanel", () => {
     vi.spyOn(global, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url.includes("/cheques")) {
-        return new Response(JSON.stringify([]), { status: 200 });
+        return new Response(JSON.stringify({ cheques: [] }), { status: 200 });
       }
       if (url.includes("/accrual-plans")) {
         return new Response(JSON.stringify({ plans: [] }), { status: 200 });
@@ -443,7 +443,7 @@ describe("JournalEntriesPanel", () => {
       const url = String(input);
       const method = init?.method ?? "GET";
       if (url.includes("/cheques")) {
-        return new Response(JSON.stringify([]), { status: 200 });
+        return new Response(JSON.stringify({ cheques: [] }), { status: 200 });
       }
       if (url.includes("/accrual-plans")) {
         return new Response(JSON.stringify({ plans: [] }), { status: 200 });
@@ -576,7 +576,7 @@ describe("JournalEntriesPanel", () => {
         return new Response(JSON.stringify(presets), { status: 200 });
       }
       if (url.includes("/cheques")) {
-        return new Response(JSON.stringify([]), { status: 200 });
+        return new Response(JSON.stringify({ cheques: [] }), { status: 200 });
       }
       if (url.includes("/journal-entries")) {
         return new Response(JSON.stringify([]), { status: 200 });
@@ -650,7 +650,7 @@ describe("JournalEntriesPanel", () => {
         return new Response(JSON.stringify([existingPreset]), { status: 200 });
       }
       if (url.includes("/cheques")) {
-        return new Response(JSON.stringify([]), { status: 200 });
+        return new Response(JSON.stringify({ cheques: [] }), { status: 200 });
       }
       if (url.includes("/journal-entries")) {
         return new Response(JSON.stringify([]), { status: 200 });
@@ -714,7 +714,7 @@ describe("JournalEntriesPanel", () => {
         return new Response(JSON.stringify([preset]), { status: 200 });
       }
       if (url.includes("/cheques")) {
-        return new Response(JSON.stringify([]), { status: 200 });
+        return new Response(JSON.stringify({ cheques: [] }), { status: 200 });
       }
       return new Response(JSON.stringify([]), { status: 200 });
     });
@@ -766,7 +766,7 @@ describe("JournalEntriesPanel", () => {
         return new Response(JSON.stringify([]), { status: 200 });
       }
       if (url.includes("/cheques")) {
-        return new Response(JSON.stringify([]), { status: 200 });
+        return new Response(JSON.stringify({ cheques: [] }), { status: 200 });
       }
       if (url.includes("/journal-entries") && !/\/journal-entries\/\d/.test(url)) {
         return new Response(JSON.stringify([]), { status: 200 });

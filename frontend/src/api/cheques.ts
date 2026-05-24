@@ -75,10 +75,33 @@ export interface ChequeSeriesPreview {
   max_allowed: number;
 }
 
+export interface ChequeFilterOption {
+  id: number | null;
+  name: string;
+}
+
+export interface ChequeFilterOptions {
+  parties: ChequeFilterOption[];
+  credit_accounts: ChequeFilterOption[];
+  debit_accounts: ChequeFilterOption[];
+}
+
 export async function listCheques(params: { status?: ChequeListStatus } = {}): Promise<Cheque[]> {
   const search = new URLSearchParams();
-  search.set("status", params.status ?? "open");
-  const response = await fetch(`${getApiBase()}/cheques?${search.toString()}`);
+  if (params.status !== undefined) {
+    search.set("status", params.status);
+  }
+  const query = search.toString();
+  const response = await fetch(`${getApiBase()}/cheques${query ? `?${query}` : ""}`);
+  if (!response.ok) {
+    throw new Error(await readApiErrorMessage(response));
+  }
+  const body = (await response.json()) as { cheques: Cheque[] };
+  return body.cheques;
+}
+
+export async function listChequeFilterOptions(): Promise<ChequeFilterOptions> {
+  const response = await fetch(`${getApiBase()}/cheques/filter-options`);
   if (!response.ok) {
     throw new Error(await readApiErrorMessage(response));
   }

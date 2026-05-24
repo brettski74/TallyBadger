@@ -42,6 +42,8 @@ from tallybadger.ledger.models import (
     BalanceSheetReportOut,
     BalanceSheetSectionOut,
     ChequeCreate,
+    ChequeFilterOption,
+    ChequeFilterOptionsResponse,
     ChequeOut,
     ChequeSeriesCreate,
     ChequeSeriesPreviewOut,
@@ -1968,31 +1970,236 @@ class LedgerService:
             (entry_date, new_cheque_id),
         )
 
+    _CHEQUE_SORT_FIELDS: frozenset[str] = frozenset(
+        {
+            "status",
+            "cheque_number",
+            "summary",
+            "issue_date",
+            "cleared_date",
+            "amount",
+            "credit_account_id",
+            "debit_account_id",
+            "party_id",
+            "id",
+        }
+    )
+
+    @classmethod
+    def _parse_cheque_party_ids(
+        cls,
+        party_id_tokens: list[str] | None,
+    ) -> tuple[list[int], bool]:
+        if not party_id_tokens:
+            return [], False
+        ids: list[int] = []
+        include_no_party = False
+        for token in party_id_tokens:
+            if token == "null":
+                include_no_party = True
+                continue
+            try:
+                party_id = int(token)
+            except ValueError as exc:
+                raise LedgerValidationError(
+                    f"invalid party_ids token {token!r}; use positive integers or null",
+                ) from exc
+            if party_id <= 0:
+                raise LedgerValidationError(
+                    f"invalid party_ids token {token!r}; use positive integers or null",
+                )
+            ids.append(party_id)
+        return ids, include_no_party
+
+    @classmethod
+    def _cheque_list_order_by(cls, sort_tokens: list[str] | None) -> str:
+        # Default (no sort param): issue_date DESC, id DESC.
+        # When the client sends sort keys, append id DESC (not ASC) if id is absent so
+        # tie-breaking matches the default's "higher id wins" on equal prior keys.
+        # See GitHub #193 / #191 comments (spec text originally said id:asc).
+        if not sort_tokens:
+            return "ORDER BY issue_date DESC, id DESC"
+        clauses: list[str] = []
+        saw_id = False
+        for token in sort_tokens:
+            if ":" not in token:
+                raise LedgerValidationError(
+                    f"invalid sort token {token!r}; use field:asc or field:desc",
+                )
+            field, direction = token.rsplit(":", 1)
+            if field not in cls._CHEQUE_SORT_FIELDS:
+                raise LedgerValidationError(f"unknown sort field: {field}")
+            if direction not in ("asc", "desc"):
+                raise LedgerValidationError(
+                    f"invalid sort direction for {field!r}; use asc or desc",
+                )
+            clauses.append(f"{field} {direction.upper()}")
+            if field == "id":
+                saw_id = True
+        if not saw_id:
+            clauses.append("id DESC")
+        return "ORDER BY " + ", ".join(clauses)
+
     def list_cheques(
         self,
-        list_status: Literal["open", "cleared", "void", "all"] = "open",
+        *,
+        list_status: Literal["open", "cleared", "void", "all"] | None = None,
+        party_id_tokens: list[str] | None = None,
+        credit_account_ids: list[int] | None = None,
+        debit_account_ids: list[int] | None = None,
+        issue_from_date: date | None = None,
+        issue_to_date: date | None = None,
+        cleared_from_date: date | None = None,
+        cleared_to_date: date | None = None,
+        min_amount: Decimal | None = None,
+        max_amount: Decimal | None = None,
+        summary_pattern: str | None = None,
+        sort_tokens: list[str] | None = None,
     ) -> list[ChequeOut]:
+        if issue_from_date is not None and issue_to_date is not None and issue_from_date > issue_to_date:
+            raise LedgerValidationError("issue_from_date must not be after issue_to_date")
+        if (
+            cleared_from_date is not None
+            and cleared_to_date is not None
+            and cleared_from_date > cleared_to_date
+        ):
+            raise LedgerValidationError("cleared_from_date must not be after cleared_to_date")
+        if min_amount is not None and max_amount is not None and min_amount > max_amount:
+            raise LedgerValidationError("min_amount must not be greater than max_amount")
+
+        party_ids, include_no_party = self._parse_cheque_party_ids(party_id_tokens)
+
+        conditions: list[str] = []
+        params: list[object] = []
+
+        if list_status is not None and list_status != "all":
+            conditions.append("status = %s")
+            params.append(list_status)
+
+        if party_ids or include_no_party:
+            party_parts: list[str] = []
+            if party_ids:
+                party_parts.append("party_id = ANY(%s)")
+                params.append(party_ids)
+            if include_no_party:
+                party_parts.append("party_id IS NULL")
+            conditions.append(f"({' OR '.join(party_parts)})")
+
+        if credit_account_ids:
+            conditions.append("credit_account_id = ANY(%s)")
+            params.append(credit_account_ids)
+        if debit_account_ids:
+            conditions.append("debit_account_id = ANY(%s)")
+            params.append(debit_account_ids)
+        if issue_from_date is not None:
+            conditions.append("issue_date >= %s")
+            params.append(issue_from_date)
+        if issue_to_date is not None:
+            conditions.append("issue_date <= %s")
+            params.append(issue_to_date)
+        if cleared_from_date is not None:
+            conditions.append("cleared_date IS NOT NULL AND cleared_date >= %s")
+            params.append(cleared_from_date)
+        if cleared_to_date is not None:
+            conditions.append("cleared_date IS NOT NULL AND cleared_date <= %s")
+            params.append(cleared_to_date)
+        if min_amount is not None:
+            conditions.append("amount >= %s")
+            params.append(min_amount)
+        if max_amount is not None:
+            conditions.append("amount <= %s")
+            params.append(max_amount)
+        if summary_pattern is not None:
+            pattern = summary_pattern.strip()
+            if pattern:
+                conditions.append("summary ~* %s")
+                params.append(pattern)
+
+        where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        order_by = self._cheque_list_order_by(sort_tokens)
+
         with self._connection_factory() as conn:
             with conn.cursor(row_factory=dict_row) as cur:
-                if list_status == "all":
+                try:
                     cur.execute(
-                        """
+                        f"""
                         SELECT *
                         FROM cheques
-                        ORDER BY issue_date DESC, id DESC
+                        {where_clause}
+                        {order_by}
                         """,
+                        params,
                     )
-                else:
-                    cur.execute(
-                        """
-                        SELECT *
-                        FROM cheques
-                        WHERE status = %s
-                        ORDER BY issue_date DESC, id DESC
-                        """,
-                        (list_status,),
-                    )
+                except errors.InvalidRegularExpression as exc:
+                    raise LedgerValidationError(
+                        "summary is not a valid regular expression",
+                    ) from exc
                 return [ChequeOut.model_validate(r) for r in cur.fetchall()]
+
+    def list_cheque_filter_options(self) -> ChequeFilterOptionsResponse:
+        with self._connection_factory() as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(
+                    """
+                    SELECT EXISTS (
+                      SELECT 1 FROM cheques WHERE party_id IS NULL
+                    ) AS has_no_party
+                    """,
+                )
+                no_party_row = cur.fetchone()
+                assert no_party_row is not None
+                has_no_party = bool(no_party_row["has_no_party"])
+
+                cur.execute(
+                    """
+                    SELECT DISTINCT c.party_id AS id, p.name AS name
+                    FROM cheques c
+                    INNER JOIN parties p ON p.id = c.party_id
+                    WHERE c.party_id IS NOT NULL
+                    ORDER BY p.name ASC, c.party_id ASC
+                    """,
+                )
+                party_rows = cur.fetchall()
+
+                cur.execute(
+                    """
+                    SELECT DISTINCT c.credit_account_id AS id, a.name AS name
+                    FROM cheques c
+                    INNER JOIN accounts a ON a.id = c.credit_account_id
+                    ORDER BY a.name ASC, c.credit_account_id ASC
+                    """,
+                )
+                credit_rows = cur.fetchall()
+
+                cur.execute(
+                    """
+                    SELECT DISTINCT c.debit_account_id AS id, a.name AS name
+                    FROM cheques c
+                    INNER JOIN accounts a ON a.id = c.debit_account_id
+                    ORDER BY a.name ASC, c.debit_account_id ASC
+                    """,
+                )
+                debit_rows = cur.fetchall()
+
+        parties: list[ChequeFilterOption] = []
+        if has_no_party:
+            parties.append(ChequeFilterOption(id=None, name="(no party)"))
+        parties.extend(
+            ChequeFilterOption(id=int(row["id"]), name=str(row["name"]))
+            for row in party_rows
+        )
+
+        return ChequeFilterOptionsResponse(
+            parties=parties,
+            credit_accounts=[
+                ChequeFilterOption(id=int(row["id"]), name=str(row["name"]))
+                for row in credit_rows
+            ],
+            debit_accounts=[
+                ChequeFilterOption(id=int(row["id"]), name=str(row["name"]))
+                for row in debit_rows
+            ],
+        )
 
     def get_cheque(self, cheque_id: int) -> ChequeOut:
         with self._connection_factory() as conn:
