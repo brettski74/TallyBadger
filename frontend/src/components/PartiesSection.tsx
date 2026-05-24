@@ -258,6 +258,8 @@ export function PartiesSection({ accounts, onPartyCreated, onPartyUpdated }: Par
   const createDialogRef = useRef<HTMLDialogElement>(null);
   const editDialogRef = useRef<HTMLDialogElement>(null);
   const viewDialogRef = useRef<HTMLDialogElement>(null);
+  const createNameInputRef = useRef<HTMLInputElement>(null);
+  const editNameInputRef = useRef<HTMLInputElement>(null);
   const createFormBaselineRef = useRef<PartyFormSnapshot>(EMPTY_CREATE_SNAPSHOT);
   const editFormBaselineRef = useRef<PartyFormSnapshot | null>(null);
 
@@ -438,15 +440,19 @@ export function PartiesSection({ accounts, onPartyCreated, onPartyUpdated }: Par
   useEffect(() => {
     const el = createDialogRef.current;
     if (!el) return;
-    if (createDialogOpen && !el.open) el.showModal();
-    else if (!createDialogOpen && el.open) el.close();
+    if (createDialogOpen && !el.open) {
+      el.showModal();
+      queueMicrotask(() => createNameInputRef.current?.focus());
+    } else if (!createDialogOpen && el.open) el.close();
   }, [createDialogOpen]);
 
   useEffect(() => {
     const el = editDialogRef.current;
     if (!el) return;
-    if (editDialogOpen && !el.open) el.showModal();
-    else if (!editDialogOpen && el.open) el.close();
+    if (editDialogOpen && !el.open) {
+      el.showModal();
+      queueMicrotask(() => editNameInputRef.current?.focus());
+    } else if (!editDialogOpen && el.open) el.close();
   }, [editDialogOpen]);
 
   useEffect(() => {
@@ -671,6 +677,7 @@ export function PartiesSection({ accounts, onPartyCreated, onPartyUpdated }: Par
             <label>
               Name
               <input
+                ref={mode === "create" ? createNameInputRef : mode === "edit" ? editNameInputRef : undefined}
                 aria-label={mode === "create" ? "Party name" : mode === "edit" ? "Edit party name" : "Party name"}
                 value={formName}
                 onChange={readOnly ? undefined : (e) => setNameFn(e.target.value)}
