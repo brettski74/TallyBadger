@@ -23,6 +23,8 @@ def test_format_deprecation_warning_includes_required_version_facts() -> None:
     assert "deprecated" in msg.lower()
     assert "will be removed" in msg.lower()
     assert "re-export" in msg.lower()
+    assert "recommended to ensure continued support" in msg.lower()
+    assert "reload" not in msg.lower()
 
 
 def test_format_deprecation_warning_tracks_patched_history() -> None:

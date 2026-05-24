@@ -68,8 +68,8 @@ def format_deprecation_warning(archive_format_version: str) -> str | None:
         f"The current export format for this TallyBadger release is {current}. "
         f"The oldest format version still supported for import is {oldest}. "
         f"Support for format {archive_format_version} is deprecated and will be removed "
-        f"in a future release. Re-export from a database on the current release when you can, "
-        f"then restore that newer ZIP if you need to move to the latest format."
+        f"in a future release. Re-export from a database on the current release is "
+        f"recommended to ensure continued support."
     )
 
 

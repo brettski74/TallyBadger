@@ -345,7 +345,7 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
               setBackupBusy(true);
               try {
                 const result = await importBackup(file, restoreMode);
-                setBackupMessage("Restore finished successfully. Reload the app to see imported data.");
+                setBackupMessage("Restore finished successfully.");
                 if (result.formatDeprecationWarning) {
                   setBackupFormatWarning(result.formatDeprecationWarning);
                 }
