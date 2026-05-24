@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import importlib.machinery
 import importlib.util
-import io
+import os
 import sys
 import time
 from pathlib import Path
@@ -56,31 +56,31 @@ def test_tbload_build_base_url_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_tbload_read_stdin_snapshot_reads_piped_data() -> None:
+    read_fd, write_fd = os.pipe()
     payload = b"PK\x03\x04fake-zip"
-    sys.stdin = io.BytesIO(payload)
+    os.write(write_fd, payload)
+    os.close(write_fd)
+    sys.stdin = os.fdopen(read_fd, "rb", closefd=True)
     assert tbload.read_stdin_snapshot(timeout_seconds=1.0) == payload
 
 
 def test_tbload_read_stdin_snapshot_rejects_empty_input() -> None:
-    sys.stdin = io.BytesIO(b"")
+    read_fd, write_fd = os.pipe()
+    os.close(write_fd)
+    sys.stdin = os.fdopen(read_fd, "rb", closefd=True)
     with pytest.raises(tbload.TbloadError, match="empty snapshot"):
         tbload.read_stdin_snapshot(timeout_seconds=1.0)
 
 
 def test_tbload_read_stdin_snapshot_times_out_when_no_input() -> None:
-    class _BlockingStdin:
-        @property
-        def buffer(self) -> _BlockingStdin:
-            return self
-
-        def read(self) -> bytes:
-            time.sleep(10)
-            return b""
-
-    sys.stdin = _BlockingStdin()
+    read_fd, write_fd = os.pipe()
+    sys.stdin = os.fdopen(read_fd, "rb", closefd=True)
     started = time.monotonic()
-    with pytest.raises(tbload.TbloadError, match="no input received"):
-        tbload.read_stdin_snapshot(timeout_seconds=0.05)
+    try:
+        with pytest.raises(tbload.TbloadError, match="no input received"):
+            tbload.read_stdin_snapshot(timeout_seconds=0.05)
+    finally:
+        os.close(write_fd)
     assert time.monotonic() - started < 1.0
 
 

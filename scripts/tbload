@@ -10,10 +10,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import select
 import shutil
 import subprocess
 import sys
-import threading
 from typing import NoReturn
 from urllib.parse import urljoin
 
@@ -77,23 +77,28 @@ def check_curl() -> None:
 
 def read_stdin_snapshot(*, timeout_seconds: float = STDIN_READ_TIMEOUT_SECONDS) -> bytes:
     """Read snapshot ZIP bytes from stdin, failing if no data within timeout."""
-    holder: dict[str, bytes | None] = {"data": None}
+    try:
+        fd = sys.stdin.fileno()
+    except (AttributeError, ValueError, OSError) as exc:
+        raise TbloadError(
+            "standard input is not available for binary read; use -i/--input PATH"
+        ) from exc
 
-    def _reader() -> None:
-        source = getattr(sys.stdin, "buffer", sys.stdin)
-        data = source.read()
-        holder["data"] = data.encode("utf-8") if isinstance(data, str) else data
-
-    thread = threading.Thread(target=_reader, daemon=True)
-    thread.start()
-    thread.join(timeout_seconds)
-    if thread.is_alive():
+    ready, _, _ = select.select([fd], [], [], timeout_seconds)
+    if not ready:
         raise TbloadError(
             f"no input received from standard input within {int(timeout_seconds)} seconds; "
             "pipe a ZIP file or use -i/--input PATH"
         )
 
-    data = holder["data"] or b""
+    chunks: list[bytes] = []
+    while True:
+        chunk = os.read(fd, 1024 * 1024)
+        if not chunk:
+            break
+        chunks.append(chunk)
+
+    data = b"".join(chunks)
     if not data:
         raise TbloadError("empty snapshot read from standard input")
     return data
