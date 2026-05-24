@@ -14,10 +14,8 @@ import json
 import sys
 from pathlib import Path
 
-from psycopg import connect
-from psycopg.rows import dict_row
-
 from tallybadger.core.config import get_settings
+from tallybadger.db import connect_database
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEV_SEED_PATH = REPO_ROOT / "sql" / "dev_seed.sql"
@@ -75,7 +73,7 @@ def export_dev_seed_sql(*, database_url: str | None = None, destination: Path | 
         "",
     ]
 
-    with connect(url) as conn:
+    with connect_database(url) as conn:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 """
@@ -238,7 +236,7 @@ def apply_dev_seed_sql(*, database_url: str | None = None, seed_path: Path | Non
         print(f"{path} has no executable SQL, nothing to apply")
         return
 
-    with connect(url) as conn:
+    with connect_database(url) as conn:
         with conn.transaction():
             with conn.cursor() as cur:
                 cur.execute(sql)

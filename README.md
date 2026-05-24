@@ -138,7 +138,7 @@ docker compose up --build
 ```
 
 - API: http://127.0.0.1:8080  
-- Postgres: `localhost:5432`, user/db/password `tallybadger` (change for real deployments).
+- Postgres: `localhost:5432`, user/db/password `tallybadger` (change for real deployments). Timezone is aligned in three places: the container clock (`TZ` and mounted `/etc/localtime`), persisted defaults on the `tallybadger` database and role (init script on first volume create; reapplied on every `make db-migrate` / `apply_sql_migrations`), and `SET TIME ZONE` on each app connection. Override with `TALLYBADGER_TIMEZONE`, `TALLYBADGER_IMPORT_TZ`, or `TZ` (see `tallybadger.core.timezone`).
 
 ---
 

@@ -70,10 +70,11 @@ def test_active_basename_unique_case_insensitive(integration_db_url: str) -> Non
                     ("Bank-2024.csv", _ZERO_SHA256),
                 )
                 with pytest.raises(pg_errors.UniqueViolation):
-                    cur.execute(
-                        "INSERT INTO import_batches (basename, content_sha256) VALUES (%s, %s)",
-                        ("bank-2024.csv", hashlib.sha256(b"other").digest()),
-                    )
+                    with conn.transaction():
+                        cur.execute(
+                            "INSERT INTO import_batches (basename, content_sha256) VALUES (%s, %s)",
+                            ("bank-2024.csv", hashlib.sha256(b"other").digest()),
+                        )
 
 
 def test_inactive_batch_allows_same_basename_ci(integration_db_url: str) -> None:
@@ -138,12 +139,11 @@ def test_journal_entry_rejects_unknown_import_batch_id(integration_db_url: str) 
                 cur.execute(
                     "INSERT INTO accounts (name, type) VALUES ('Cash', 'asset'), ('Income', 'revenue')"
                 )
-        with conn.transaction():
-            with conn.cursor() as cur:
                 with pytest.raises(pg_errors.ForeignKeyViolation):
-                    cur.execute(
-                        """
-                        INSERT INTO journal_entries (entry_date, summary, import_batch_id)
-                        VALUES (DATE '2026-01-02', 'bad fk', 999999)
-                        """
-                    )
+                    with conn.transaction():
+                        cur.execute(
+                            """
+                            INSERT INTO journal_entries (entry_date, summary, import_batch_id)
+                            VALUES (DATE '2026-01-02', 'bad fk', 999999)
+                            """
+                        )

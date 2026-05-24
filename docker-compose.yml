@@ -5,8 +5,11 @@ services:
       POSTGRES_USER: tallybadger
       POSTGRES_PASSWORD: tallybadger
       POSTGRES_DB: tallybadger
+      TZ: ${TZ:-}
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - /etc/localtime:/etc/localtime:ro
+      - ./docker/postgres/init-timezone.sh:/docker-entrypoint-initdb.d/01-init-timezone.sh:ro
     ports:
       - "5432:5432"
     healthcheck:
