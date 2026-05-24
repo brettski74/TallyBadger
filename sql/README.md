@@ -15,14 +15,10 @@ tallybadger-migrate
 
 When the schema stabilizes, consider `sqitch`, `yoyo-migrations`, or Alembic.
 
-## Dev seed (`dev_seed.sql`) — not a migration
+## Local development workflow
 
 Numbered `NNN_*.sql` files are **schema migrations** and run in all environments via `tallybadger-migrate`.
 
-**`sql/dev_seed.sql`** is **dev-only**: idempotent `INSERT`s for accounts, parties (including subtype, default GL accounts, and `party_match_patterns` rows), `cel_rule_sets`, and `import_templates`. It is **not** part of the migration glob and is **not** applied in production unless someone runs it manually.
-
-Workflow:
-
-1. **`make dbempty`** recreates the Compose DB volume and applies numbered migrations only (no `dev_seed.sql`). **`make dbclean`** runs **`dbempty`** then **`make dev-seed`**.
-2. **`make test`** / **`make db-migrate-local`** apply **only** numbered migrations — tests do not load `dev_seed.sql`.
-3. To snapshot your manual-testing DB into the repo: set `TALLYBADGER_DATABASE_URL`, then **`make export-dev-seed`** (alias: `make export-bootstrap`). Commit `sql/dev_seed.sql` if you want to share that fixture.
+1. **`make dbempty`** recreates the Compose DB volume and applies numbered migrations only.
+2. **`make test`** / **`make db-migrate-local`** apply **only** numbered migrations — tests do not load snapshot fixtures automatically.
+3. **`make dbclean`** restores the newest **`examples/tallybadger-complete-*.zip`** via **`tbload`** (API must be running). Export a complete snapshot into `examples/` when you need fresh UAT data (ZIPs are gitignored).

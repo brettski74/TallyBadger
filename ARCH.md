@@ -59,7 +59,7 @@ flowchart LR
 2. **Bank CSV import** — Client uploads CSV → import route validates rows, applies **templates** and optional **CEL rule sets**, then posts **journal entries** through ledger services → PostgreSQL. Rows may include **`line[]`** maps with optional **`obligation-id`** to settle accrual obligations in the same batch ([#151](https://github.com/brettski74/TallyBadger/issues/151)). Same trust rules as other HTTP input; ambiguous business cases should stay visible to the operator (README product notes).
 3. **Import rules and CEL** — Evaluation and rule-set APIs run in-process against submitted or stored definitions; details and API surface are documented under `docs/` (see links below).
 4. **Backup / restore** — Export reads the database and writes a versioned ZIP per **[docs/backup-snapshot-format.md](docs/backup-snapshot-format.md)**. Import reads the ZIP, validates metadata and members, and applies rows according to export mode and API-chosen restore behaviour. When schema or included tables change, update **snapshot code, integration tests, format documentation, and `format_version`** when the on-wire layout or semantics require it (see [STYLE.md](STYLE.md)).
-5. **Migrations and dev seed** — `sql/*.sql` advances schema; `sql/dev_seed.sql` is the checked-in bootstrap dataset for local development. Regenerating the seed after model changes is part of the portable-data story (see [STYLE.md](STYLE.md)).
+5. **Migrations and local bootstrap** — `sql/*.sql` advances schema; local UAT loads a gitignored complete snapshot from `examples/` via **`tbload`** / **`make dbclean`** (see [STYLE.md](STYLE.md)).
 
 ## Deeper reference (do not duplicate here)
 

@@ -662,7 +662,7 @@ def test_backup_import_api_deprecation_warning_for_older_supported_format(
         imp = client.post(
             "/backup/import",
             files={"snapshot": ("legacy.zip", legacy_zip, "application/zip")},
-            data={"restore_mode": "erase_reload"},
+            data={"restore_mode": "erase-reload"},
         )
         assert imp.status_code == 200
         body = imp.json()
@@ -709,7 +709,7 @@ def test_import_snapshot_returns_no_warning_for_current_format(
     _ensure_ledger_settings(integration_db_url)
     with connect(integration_db_url, row_factory=dict_row) as conn:
         zip_bytes = export_complete_snapshot(conn)
-        warning = import_complete_snapshot(conn, zip_bytes, restore_mode="erase_reload")
+        warning = import_complete_snapshot(conn, zip_bytes, restore_mode="erase-reload")
     assert warning is None
 
 
@@ -1001,6 +1001,51 @@ def test_import_abort_rejects_conflicting_financial_rows(
         import_snapshot(conn, fin_zip, restore_mode="abort")
 
 
+def test_backup_import_api_rejects_legacy_erase_reload_spelling(
+    integration_db_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TALLYBADGER_DATABASE_URL", integration_db_url)
+    core_config.get_settings.cache_clear()
+    try:
+        _truncate_all_data(integration_db_url)
+        with connect(integration_db_url, row_factory=dict_row) as conn:
+            zip_bytes = export_complete_snapshot(conn)
+        client = TestClient(app)
+        imp = client.post(
+            "/backup/import",
+            files={"snapshot": ("snap.zip", zip_bytes, "application/zip")},
+            data={"restore_mode": "erase_reload"},
+        )
+        assert imp.status_code == 400
+        assert "unrecognized restore_mode" in imp.json()["detail"]
+    finally:
+        core_config.get_settings.cache_clear()
+
+
+def test_backup_import_api_rejects_invalid_restore_mode(
+    integration_db_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TALLYBADGER_DATABASE_URL", integration_db_url)
+    core_config.get_settings.cache_clear()
+    try:
+        _truncate_all_data(integration_db_url)
+        with connect(integration_db_url, row_factory=dict_row) as conn:
+            zip_bytes = export_complete_snapshot(conn)
+        client = TestClient(app)
+        imp = client.post(
+            "/backup/import",
+            files={"snapshot": ("snap.zip", zip_bytes, "application/zip")},
+            data={"restore_mode": "erase-spice-girls-music"},
+        )
+        assert imp.status_code == 400
+        detail = imp.json()["detail"]
+        assert "unrecognized restore_mode" in detail
+    finally:
+        core_config.get_settings.cache_clear()
+
+
 def test_erase_reload_rejects_financial_only_snapshot(
     integration_db_url: str,
     ledger_service: LedgerService,
@@ -1011,9 +1056,9 @@ def test_erase_reload_rejects_financial_only_snapshot(
 
     with connect(integration_db_url, row_factory=dict_row) as conn, pytest.raises(
         SnapshotValidationError,
-        match="erase_reload cannot import a financial-only",
+        match="erase-reload cannot import a financial-only",
     ):
-        import_snapshot(conn, fin_zip, restore_mode="erase_reload")
+        import_snapshot(conn, fin_zip, restore_mode="erase-reload")
 
 
 def test_erase_reload_truncates_all_then_loads_complete_snapshot(
@@ -1028,7 +1073,7 @@ def test_erase_reload_truncates_all_then_loads_complete_snapshot(
     extra = ledger_service.create_account(AccountCreate(name="Noise CoA", type="asset"))
     assert extra.id is not None
     with connect(integration_db_url, row_factory=dict_row) as conn:
-        import_snapshot(conn, zip_bytes, restore_mode="erase_reload")
+        import_snapshot(conn, zip_bytes, restore_mode="erase-reload")
         after = snapshot_table_counts(conn)
 
     assert after == before

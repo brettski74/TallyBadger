@@ -1,0 +1,214 @@
+#!/usr/bin/env python3
+"""Restore a TallyBadger snapshot ZIP via POST /backup/import (#206).
+
+Standalone: stdlib + curl only. Copy this file anywhere Python 3.11+ and curl exist.
+Does not import the TallyBadger application package.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import subprocess
+import sys
+from typing import NoReturn
+from urllib.parse import urljoin
+
+CANONICAL_RESTORE_MODES: tuple[str, ...] = ("abort", "overwrite", "erase-reload")
+
+
+class TbloadError(Exception):
+    """User-facing tbload failure."""
+
+
+def _die(message: str, *, code: int = 1) -> NoReturn:
+    print(message, file=sys.stderr)
+    raise SystemExit(code)
+
+
+def resolve_restore_mode(user_input: str) -> str:
+    """Strict prefix match against canonical restore mode names."""
+    raw = user_input.strip()
+    if not raw:
+        raise TbloadError("restore mode must not be empty")
+
+    lowered = raw.lower()
+    matches = [mode for mode in CANONICAL_RESTORE_MODES if mode.startswith(lowered)]
+    if not matches:
+        raise TbloadError(
+            f"unrecognized restore mode {user_input!r}; "
+            f"expected one of {list(CANONICAL_RESTORE_MODES)} (prefixes allowed)"
+        )
+    if len(matches) > 1:
+        raise TbloadError(f"ambiguous restore mode {user_input!r}; matches {matches}")
+    return matches[0]
+
+
+def build_base_url(*, base_url: str | None, host: str, port: int) -> str:
+    if base_url:
+        return base_url.rstrip("/")
+    env = os.environ.get("TALLYBADGER_API_BASE_URL", "").strip()
+    if env:
+        return env.rstrip("/")
+    return f"http://{host}:{port}"
+
+
+def run_curl(args: list[str]) -> subprocess.CompletedProcess[bytes]:
+    return subprocess.run(  # noqa: S603
+        ["curl", *args],
+        capture_output=True,
+        check=False,
+    )
+
+
+def check_curl() -> None:
+    if shutil.which("curl") is None:
+        _die("tbload requires curl on PATH")
+
+
+def preflight_health(base_url: str) -> None:
+    url = urljoin(base_url + "/", "health")
+    proc = run_curl(["-fsS", url])
+    if proc.returncode != 0:
+        err = proc.stderr.decode("utf-8", errors="replace").strip()
+        _die(f"API health check failed for {url}: {err or proc.returncode}")
+
+
+def import_snapshot(
+    base_url: str,
+    *,
+    restore_mode: str,
+    input_path: str | None,
+) -> dict[str, object]:
+    url = urljoin(base_url + "/", "backup/import")
+    curl_args = [
+        "-fsS",
+        "-w",
+        "\n%{http_code}",
+        "-X",
+        "POST",
+        "-F",
+        f"restore_mode={restore_mode}",
+    ]
+    if input_path is None:
+        curl_args.extend(["-F", "snapshot=@-;filename=snapshot.zip"])
+        stdin = sys.stdin.buffer.read()
+    else:
+        curl_args.extend(["-F", f"snapshot=@{input_path}"])
+        stdin = None
+
+    proc = subprocess.run(  # noqa: S603
+        ["curl", *curl_args, url],
+        input=stdin,
+        capture_output=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        err = proc.stderr.decode("utf-8", errors="replace").strip()
+        _die(f"curl import failed: {err or proc.returncode}")
+
+    out = proc.stdout
+    if b"\n" not in out:
+        _die("unexpected empty response from API")
+    body_bytes, status_line = out.rsplit(b"\n", 1)
+    try:
+        status_code = int(status_line.decode("ascii").strip())
+    except ValueError as exc:
+        raise TbloadError(f"invalid HTTP status from curl: {status_line!r}") from exc
+
+    body_text = body_bytes.decode("utf-8", errors="replace").strip()
+    if status_code < 200 or status_code >= 300:
+        detail = body_text
+        try:
+            payload = json.loads(body_text)
+            if isinstance(payload, dict) and "detail" in payload:
+                detail = json.dumps(payload["detail"], ensure_ascii=False)
+        except json.JSONDecodeError:
+            pass
+        _die(f"import failed (HTTP {status_code}): {detail}")
+
+    try:
+        data = json.loads(body_text) if body_text else {}
+    except json.JSONDecodeError as exc:
+        raise TbloadError(f"API returned non-JSON body: {body_text!r}") from exc
+    if not isinstance(data, dict):
+        raise TbloadError(f"expected JSON object from API, got {type(data).__name__}")
+    return data
+
+
+def report_success(data: dict[str, object]) -> None:
+    print("Restore finished successfully.")
+    for key in ("format_deprecation_warning",):
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            print(value, file=sys.stderr)
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="tbload",
+        description="Restore a TallyBadger backup ZIP via POST /backup/import (curl transport).",
+        add_help=False,
+    )
+    parser.add_argument(
+        "--help",
+        action="help",
+        help="Show this help message and exit",
+    )
+    parser.add_argument(
+        "-i",
+        "--input",
+        metavar="PATH",
+        help="Snapshot ZIP file (default: read ZIP from stdin)",
+    )
+    parser.add_argument(
+        "-m",
+        "--mode",
+        default="abort",
+        help="Restore mode: abort, overwrite, or erase-reload (prefixes allowed; default: abort)",
+    )
+    parser.add_argument(
+        "-b",
+        "--base-url",
+        help="API base URL (overrides host/port and TALLYBADGER_API_BASE_URL)",
+    )
+    parser.add_argument(
+        "-h",
+        "--host",
+        default="127.0.0.1",
+        help="API host when base URL not set (default: 127.0.0.1)",
+    )
+    parser.add_argument(
+        "-p",
+        "--port",
+        type=int,
+        default=8080,
+        help="API port when base URL not set (default: 8080)",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> None:
+    check_curl()
+    args = parse_args(argv)
+    try:
+        mode = resolve_restore_mode(args.mode)
+    except TbloadError as exc:
+        _die(str(exc))
+
+    base_url = build_base_url(base_url=args.base_url, host=args.host, port=args.port)
+    preflight_health(base_url)
+    try:
+        data = import_snapshot(base_url, restore_mode=mode, input_path=args.input)
+    except TbloadError as exc:
+        _die(str(exc))
+
+    if data.get("status") != "imported":
+        _die(f"unexpected API status payload: {data!r}")
+    report_success(data)
+
+
+if __name__ == "__main__":
+    main()

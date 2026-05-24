@@ -13,6 +13,7 @@ from tallybadger.backup.errors import (
     SnapshotValidationError,
     UnsupportedFormatVersionError,
 )
+from tallybadger.backup.restore_mode import RestoreModeError, resolve_restore_mode
 from tallybadger.backup.snapshot import export_snapshot, import_snapshot
 from tallybadger.db import get_connection
 
@@ -62,16 +63,24 @@ def backup_export(
 @router.post("/import", status_code=status.HTTP_200_OK)
 async def backup_import(
     snapshot: UploadFile = File(...),
-    restore_mode: Literal["abort", "overwrite", "erase_reload"] = Form(
+    restore_mode: str = Form(
         "abort",
-        description="Per-request only: abort, overwrite, or erase_reload. Not stored in the backup file.",
+        description=(
+            "Per-request only: abort, overwrite, or erase-reload (prefixes allowed). "
+            "Not stored in the backup file."
+        ),
     ),
 ) -> dict[str, str]:
+    try:
+        canonical_mode = resolve_restore_mode(restore_mode)
+    except RestoreModeError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
     raw = await snapshot.read()
     format_warning: str | None = None
     try:
         with get_connection() as conn:
-            format_warning = import_snapshot(conn, raw, restore_mode=restore_mode)
+            format_warning = import_snapshot(conn, raw, restore_mode=canonical_mode)
     except UnsupportedFormatVersionError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except IncompleteSnapshotError as exc:
