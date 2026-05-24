@@ -10,6 +10,7 @@ from tallybadger import __version__
 from tallybadger.api.routes import (
     backup,
     cel_rule_sets,
+    cheque_register_filter_presets,
     cheques,
     health,
     import_csv,
@@ -38,6 +39,7 @@ app.add_middleware(
 
 app.include_router(backup.router)
 app.include_router(cheques.router)
+app.include_router(cheque_register_filter_presets.router)
 app.include_router(health.router)
 app.include_router(import_rules_cel.router)
 app.include_router(cel_rule_sets.router)

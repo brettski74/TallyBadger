@@ -5,17 +5,22 @@ import tallybadger.backup.snapshot as snapshot
 
 def test_supported_import_default_history() -> None:
     assert snapshot.supported_import_format_versions() == frozenset(
-        {"1.4.0", "1.5.0", "1.6.0", "1.7.0"}
+        {"1.5.0", "1.6.0", "1.7.0", "1.8.0"}
     )
 
 
-def test_export_format_version_is_one_seven_zero() -> None:
-    assert snapshot.export_format_version() == "1.7.0"
+def test_export_format_version_is_one_eight_zero() -> None:
+    assert snapshot.export_format_version() == "1.8.0"
 
 
 def test_configuration_tables_for_format_gates_preset_table() -> None:
     assert "journal_entry_filter_presets" not in snapshot.configuration_tables_for_format("1.3.0")
     assert "journal_entry_filter_presets" in snapshot.configuration_tables_for_format("1.4.0")
+
+
+def test_configuration_tables_for_format_gates_cheque_register_presets() -> None:
+    assert "cheque_register_filter_presets" not in snapshot.configuration_tables_for_format("1.7.0")
+    assert "cheque_register_filter_presets" in snapshot.configuration_tables_for_format("1.8.0")
 
 
 def test_financial_tables_include_import_batches_from_one_five_zero() -> None:

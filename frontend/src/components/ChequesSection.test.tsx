@@ -31,8 +31,17 @@ const accounts: Account[] = [
 
 const parties: Party[] = [];
 
+interface ChequeRegisterFilterPresetRow {
+  id: number;
+  name: string;
+  definition: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
 interface RouteMocks {
   cheques?: unknown;
+  presets?: ChequeRegisterFilterPresetRow[];
   filterOptions?: {
     parties: Array<{ id: number | null; name: string }>;
     credit_accounts: Array<{ id: number; name: string }>;
@@ -86,6 +95,18 @@ function filterOptionsResponse() {
   });
 }
 
+function emptyChequeRegisterPresetsResponse() {
+  return new Response(JSON.stringify([]), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+function isChequesListUrl(url: string): boolean {
+  const { pathname } = new URL(url, "http://localhost");
+  return pathname === "/cheques";
+}
+
 function chequeListCalls(fetchMock: ReturnType<typeof vi.spyOn>) {
   return fetchMock.mock.calls.filter((call: unknown[]) => {
     const url = String(call[0]);
@@ -99,15 +120,70 @@ function sortParamsFromUrl(url: string): string[] {
 }
 
 function installFetchMock(routes: RouteMocks = {}) {
+  const presets: ChequeRegisterFilterPresetRow[] = [...(routes.presets ?? [])];
+  let nextPresetId =
+    presets.reduce((max, p) => Math.max(max, p.id), 0) + 1;
+
   return vi
     .spyOn(globalThis, "fetch")
-    .mockImplementation(async (input: RequestInfo | URL) => {
+    .mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
       if (url.includes("/ledger-settings")) {
         return new Response(JSON.stringify(defaultSettings(routes.settings)), {
           status: 200,
           headers: { "Content-Type": "application/json" },
         });
+      }
+      if (url.includes("/cheque-register-filter-presets")) {
+        const putMatch = url.match(/\/cheque-register-filter-presets\/(\d+)$/);
+        if (method === "GET" && !putMatch) {
+          return new Response(JSON.stringify(presets), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        if (method === "POST") {
+          const body = JSON.parse(String(init?.body)) as {
+            name: string;
+            definition: Record<string, unknown>;
+          };
+          const now = "2026-04-01T00:00:00Z";
+          const row: ChequeRegisterFilterPresetRow = {
+            id: nextPresetId++,
+            name: body.name,
+            definition: body.definition,
+            created_at: now,
+            updated_at: now,
+          };
+          presets.push(row);
+          return new Response(JSON.stringify(row), {
+            status: 201,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        if (method === "PUT" && putMatch) {
+          const id = Number(putMatch[1]);
+          const body = JSON.parse(String(init?.body)) as {
+            name: string;
+            definition: Record<string, unknown>;
+          };
+          const idx = presets.findIndex((p) => p.id === id);
+          if (idx < 0) {
+            return new Response("not found", { status: 404 });
+          }
+          const updated: ChequeRegisterFilterPresetRow = {
+            ...presets[idx],
+            name: body.name,
+            definition: body.definition,
+            updated_at: "2026-04-02T00:00:00Z",
+          };
+          presets[idx] = updated;
+          return new Response(JSON.stringify(updated), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
       }
       if (url.includes("/cheques/filter-options")) {
         return new Response(JSON.stringify(routes.filterOptions ?? defaultFilterOptions()), {
@@ -115,7 +191,7 @@ function installFetchMock(routes: RouteMocks = {}) {
           headers: { "Content-Type": "application/json" },
         });
       }
-      if (url.includes("/cheques")) {
+      if (isChequesListUrl(url)) {
         return new Response(JSON.stringify({ cheques: routes.cheques ?? [] }), {
           status: 200,
           headers: { "Content-Type": "application/json" },
@@ -470,7 +546,10 @@ describe("ChequesSection", () => {
       if (url.includes("/cheques/filter-options")) {
         return filterOptionsResponse();
       }
-      if (url.includes("/cheques")) {
+      if (url.includes("/cheque-register-filter-presets")) {
+        return emptyChequeRegisterPresetsResponse();
+      }
+      if (isChequesListUrl(url)) {
         return new Response(JSON.stringify({ detail: "service unavailable" }), {
           status: 503,
           headers: { "Content-Type": "application/json" },
@@ -698,10 +777,16 @@ describe("ChequesSection #141 — cheque series", () => {
       if (url.includes("/cheques/series") && init?.method === "POST") {
         return new Response(JSON.stringify([]), { status: 201 });
       }
-      return new Response(JSON.stringify({ cheques: [] }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
+      if (url.includes("/cheque-register-filter-presets")) {
+        return emptyChequeRegisterPresetsResponse();
+      }
+      if (isChequesListUrl(url)) {
+        return new Response(JSON.stringify({ cheques: [] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response("not found", { status: 404 });
     });
 
     render(<ChequesSection accounts={accounts} parties={parties} />);
@@ -777,10 +862,16 @@ describe("ChequesSection #141 — cheque series", () => {
           { status: 201, headers: { "Content-Type": "application/json" } },
         );
       }
-      return new Response(JSON.stringify({ cheques: [] }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
+      if (url.includes("/cheque-register-filter-presets")) {
+        return emptyChequeRegisterPresetsResponse();
+      }
+      if (isChequesListUrl(url)) {
+        return new Response(JSON.stringify({ cheques: [] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response("not found", { status: 404 });
     });
 
     render(<ChequesSection accounts={accounts} parties={parties} />);
@@ -847,10 +938,16 @@ describe("ChequesSection #132 — keyboard shortcuts", () => {
           { status: 200, headers: { "Content-Type": "application/json" } },
         );
       }
-      return new Response(JSON.stringify({ cheques: [openCheque] }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
+      if (url.includes("/cheque-register-filter-presets")) {
+        return emptyChequeRegisterPresetsResponse();
+      }
+      if (isChequesListUrl(url)) {
+        return new Response(JSON.stringify({ cheques: [openCheque] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response("not found", { status: 404 });
     });
 
     render(<ChequesSection accounts={accounts} parties={parties} />);
@@ -892,10 +989,16 @@ describe("ChequesSection #132 — keyboard shortcuts", () => {
           { status: 200, headers: { "Content-Type": "application/json" } },
         );
       }
-      return new Response(JSON.stringify({ cheques: [openCheque] }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
+      if (url.includes("/cheque-register-filter-presets")) {
+        return emptyChequeRegisterPresetsResponse();
+      }
+      if (isChequesListUrl(url)) {
+        return new Response(JSON.stringify({ cheques: [openCheque] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response("not found", { status: 404 });
     });
 
     render(<ChequesSection accounts={accounts} parties={parties} />);
@@ -978,10 +1081,16 @@ describe("ChequesSection #132 — keyboard shortcuts", () => {
           { status: 201, headers: { "Content-Type": "application/json" } },
         );
       }
-      return new Response(JSON.stringify({ cheques: [] }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
+      if (url.includes("/cheque-register-filter-presets")) {
+        return emptyChequeRegisterPresetsResponse();
+      }
+      if (isChequesListUrl(url)) {
+        return new Response(JSON.stringify({ cheques: [] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response("not found", { status: 404 });
     });
 
     render(<ChequesSection accounts={accounts} parties={parties} />);
@@ -1042,10 +1151,16 @@ describe("ChequesSection #132 — keyboard shortcuts", () => {
           { status: 200, headers: { "Content-Type": "application/json" } },
         );
       }
-      return new Response(JSON.stringify({ cheques: [] }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
+      if (url.includes("/cheque-register-filter-presets")) {
+        return emptyChequeRegisterPresetsResponse();
+      }
+      if (isChequesListUrl(url)) {
+        return new Response(JSON.stringify({ cheques: [] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response("not found", { status: 404 });
     });
 
     render(<ChequesSection accounts={accounts} parties={parties} />);
@@ -1107,10 +1222,16 @@ describe("ChequesSection #132 — keyboard shortcuts", () => {
           headers: { "Content-Type": "application/json" },
         });
       }
-      return new Response(JSON.stringify({ cheques: [] }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
+      if (url.includes("/cheque-register-filter-presets")) {
+        return emptyChequeRegisterPresetsResponse();
+      }
+      if (isChequesListUrl(url)) {
+        return new Response(JSON.stringify({ cheques: [] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response("not found", { status: 404 });
     });
 
     render(<ChequesSection accounts={accounts} parties={parties} />);
@@ -1282,5 +1403,115 @@ describe("ChequesSection sort", () => {
       expect(url).toContain("status=cleared");
       expect(sortParamsFromUrl(url)).toEqual(["amount:asc"]);
     });
+  });
+
+  it("saves and applies a filter preset with filters and sort keys", async () => {
+    const fetchMock = installFetchMock();
+    const user = userEvent.setup();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    render(<ChequesSection accounts={accounts} parties={parties} />);
+    await waitFor(() => expect(chequeListCalls(fetchMock).length).toBeGreaterThan(0));
+
+    await user.selectOptions(screen.getByLabelText("Filter cheques by status"), "cleared");
+    await user.click(screen.getByRole("button", { name: "Sort by Amount" }));
+    await waitFor(() => {
+      expect(sortParamsFromUrl(String(chequeListCalls(fetchMock).at(-1)?.[0]))).toEqual([
+        "amount:asc",
+      ]);
+    });
+
+    await user.click(screen.getByRole("button", { name: "Save current filter as preset" }));
+    const dialog = await screen.findByRole("dialog", { name: "Save filter preset" });
+    await user.type(within(dialog).getByLabelText("Preset name"), "Cleared by amount");
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Filter preset")).toHaveValue("1");
+    });
+
+    await user.selectOptions(screen.getByLabelText("Filter cheques by status"), "open");
+    await user.click(screen.getByRole("button", { name: "Sort by Amount, ascending" }));
+    await user.click(screen.getByRole("button", { name: "Sort by Amount, descending" }));
+    await waitFor(() => {
+      expect(sortParamsFromUrl(String(chequeListCalls(fetchMock).at(-1)?.[0]))).toEqual([]);
+    });
+
+    await user.selectOptions(screen.getByLabelText("Filter preset"), "Cleared by amount");
+    await waitFor(() => {
+      const url = String(chequeListCalls(fetchMock).at(-1)?.[0]);
+      expect(url).toContain("status=cleared");
+      expect(sortParamsFromUrl(url)).toEqual(["amount:asc"]);
+    });
+    expect(screen.getByRole("button", { name: "Sort by Amount, ascending" })).toBeInTheDocument();
+
+    confirmSpy.mockRestore();
+  });
+
+  it("applies a preset with empty sort using default list order", async () => {
+    const fetchMock = installFetchMock({
+      presets: [
+        {
+          id: 5,
+          name: "Open only",
+          definition: { status: "open", sort: [] },
+          created_at: "2026-04-01T00:00:00Z",
+          updated_at: "2026-04-01T00:00:00Z",
+        },
+      ],
+    });
+    const user = userEvent.setup();
+
+    render(<ChequesSection accounts={accounts} parties={parties} />);
+    await waitFor(() => expect(chequeListCalls(fetchMock).length).toBeGreaterThan(0));
+
+    await user.click(screen.getByRole("button", { name: "Sort by Cleared" }));
+    await waitFor(() => {
+      expect(sortParamsFromUrl(String(chequeListCalls(fetchMock).at(-1)?.[0]))).toEqual([
+        "cleared_date:asc",
+      ]);
+    });
+
+    await user.selectOptions(screen.getByLabelText("Filter preset"), "Open only");
+    await waitFor(() => {
+      const url = String(chequeListCalls(fetchMock).at(-1)?.[0]);
+      expect(url).toContain("status=open");
+      expect(sortParamsFromUrl(url)).toEqual([]);
+    });
+    expect(screen.queryByRole("button", { name: /ascending|descending/i })).not.toBeInTheDocument();
+  });
+
+  it("overwrites an existing preset by name on save", async () => {
+    const fetchMock = installFetchMock({
+      presets: [
+        {
+          id: 2,
+          name: "My view",
+          definition: { status: "open" },
+          created_at: "2026-04-01T00:00:00Z",
+          updated_at: "2026-04-01T00:00:00Z",
+        },
+      ],
+    });
+    const user = userEvent.setup();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    render(<ChequesSection accounts={accounts} parties={parties} />);
+    await waitFor(() => expect(chequeListCalls(fetchMock).length).toBeGreaterThan(0));
+
+    await user.selectOptions(screen.getByLabelText("Filter cheques by status"), "void");
+    await user.click(screen.getByRole("button", { name: "Save current filter as preset" }));
+    const dialog = await screen.findByRole("dialog", { name: "Save filter preset" });
+    await user.clear(within(dialog).getByLabelText("Preset name"));
+    await user.type(within(dialog).getByLabelText("Preset name"), "my view");
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(confirmSpy).toHaveBeenCalled();
+      const url = String(chequeListCalls(fetchMock).at(-1)?.[0]);
+      expect(url).toContain("status=void");
+    });
+
+    confirmSpy.mockRestore();
   });
 });

@@ -236,6 +236,120 @@ class JournalEntryFilterPresetOut(BaseModel):
     updated_at: datetime
 
 
+ChequeRegisterListStatus = Literal["open", "cleared", "void", "all"]
+
+CHEQUE_REGISTER_PRESET_SORT_FIELDS: frozenset[str] = frozenset(
+    {
+        "status",
+        "cheque_number",
+        "summary",
+        "issue_date",
+        "cleared_date",
+        "amount",
+        "credit_account_id",
+        "debit_account_id",
+        "party_id",
+    },
+)
+
+
+class ChequeRegisterFilterPresetSortKey(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    field: str
+    direction: Literal["asc", "desc"]
+
+
+class ChequeRegisterFilterPresetDefinition(BaseModel):
+    """Serialised cheque register filters and sort keys (#196).
+
+    Optional fields mean no restriction on that dimension when applied.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: ChequeRegisterListStatus | None = None
+    party_ids: list[int | Literal["null"]] = Field(default_factory=list)
+    credit_account_ids: list[int] = Field(default_factory=list)
+    debit_account_ids: list[int] = Field(default_factory=list)
+    issue_from_date: date | None = None
+    issue_to_date: date | None = None
+    cleared_from_date: date | None = None
+    cleared_to_date: date | None = None
+    min_amount: Decimal | None = Field(default=None, ge=0)
+    max_amount: Decimal | None = Field(default=None, ge=0)
+    summary: str | None = Field(default=None, max_length=512)
+    sort: list[ChequeRegisterFilterPresetSortKey] = Field(default_factory=list)
+
+    @field_validator("summary", mode="before")
+    @classmethod
+    def _normalize_summary(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError("summary must be a string or null")
+        stripped = value.strip()
+        return stripped if stripped else None
+
+    @model_validator(mode="after")
+    def _validate(self) -> "ChequeRegisterFilterPresetDefinition":
+        if (
+            self.issue_from_date is not None
+            and self.issue_to_date is not None
+            and self.issue_from_date > self.issue_to_date
+        ):
+            raise ValueError("issue_from_date must be on or before issue_to_date")
+        if (
+            self.cleared_from_date is not None
+            and self.cleared_to_date is not None
+            and self.cleared_from_date > self.cleared_to_date
+        ):
+            raise ValueError("cleared_from_date must be on or before cleared_to_date")
+        if (
+            self.min_amount is not None
+            and self.max_amount is not None
+            and self.min_amount > self.max_amount
+        ):
+            raise ValueError("min_amount must be less than or equal to max_amount")
+        for field_name in ("credit_account_ids", "debit_account_ids"):
+            for v in getattr(self, field_name):
+                if v <= 0:
+                    raise ValueError(f"{field_name} entries must be positive integers")
+        for v in self.party_ids:
+            if isinstance(v, int) and v <= 0:
+                raise ValueError("party_ids entries must be positive integers or null")
+        for key in self.sort:
+            if key.field not in CHEQUE_REGISTER_PRESET_SORT_FIELDS:
+                raise ValueError(f"unknown sort field: {key.field}")
+        return self
+
+
+class ChequeRegisterFilterPresetWrite(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    definition: ChequeRegisterFilterPresetDefinition
+
+
+class ChequeRegisterFilterPresetPatch(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    definition: ChequeRegisterFilterPresetDefinition | None = None
+
+    @model_validator(mode="after")
+    def _at_least_one(self) -> "ChequeRegisterFilterPresetPatch":
+        if self.name is None and self.definition is None:
+            raise ValueError("at least one of name or definition must be provided")
+        return self
+
+
+class ChequeRegisterFilterPresetOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    definition: ChequeRegisterFilterPresetDefinition
+    created_at: datetime
+    updated_at: datetime
+
+
 class ImportBatchListItem(BaseModel):
     """One CSV import batch row for operator discovery (#136)."""
 

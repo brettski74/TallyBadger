@@ -1,5 +1,15 @@
 import { FormEvent, Fragment, MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Ban, ArrowDownNarrowWide, ArrowDownWideNarrow, Eye, FilePlus2, Pencil, RefreshCcw, SquareCheck } from "lucide-react";
+import {
+  Ban,
+  ArrowDownNarrowWide,
+  ArrowDownWideNarrow,
+  Eye,
+  FilePlus2,
+  Pencil,
+  RefreshCcw,
+  Save,
+  SquareCheck,
+} from "lucide-react";
 
 import type { Account } from "../api/accounts";
 import { useChequeCreateModalShortcuts } from "../hooks/useChequeCreateModalShortcuts";
@@ -39,6 +49,13 @@ import {
   previewChequeSeries,
 } from "../api/cheques";
 import type { Party } from "../api/parties";
+import {
+  createChequeRegisterFilterPreset,
+  listChequeRegisterFilterPresets,
+  updateChequeRegisterFilterPreset,
+  type ChequeRegisterFilterPreset,
+  type ChequeRegisterFilterPresetDefinition,
+} from "../api/chequeRegisterFilterPresets";
 import { type LedgerSettings, getLedgerSettings } from "../api/settlements";
 import { ChequePartyFilterMultiDropdown, type ChequePartyFilterId } from "./ChequePartyFilterMultiDropdown";
 import { JournalFilterMultiDropdown } from "./JournalFilterMultiDropdown";
@@ -154,6 +171,158 @@ function parseChequeAmount(value: string): string | null {
   return n.toFixed(2);
 }
 
+function sortedIds(ids: number[]): number[] {
+  return [...ids].sort((a, b) => a - b);
+}
+
+function partyFilterKey(id: ChequePartyFilterId): string {
+  return id === null ? "null" : String(id);
+}
+
+function sortedPartyFilters(ids: ChequePartyFilterId[]): ChequePartyFilterId[] {
+  return [...ids].sort((a, b) => partyFilterKey(a).localeCompare(partyFilterKey(b)));
+}
+
+function sameIdList(a: number[], b: number[]): boolean {
+  const aa = sortedIds(a);
+  const bb = sortedIds(b);
+  if (aa.length !== bb.length) {
+    return false;
+  }
+  for (let i = 0; i < aa.length; i += 1) {
+    if (aa[i] !== bb[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function samePartyFilterList(a: ChequePartyFilterId[], b: ChequePartyFilterId[]): boolean {
+  const aa = sortedPartyFilters(a).map(partyFilterKey);
+  const bb = sortedPartyFilters(b).map(partyFilterKey);
+  if (aa.length !== bb.length) {
+    return false;
+  }
+  for (let i = 0; i < aa.length; i += 1) {
+    if (aa[i] !== bb[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function sameSortKeys(a: ChequeSortKey[], b: ChequeSortKey[]): boolean {
+  if (a.length !== b.length) {
+    return false;
+  }
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i].field !== b[i].field || a[i].direction !== b[i].direction) {
+      return false;
+    }
+  }
+  return true;
+}
+
+interface ChequeRegisterFilterState {
+  listStatus: ChequeListStatus;
+  selectedPartyIds: ChequePartyFilterId[];
+  selectedCreditAccountIds: number[];
+  selectedDebitAccountIds: number[];
+  issueFromDate: string;
+  issueToDate: string;
+  clearedFromDate: string;
+  clearedToDate: string;
+  minAmount: string;
+  maxAmount: string;
+  summaryFilter: string;
+  sortKeys: ChequeSortKey[];
+}
+
+function definitionFromRegisterState(
+  state: ChequeRegisterFilterState,
+): ChequeRegisterFilterPresetDefinition {
+  const def: ChequeRegisterFilterPresetDefinition = { status: state.listStatus };
+  if (state.selectedPartyIds.length > 0) {
+    def.party_ids = sortedPartyFilters(state.selectedPartyIds).map((id) =>
+      id === null ? "null" : id,
+    );
+  }
+  if (state.selectedCreditAccountIds.length > 0) {
+    def.credit_account_ids = sortedIds(state.selectedCreditAccountIds);
+  }
+  if (state.selectedDebitAccountIds.length > 0) {
+    def.debit_account_ids = sortedIds(state.selectedDebitAccountIds);
+  }
+  if (state.issueFromDate) {
+    def.issue_from_date = state.issueFromDate;
+  }
+  if (state.issueToDate) {
+    def.issue_to_date = state.issueToDate;
+  }
+  if (state.clearedFromDate) {
+    def.cleared_from_date = state.clearedFromDate;
+  }
+  if (state.clearedToDate) {
+    def.cleared_to_date = state.clearedToDate;
+  }
+  if (state.minAmount.trim()) {
+    def.min_amount = state.minAmount.trim();
+  }
+  if (state.maxAmount.trim()) {
+    def.max_amount = state.maxAmount.trim();
+  }
+  if (state.summaryFilter.trim()) {
+    def.summary = state.summaryFilter.trim();
+  }
+  if (state.sortKeys.length > 0) {
+    def.sort = state.sortKeys.map(({ field, direction }) => ({ field, direction }));
+  }
+  return def;
+}
+
+function registerStateFromDefinition(
+  def: ChequeRegisterFilterPresetDefinition,
+): ChequeRegisterFilterState {
+  const partyIds: ChequePartyFilterId[] = (def.party_ids ?? []).map((id) =>
+    id === "null" ? null : id,
+  );
+  return {
+    listStatus: def.status ?? "open",
+    selectedPartyIds: sortedPartyFilters(partyIds),
+    selectedCreditAccountIds: sortedIds(def.credit_account_ids ?? []),
+    selectedDebitAccountIds: sortedIds(def.debit_account_ids ?? []),
+    issueFromDate: def.issue_from_date ?? "",
+    issueToDate: def.issue_to_date ?? "",
+    clearedFromDate: def.cleared_from_date ?? "",
+    clearedToDate: def.cleared_to_date ?? "",
+    minAmount: def.min_amount != null ? String(def.min_amount) : "",
+    maxAmount: def.max_amount != null ? String(def.max_amount) : "",
+    summaryFilter: def.summary?.trim() ?? "",
+    sortKeys: (def.sort ?? []).map(({ field, direction }) => ({ field, direction })),
+  };
+}
+
+function registerStateMatchesDefinition(
+  state: ChequeRegisterFilterState,
+  def: ChequeRegisterFilterPresetDefinition,
+): boolean {
+  const normalized = registerStateFromDefinition(def);
+  return (
+    state.listStatus === normalized.listStatus &&
+    state.issueFromDate === normalized.issueFromDate &&
+    state.issueToDate === normalized.issueToDate &&
+    state.clearedFromDate === normalized.clearedFromDate &&
+    state.clearedToDate === normalized.clearedToDate &&
+    state.minAmount === normalized.minAmount &&
+    state.maxAmount === normalized.maxAmount &&
+    state.summaryFilter === normalized.summaryFilter &&
+    samePartyFilterList(state.selectedPartyIds, normalized.selectedPartyIds) &&
+    sameIdList(state.selectedCreditAccountIds, normalized.selectedCreditAccountIds) &&
+    sameIdList(state.selectedDebitAccountIds, normalized.selectedDebitAccountIds) &&
+    sameSortKeys(state.sortKeys, normalized.sortKeys)
+  );
+}
+
 function formatChequeCurrency(amount: string | number): string {
   const raw = typeof amount === "number" ? amount : Number.parseFloat(amount.replace(/[$,\s]/g, ""));
   if (!Number.isFinite(raw)) {
@@ -180,6 +349,14 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
   const [maxAmount, setMaxAmount] = useState("");
   const [summaryFilter, setSummaryFilter] = useState("");
   const [sortKeys, setSortKeys] = useState<ChequeSortKey[]>([]);
+  const [presets, setPresets] = useState<ChequeRegisterFilterPreset[]>([]);
+  const [appliedPresetId, setAppliedPresetId] = useState<number | null>(null);
+  const [presetsError, setPresetsError] = useState<string | null>(null);
+  const [saveDialogOpen, setSaveDialogOpen] = useState(false);
+  const [saveName, setSaveName] = useState("");
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [savePending, setSavePending] = useState(false);
+  const saveDialogRef = useRef<HTMLDialogElement>(null);
   const [filterOptions, setFilterOptions] = useState<ChequeFilterOptions>({
     parties: [],
     credit_accounts: [],
@@ -304,9 +481,145 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
     ],
   );
 
-  const handleSortColumn = useCallback((field: ChequeRegisterSortField) => {
-    setSortKeys((current) => cycleSortKeys(current, field));
-  }, []);
+  const registerFilterState = useMemo(
+    (): ChequeRegisterFilterState => ({
+      listStatus,
+      selectedPartyIds,
+      selectedCreditAccountIds,
+      selectedDebitAccountIds,
+      issueFromDate,
+      issueToDate,
+      clearedFromDate,
+      clearedToDate,
+      minAmount,
+      maxAmount,
+      summaryFilter,
+      sortKeys,
+    }),
+    [
+      listStatus,
+      selectedPartyIds,
+      selectedCreditAccountIds,
+      selectedDebitAccountIds,
+      issueFromDate,
+      issueToDate,
+      clearedFromDate,
+      clearedToDate,
+      minAmount,
+      maxAmount,
+      summaryFilter,
+      sortKeys,
+    ],
+  );
+
+  const clearAppliedPreset = useCallback(() => setAppliedPresetId(null), []);
+
+  const appliedPreset = useMemo(
+    () => presets.find((p) => p.id === appliedPresetId) ?? null,
+    [presets, appliedPresetId],
+  );
+
+  const displayedPresetId = useMemo(() => {
+    if (
+      appliedPreset &&
+      registerStateMatchesDefinition(registerFilterState, appliedPreset.definition)
+    ) {
+      return appliedPreset.id;
+    }
+    return null;
+  }, [appliedPreset, registerFilterState]);
+
+  const handleSortColumn = useCallback(
+    (field: ChequeRegisterSortField) => {
+      clearAppliedPreset();
+      setSortKeys((current) => cycleSortKeys(current, field));
+    },
+    [clearAppliedPreset],
+  );
+
+  function applyPreset(presetId: number) {
+    const preset = presets.find((p) => p.id === presetId);
+    if (!preset) {
+      return;
+    }
+    const next = registerStateFromDefinition(preset.definition);
+    setListStatus(next.listStatus);
+    setSelectedPartyIds(next.selectedPartyIds);
+    setSelectedCreditAccountIds(next.selectedCreditAccountIds);
+    setSelectedDebitAccountIds(next.selectedDebitAccountIds);
+    setIssueFromDate(next.issueFromDate);
+    setIssueToDate(next.issueToDate);
+    setClearedFromDate(next.clearedFromDate);
+    setClearedToDate(next.clearedToDate);
+    setMinAmount(next.minAmount);
+    setMaxAmount(next.maxAmount);
+    setSummaryFilter(next.summaryFilter);
+    setSortKeys(next.sortKeys);
+    setAppliedPresetId(preset.id);
+  }
+
+  function openSaveDialog() {
+    setSaveError(null);
+    setSaveName(appliedPreset?.name ?? "");
+    setSaveDialogOpen(true);
+  }
+
+  useEffect(() => {
+    const el = saveDialogRef.current;
+    if (!el) {
+      return;
+    }
+    if (saveDialogOpen && !el.open) {
+      el.showModal();
+    } else if (!saveDialogOpen && el.open) {
+      el.close();
+    }
+  }, [saveDialogOpen]);
+
+  async function handleSavePreset(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const name = saveName.trim();
+    if (!name) {
+      setSaveError("Name must not be empty.");
+      return;
+    }
+    setSavePending(true);
+    setSaveError(null);
+    try {
+      const definition = definitionFromRegisterState(registerFilterState);
+      const existing = presets.find((p) => p.name.toLowerCase() === name.toLowerCase());
+      if (existing) {
+        const confirmed = window.confirm(
+          `A preset named "${existing.name}" already exists. Overwrite it?`,
+        );
+        if (!confirmed) {
+          setSavePending(false);
+          return;
+        }
+        const updated = await updateChequeRegisterFilterPreset(existing.id, {
+          name,
+          definition,
+        });
+        setPresets((prev) =>
+          prev.map((p) => (p.id === updated.id ? updated : p)).sort((a, b) =>
+            a.name.localeCompare(b.name),
+          ),
+        );
+        setAppliedPresetId(updated.id);
+      } else {
+        const created = await createChequeRegisterFilterPreset({ name, definition });
+        setPresets((prev) =>
+          [...prev, created].sort((a, b) => a.name.localeCompare(b.name)),
+        );
+        setAppliedPresetId(created.id);
+      }
+      setSaveDialogOpen(false);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Failed to save preset");
+    } finally {
+      setSavePending(false);
+    }
+  }
 
   const reloadList = useCallback(async () => {
     setListError(null);
@@ -338,6 +651,16 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
   useEffect(() => {
     void reloadList();
   }, [reloadList]);
+
+  useEffect(() => {
+    void listChequeRegisterFilterPresets()
+      .then(setPresets)
+      .catch((err) => {
+        setPresetsError(
+          err instanceof Error ? err.message : "Failed to load filter presets",
+        );
+      });
+  }, []);
 
   useEffect(() => {
     void listChequeFilterOptions()
@@ -1238,13 +1561,53 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
           posted against this cheque. Use <strong>Void</strong> or <strong>Re-open</strong> for void workflow only.
         </p>
 
+        {presetsError && (
+          <p className="error journal-presets-fetch-error" role="alert">
+            {presetsError}
+          </p>
+        )}
+
         <div className="cheque-register-filters journal-filters-line">
+          <TableRowIconButton
+            type="button"
+            aria-label="Save current filter as preset"
+            title="Save current filter as preset"
+            onClick={openSaveDialog}
+          >
+            <Save size={18} strokeWidth={2} aria-hidden />
+          </TableRowIconButton>
+          <label className="journal-filter-slot journal-filter-slot-select">
+            <span className="journal-filter-inline-label">Filter preset</span>
+            <select
+              className="journal-filter-control"
+              aria-label="Filter preset"
+              value={displayedPresetId != null ? String(displayedPresetId) : ""}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v === "") {
+                  setAppliedPresetId(null);
+                  return;
+                }
+                applyPreset(Number(v));
+              }}
+            >
+              <option value="">— None —</option>
+              {presets.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </label>
           <label className="journal-filter-slot journal-filter-slot-select">
             <span className="journal-filter-inline-label">Status</span>
             <select
               className="journal-filter-control"
               value={listStatus}
-              onChange={(e) => setListStatus(e.target.value as ChequeListStatus)}
+              onChange={(e) => {
+                clearAppliedPreset();
+                setListStatus(e.target.value as ChequeListStatus);
+              }}
               aria-label="Filter cheques by status"
             >
               <option value="open">Open (default)</option>
@@ -1258,7 +1621,10 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
             ariaFilterLabel="Filter cheques by party"
             options={filterOptions.parties}
             selectedIds={selectedPartyIds}
-            onIdsChange={setSelectedPartyIds}
+            onIdsChange={(ids) => {
+              clearAppliedPreset();
+              setSelectedPartyIds(ids);
+            }}
           />
           <JournalFilterMultiDropdown
             label="Credit account"
@@ -1267,7 +1633,10 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
               a.id == null ? [] : [{ id: a.id, name: a.name }],
             )}
             selectedIds={selectedCreditAccountIds}
-            onIdsChange={setSelectedCreditAccountIds}
+            onIdsChange={(ids) => {
+              clearAppliedPreset();
+              setSelectedCreditAccountIds(ids);
+            }}
           />
           <JournalFilterMultiDropdown
             label="Debit account"
@@ -1276,50 +1645,65 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
               a.id == null ? [] : [{ id: a.id, name: a.name }],
             )}
             selectedIds={selectedDebitAccountIds}
-            onIdsChange={setSelectedDebitAccountIds}
+            onIdsChange={(ids) => {
+              clearAppliedPreset();
+              setSelectedDebitAccountIds(ids);
+            }}
           />
-          <label className="journal-filter-slot journal-filter-slot-date">
-            <span className="journal-filter-inline-label">Issue from</span>
+          <div className="journal-filter-range-group journal-filter-range-group-date">
+            <span className="journal-filter-inline-label">Issue from/to</span>
             <input
               className="journal-filter-control"
               type="date"
               value={issueFromDate}
-              onChange={(e) => setIssueFromDate(e.target.value)}
+              onChange={(e) => {
+                clearAppliedPreset();
+                setIssueFromDate(e.target.value);
+              }}
               aria-label="Filter cheques issue from date"
             />
-          </label>
-          <label className="journal-filter-slot journal-filter-slot-date">
-            <span className="journal-filter-inline-label">Issue to</span>
+            <span className="journal-filter-range-separator" aria-hidden>
+              /
+            </span>
             <input
               className="journal-filter-control"
               type="date"
               value={issueToDate}
-              onChange={(e) => setIssueToDate(e.target.value)}
+              onChange={(e) => {
+                clearAppliedPreset();
+                setIssueToDate(e.target.value);
+              }}
               aria-label="Filter cheques issue to date"
             />
-          </label>
-          <label className="journal-filter-slot journal-filter-slot-date">
-            <span className="journal-filter-inline-label">Cleared from</span>
+          </div>
+          <div className="journal-filter-range-group journal-filter-range-group-date">
+            <span className="journal-filter-inline-label">Cleared from/to</span>
             <input
               className="journal-filter-control"
               type="date"
               value={clearedFromDate}
-              onChange={(e) => setClearedFromDate(e.target.value)}
+              onChange={(e) => {
+                clearAppliedPreset();
+                setClearedFromDate(e.target.value);
+              }}
               aria-label="Filter cheques cleared from date"
             />
-          </label>
-          <label className="journal-filter-slot journal-filter-slot-date">
-            <span className="journal-filter-inline-label">Cleared to</span>
+            <span className="journal-filter-range-separator" aria-hidden>
+              /
+            </span>
             <input
               className="journal-filter-control"
               type="date"
               value={clearedToDate}
-              onChange={(e) => setClearedToDate(e.target.value)}
+              onChange={(e) => {
+                clearAppliedPreset();
+                setClearedToDate(e.target.value);
+              }}
               aria-label="Filter cheques cleared to date"
             />
-          </label>
-          <label className="journal-filter-slot journal-filter-slot-number">
-            <span className="journal-filter-inline-label">Min amount</span>
+          </div>
+          <div className="journal-filter-range-group journal-filter-range-group-number">
+            <span className="journal-filter-inline-label">Amount min/max</span>
             <input
               className="journal-filter-control"
               type="number"
@@ -1327,12 +1711,15 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
               step={0.01}
               inputMode="decimal"
               value={minAmount}
-              onChange={(e) => setMinAmount(e.target.value)}
+              onChange={(e) => {
+                clearAppliedPreset();
+                setMinAmount(e.target.value);
+              }}
               aria-label="Filter cheques minimum amount"
             />
-          </label>
-          <label className="journal-filter-slot journal-filter-slot-number">
-            <span className="journal-filter-inline-label">Max amount</span>
+            <span className="journal-filter-range-separator" aria-hidden>
+              /
+            </span>
             <input
               className="journal-filter-control"
               type="number"
@@ -1340,17 +1727,23 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
               step={0.01}
               inputMode="decimal"
               value={maxAmount}
-              onChange={(e) => setMaxAmount(e.target.value)}
+              onChange={(e) => {
+                clearAppliedPreset();
+                setMaxAmount(e.target.value);
+              }}
               aria-label="Filter cheques maximum amount"
             />
-          </label>
+          </div>
           <label className="journal-filter-slot journal-filter-slot-select">
             <span className="journal-filter-inline-label">Summary</span>
             <input
               className="journal-filter-control"
               type="search"
               value={summaryFilter}
-              onChange={(e) => setSummaryFilter(e.target.value)}
+              onChange={(e) => {
+                clearAppliedPreset();
+                setSummaryFilter(e.target.value);
+              }}
               aria-label="Filter cheques by summary"
               placeholder="Regex on summary"
             />
@@ -1513,6 +1906,42 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
             </tbody>
           </table>
         </div>
+
+        <dialog ref={saveDialogRef} aria-label="Save filter preset">
+          <form method="dialog" onSubmit={(e) => void handleSavePreset(e)}>
+            <h3>Save filter preset</h3>
+            <label>
+              Preset name
+              <input
+                aria-label="Preset name"
+                type="text"
+                value={saveName}
+                autoFocus
+                onChange={(e) => setSaveName(e.target.value)}
+                required
+                maxLength={200}
+              />
+            </label>
+            {saveError && (
+              <p className="error" role="alert">
+                {saveError}
+              </p>
+            )}
+            <div className="dialog-actions">
+              <button
+                type="button"
+                className="button-secondary"
+                onClick={() => setSaveDialogOpen(false)}
+                disabled={savePending}
+              >
+                Cancel
+              </button>
+              <button type="submit" disabled={savePending}>
+                {savePending ? "Saving…" : "Save"}
+              </button>
+            </div>
+          </form>
+        </dialog>
       </section>
 
       {editDialogOpen && selected && (

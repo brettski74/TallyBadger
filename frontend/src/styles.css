@@ -451,6 +451,29 @@ th {
   min-width: 9.5rem;
 }
 
+.journal-filter-range-group {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.35rem;
+  flex-shrink: 0;
+}
+
+.journal-filter-range-separator {
+  color: var(--text-muted);
+  font-size: 0.875rem;
+  user-select: none;
+}
+
+.journal-filter-range-group-date .journal-filter-control {
+  min-width: 8.75rem;
+}
+
+.journal-filter-range-group-number .journal-filter-control {
+  width: 4.75rem;
+  max-width: 4.75rem;
+}
+
 .journal-filter-slot-multi {
   position: relative;
   display: inline-flex;

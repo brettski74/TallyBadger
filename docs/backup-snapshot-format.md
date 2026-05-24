@@ -1,6 +1,6 @@
 # TallyBadger backup snapshot format
 
-This document defines the **versioned ZIP snapshot** used for database backup and restore. It stays aligned with **`format_version`** in `metadata.json` (current export: **1.7.0**; prior archives remain importable per the version window in **[STYLE.md](../STYLE.md)**).
+This document defines the **versioned ZIP snapshot** used for database backup and restore. It stays aligned with **`format_version`** in `metadata.json` (current export: **1.8.0**; prior archives remain importable per the version window in **[STYLE.md](../STYLE.md)**).
 
 Parent product spec: GitHub issue [#16](https://github.com/brettski74/TallyBadger/issues/16). Slice 1 ([#67](https://github.com/brettski74/TallyBadger/issues/67)) shipped **complete** export/import; slice 2 ([#68](https://github.com/brettski74/TallyBadger/issues/68)) adds **`configuration`** and **`financial`** modes with scoped validation and duplicate policies.
 
@@ -43,7 +43,7 @@ The set of data members (excluding `metadata.json`) must match **exactly** the m
 
 ### `configuration`
 
-**Includes:** `accounts`, `parties`, `party_match_patterns`, `ledger_settings`, `cel_rule_sets`, `import_templates`, and from **`format_version` 1.4.0** also `journal_entry_filter_presets`. For **`format_version` < 1.7.0**, `accrual_plans` is also included here ([#157](https://github.com/brettski74/TallyBadger/issues/157)).
+**Includes:** `accounts`, `parties`, `party_match_patterns`, `ledger_settings`, `cel_rule_sets`, `import_templates`, from **`format_version` 1.4.0** also `journal_entry_filter_presets`, and from **`format_version` 1.8.0** also `cheque_register_filter_presets` ([#196](https://github.com/brettski74/TallyBadger/issues/196)). For **`format_version` < 1.7.0**, `accrual_plans` is also included here ([#157](https://github.com/brettski74/TallyBadger/issues/157)).
 
 **Excludes:** `cheques`, `journal_entries`, `journal_lines`, `accrual_obligations`, `settlement_events`, `settlement_allocations`. From **1.7.0**, `accrual_plans` (moved to `financial`).
 
@@ -83,6 +83,7 @@ Order for the **full** set (partial archives load only the files present, in thi
 16. `journal_entry_attachments.json` — **1.1.0** `complete` / `financial` only.
 17. `import_templates.json`
 18. `journal_entry_filter_presets.json` — **1.4.0** `complete` / `configuration` only. The row's `definition` is a JSON object that round-trips the journal-entry filter dimensions; embedded `account_ids` and `party_ids` are validated against the archive's configuration members on import. Embedded `accrual_plan_ids` are validated against `accrual_plans.json` when that file is in the archive (**< 1.7.0** configuration / complete, or **≥ 1.7.0** complete / financial); for **≥ 1.7.0** configuration-only imports, `accrual_plan_ids` must resolve to **existing** `accrual_plans` rows in the target database.
+19. `cheque_register_filter_presets.json` — **1.8.0** `complete` / `configuration` only. The row's `definition` round-trips cheque-register filter dimensions and sort keys; numeric `party_ids`, `credit_account_ids`, and `debit_account_ids` are validated against the archive's `parties` / `accounts` members on import (`party_ids` may include the literal token `"null"` for no party, which is not FK-validated). Sort fields are not FK-validated.
 
 `ledger_settings` is exported as an array (typically one row with `id = 1`). New nullable columns may be added by later migrations (for example `default_cheque_credit_account_id` / `default_cheque_debit_account_id` at schema `020_*` for cheque last-used defaults, [#105](https://github.com/brettski74/TallyBadger/issues/105)); when present they are emitted as JSON `null` or an `accounts.id` integer and are validated as account foreign keys on import. Older archives that omit them remain importable into newer databases — the columns default to `NULL`.
 
@@ -180,6 +181,10 @@ settlement_allocations.json
 **`export_type: configuration`**, **`format_version` 1.7.0** — same members as **1.4.0** `configuration` but **without** `accrual_plans.json`.
 
 **`export_type: complete`**, **1.7.0** — union of **1.7.0** `financial` members and **1.7.0** `configuration` members (including `journal_entry_filter_presets.json`).
+
+**`export_type: configuration`**, **`format_version` 1.8.0** — same members as **1.7.0** `configuration`, plus **`cheque_register_filter_presets.json`**.
+
+**`export_type: complete`**, **1.8.0** — union of **1.8.0** `financial` members (same as **1.7.0** `financial`) and **1.8.0** `configuration` members (including `journal_entry_filter_presets.json` and `cheque_register_filter_presets.json`).
 
 Example `accounts.json` snippet:
 
