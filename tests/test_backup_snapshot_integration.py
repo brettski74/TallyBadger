@@ -64,6 +64,7 @@ def _truncate_all_data(integration_db_url: str) -> None:
                 cur.execute(
                     """
                     TRUNCATE TABLE
+                      cheque_register_filter_presets,
                       journal_entry_filter_presets,
                       import_templates,
                       settlement_allocations,
@@ -1207,3 +1208,138 @@ def test_filter_preset_with_missing_account_id_rejected_by_import(
         match="account_ids",
     ):
         import_snapshot(conn, tampered)
+
+
+def test_cheque_register_filter_presets_round_trip_through_configuration_snapshot(
+    ledger_service: LedgerService,
+    integration_db_url: str,
+) -> None:
+    """#196: cheque register presets survive configuration export/import."""
+    from tallybadger.ledger.cheque_register_filter_preset_service import (
+        ChequeRegisterFilterPresetService,
+    )
+    from tallybadger.ledger.models import (
+        ChequeRegisterFilterPresetDefinition,
+        ChequeRegisterFilterPresetSortKey,
+    )
+
+    cash = ledger_service.create_account(AccountCreate(name="Cash", type="asset"))
+    expense = ledger_service.create_account(AccountCreate(name="Rent", type="expense"))
+
+    @contextmanager
+    def connection_factory():
+        with connect(integration_db_url, row_factory=dict_row) as conn:
+            yield conn
+
+    preset_service = ChequeRegisterFilterPresetService(
+        connection_factory=connection_factory,
+    )
+    preset_service.create_preset(
+        name="Open chequing",
+        definition=ChequeRegisterFilterPresetDefinition(
+            status="open",
+            credit_account_ids=[cash.id],
+            sort=[ChequeRegisterFilterPresetSortKey(field="amount", direction="desc")],
+        ),
+    )
+
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        archive = export_snapshot(conn, "configuration")
+
+    _truncate_all_data(integration_db_url)
+
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        import_snapshot(conn, archive)
+
+    restored = preset_service.list_presets()
+    assert [p.name for p in restored] == ["Open chequing"]
+    assert restored[0].definition.credit_account_ids == [cash.id]
+    assert restored[0].definition.sort[0].field == "amount"
+    assert expense.id not in restored[0].definition.credit_account_ids
+
+
+def test_cheque_register_filter_preset_missing_account_rejected_by_import(
+    ledger_service: LedgerService,
+    integration_db_url: str,
+) -> None:
+    """#196: embedded account ids in cheque preset definitions are validated."""
+    from tallybadger.ledger.cheque_register_filter_preset_service import (
+        ChequeRegisterFilterPresetService,
+    )
+    from tallybadger.ledger.models import ChequeRegisterFilterPresetDefinition
+
+    cash = ledger_service.create_account(AccountCreate(name="Cash", type="asset"))
+
+    @contextmanager
+    def connection_factory():
+        with connect(integration_db_url, row_factory=dict_row) as conn:
+            yield conn
+
+    preset_service = ChequeRegisterFilterPresetService(connection_factory=connection_factory)
+    preset_service.create_preset(
+        name="Refs cash",
+        definition=ChequeRegisterFilterPresetDefinition(credit_account_ids=[cash.id]),
+    )
+
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        archive = export_snapshot(conn, "configuration")
+
+    zin = zipfile.ZipFile(io.BytesIO(archive))
+    try:
+        names = [n for n in zin.namelist() if not n.endswith("/")]
+        table_members: dict[str, bytes] = {
+            n: zin.read(n) for n in names if n != "metadata.json"
+        }
+        metadata = json.loads(zin.read("metadata.json").decode("utf-8"))
+    finally:
+        zin.close()
+    accounts_rows = json.loads(table_members["accounts.json"].decode("utf-8"))
+    accounts_rows = [r for r in accounts_rows if int(r["id"]) != cash.id]
+    table_members["accounts.json"] = json.dumps(
+        accounts_rows,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    tampered = _rezip_table_members_with_metadata(table_members, metadata)
+
+    _truncate_all_data(integration_db_url)
+    with connect(integration_db_url, row_factory=dict_row) as conn, pytest.raises(
+        SnapshotValidationError,
+        match="credit_account_ids",
+    ):
+        import_snapshot(conn, tampered)
+
+
+def test_financial_export_excludes_cheque_register_filter_presets(
+    ledger_service: LedgerService,
+    integration_db_url: str,
+) -> None:
+    """#196: financial-only archives do not carry cheque register presets."""
+    from tallybadger.ledger.cheque_register_filter_preset_service import (
+        ChequeRegisterFilterPresetService,
+    )
+    from tallybadger.ledger.models import ChequeRegisterFilterPresetDefinition
+
+    _ = ledger_service.create_account(AccountCreate(name="Cash", type="asset"))
+
+    @contextmanager
+    def connection_factory():
+        with connect(integration_db_url, row_factory=dict_row) as conn:
+            yield conn
+
+    preset_service = ChequeRegisterFilterPresetService(connection_factory=connection_factory)
+    preset_service.create_preset(
+        name="Any",
+        definition=ChequeRegisterFilterPresetDefinition(status="open"),
+    )
+
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        archive = export_snapshot(conn, "financial")
+
+    zin = zipfile.ZipFile(io.BytesIO(archive))
+    try:
+        names = {n for n in zin.namelist() if not n.endswith("/")}
+    finally:
+        zin.close()
+    assert "cheque_register_filter_presets.json" not in names

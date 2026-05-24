@@ -35,6 +35,7 @@ FORMAT_VERSION_HISTORY: tuple[str, ...] = (
     "1.5.0",
     "1.6.0",
     "1.7.0",
+    "1.8.0",
 )
 
 
@@ -66,6 +67,7 @@ CONFIGURATION_TABLES_BASE: tuple[str, ...] = (
 )
 
 JOURNAL_ENTRY_FILTER_PRESET_TABLE = "journal_entry_filter_presets"
+CHEQUE_REGISTER_FILTER_PRESET_TABLE = "cheque_register_filter_presets"
 
 # Journal entry attachment metadata + links (``format_version`` ≥ 1.1.0, complete/financial only).
 ATTACHMENT_SNAPSHOT_TABLES: tuple[str, ...] = ("attachments", "journal_entry_attachments")
@@ -101,6 +103,11 @@ def snapshot_includes_filter_presets(format_version: str) -> bool:
     return _format_version_tuple(format_version) >= (1, 4, 0)
 
 
+def snapshot_includes_cheque_register_filter_presets(format_version: str) -> bool:
+    """``cheque_register_filter_presets.json`` applies for ``format_version`` ≥ 1.8.0."""
+    return _format_version_tuple(format_version) >= (1, 8, 0)
+
+
 def snapshot_includes_import_batches(format_version: str) -> bool:
     """``import_batches.json`` applies for ``format_version`` ≥ 1.5.0 (``complete`` / ``financial``)."""
     return _format_version_tuple(format_version) >= (1, 5, 0)
@@ -124,6 +131,8 @@ def configuration_tables_for_format(format_version: str) -> tuple[str, ...]:
         parts.insert(idx, "accrual_plans")
     if snapshot_includes_filter_presets(format_version):
         parts.append(JOURNAL_ENTRY_FILTER_PRESET_TABLE)
+    if snapshot_includes_cheque_register_filter_presets(format_version):
+        parts.append(CHEQUE_REGISTER_FILTER_PRESET_TABLE)
     return tuple(parts)
 
 
@@ -331,6 +340,7 @@ def _truncate_complete_scope(conn: Connection) -> None:
         cur.execute(
             """
             TRUNCATE TABLE
+              cheque_register_filter_presets,
               journal_entry_filter_presets,
               import_templates,
               settlement_allocations,
@@ -677,6 +687,44 @@ def _validate_configuration_fks(
             parties=party,
             accrual_plans=plans,
         )
+
+    cheque_presets = payloads.get(CHEQUE_REGISTER_FILTER_PRESET_TABLE)
+    if cheque_presets is not None:
+        _validate_cheque_register_filter_preset_definitions_against_config(
+            cheque_presets,
+            accounts=acct,
+            parties=party,
+        )
+
+
+def _validate_cheque_register_filter_preset_definitions_against_config(
+    presets: list[dict[str, Any]],
+    *,
+    accounts: set[int],
+    parties: set[int],
+) -> None:
+    """Embedded ids in cheque preset ``definition`` must match configuration members."""
+    for i, row in enumerate(presets):
+        defn = row.get("definition")
+        if not isinstance(defn, dict):
+            raise SnapshotValidationError(
+                f"cheque_register_filter_presets[{i}] definition must be a JSON object"
+            )
+        for v in defn.get("party_ids", []) or []:
+            if v == "null":
+                continue
+            if int(v) not in parties:
+                raise SnapshotValidationError(
+                    f"cheque_register_filter_presets[{i}] definition.party_ids "
+                    f"contains id={v} that has no matching row in the archive"
+                )
+        for field_name in ("credit_account_ids", "debit_account_ids"):
+            for v in defn.get(field_name, []) or []:
+                if int(v) not in accounts:
+                    raise SnapshotValidationError(
+                        f"cheque_register_filter_presets[{i}] definition.{field_name} "
+                        f"contains id={v} that has no matching row in the archive"
+                    )
 
 
 def _normalize_legacy_settlement_payloads(
@@ -1256,6 +1304,7 @@ def _resync_serials(conn: Connection) -> None:
         "journal_entry_attachments",
         "import_templates",
         "journal_entry_filter_presets",
+        "cheque_register_filter_presets",
     ):
         stmt = sql.SQL(
             "SELECT setval(pg_get_serial_sequence({tbl}, 'id'), "
