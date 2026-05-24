@@ -23,6 +23,6 @@ Canonical references: **[STYLE.md](../STYLE.md)** (how we build) and **[ARCH.md]
 | Public API or stable JSON | Routes or client-visible JSON | |
 | Architecture vs style | Boundaries/lifecycle vs conventions / testing / PR hygiene | |
 | Feature-level domain docs | Behaviour documented under `docs/` | |
-| Tests | All tests, including front-end, back-end, integration and any other automated tests, have been run and pass after all code changes and prior to merge. Include test result totals in PR body. |
+| Tests | All tests, including front-end, back-end, integration and any other automated tests, have been run and pass after all code changes and prior to merge. Include test result totals and execution times in PR body. |
 
 If there is **no architecture change**, say so explicitly in the Summary or Verification section so reviewers skip ARCH.md churn.
