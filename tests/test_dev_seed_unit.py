@@ -91,7 +91,7 @@ def test_export_dev_seed_sql_import_template_includes_default_import_columns(tmp
     conn_ctx.__exit__.return_value = None
 
     out = tmp_path / "seed.sql"
-    with patch("tallybadger.dev_seed.connect", return_value=conn_ctx):
+    with patch("tallybadger.dev_seed.connect_database", return_value=conn_ctx):
         export_dev_seed_sql(database_url="postgresql://unused", destination=out)
 
     text = out.read_text(encoding="utf-8")

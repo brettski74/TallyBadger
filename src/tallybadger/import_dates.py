@@ -8,34 +8,21 @@ deliberately.
 
 from __future__ import annotations
 
-import os
 from datetime import date, datetime
 
 import pendulum
 from pendulum.tz.timezone import Timezone
 
+from tallybadger.core.timezone import application_timezone_name
+
 
 def import_parse_timezone() -> Timezone:
     """Timezone for ``datetime`` CSV columns when the value has no UTC offset.
 
-    Resolution order:
-
-    1. :envvar:`TALLYBADGER_IMPORT_TZ` (IANA name, e.g. ``Australia/Sydney``)
-    2. Standard :envvar:`TZ`
-    3. :func:`pendulum.local_timezone` (server default)
-    4. ``UTC`` if nothing else works
+    Uses :func:`tallybadger.core.timezone.application_timezone_name` so import
+    parsing and PostgreSQL ``CURRENT_DATE`` share the same calendar.
     """
-    for key in ("TALLYBADGER_IMPORT_TZ", "TZ"):
-        raw = os.environ.get(key, "").strip()
-        if raw:
-            try:
-                return pendulum.timezone(raw)
-            except Exception:
-                continue
-    try:
-        return pendulum.local_timezone()
-    except Exception:
-        return pendulum.timezone("UTC")
+    return pendulum.timezone(application_timezone_name())
 
 
 def parse_import_date_string(value: str, fmt: str) -> date:

@@ -103,6 +103,7 @@ Error messages should be **brief** but **informative**. They should always inclu
 For implementation to be complete:
 - All requirements must have been implemented.
 - Tests must have been added or updated to adequately test new functionality or fixed bugs (not required when the change set is **markdown-only**; see exception below).
+- Make sure you're running all the tests!!!!! I don't know how much more forcefully I can say it, but the section on running the full test suite is part of the definition of done. I'm sick of remining you that this needs to be done as part of implementation.
 
 ### Running the full test suite (default — mandatory)
 

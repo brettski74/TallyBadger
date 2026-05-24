@@ -163,6 +163,17 @@ th {
   color: var(--error);
 }
 
+.error-text {
+  margin: 0.5rem 0;
+  border: 1px solid #b91c1c;
+  background: #fff5f5;
+  color: #991b1b;
+  border-radius: 6px;
+  padding: 0.4rem 0.55rem;
+  font-size: 0.92rem;
+  line-height: 1.35;
+}
+
 .muted {
   color: var(--text-muted);
   font-size: 0.95rem;

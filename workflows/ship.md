@@ -27,4 +27,5 @@ Use this workflow for **user-led acceptance testing** after implementation exist
 - Design and implement tests before implementing to solution to any reported issues.
 - Commit any unsaved prior work before starting work on a new issue.
 - Acceptance test is generally run against the local dev instance, running locally in the current workspace.
+- Prior to merge and after any code changes have been made, all tests must have been run. This includes front-end, back-end, integration and any other automated tests that exist for this project. If any code changes have been made after any tests have been run, you need to re-run those tests to ensure that all tests have been run after any and all code changes before we are ready to merge. For the purposes of this point, any change to a file other than a markdown (*.md) file is considered a code change.
 

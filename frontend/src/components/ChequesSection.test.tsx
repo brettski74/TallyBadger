@@ -33,6 +33,11 @@ const parties: Party[] = [];
 
 interface RouteMocks {
   cheques?: unknown;
+  filterOptions?: {
+    parties: Array<{ id: number | null; name: string }>;
+    credit_accounts: Array<{ id: number; name: string }>;
+    debit_accounts: Array<{ id: number; name: string }>;
+  };
   settings?: Partial<{
     accounts_receivable_account_id: number | null;
     accounts_payable_account_id: number | null;
@@ -63,6 +68,31 @@ function defaultSettings(overrides: RouteMocks["settings"] = {}) {
   };
 }
 
+function defaultFilterOptions() {
+  return {
+    parties: [
+      { id: null, name: "(no party)" },
+      { id: 10, name: "Bill Smith" },
+    ],
+    credit_accounts: [{ id: 1, name: "Chequing" }],
+    debit_accounts: [{ id: 2, name: "Rent" }],
+  };
+}
+
+function filterOptionsResponse() {
+  return new Response(JSON.stringify(defaultFilterOptions()), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+function chequeListCalls(fetchMock: ReturnType<typeof vi.spyOn>) {
+  return fetchMock.mock.calls.filter((call: unknown[]) => {
+    const url = String(call[0]);
+    return url.includes("/cheques") && !url.includes("/filter-options");
+  });
+}
+
 function installFetchMock(routes: RouteMocks = {}) {
   return vi
     .spyOn(globalThis, "fetch")
@@ -74,10 +104,19 @@ function installFetchMock(routes: RouteMocks = {}) {
           headers: { "Content-Type": "application/json" },
         });
       }
-      return new Response(JSON.stringify({ cheques: routes.cheques ?? [] }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
+      if (url.includes("/cheques/filter-options")) {
+        return new Response(JSON.stringify(routes.filterOptions ?? defaultFilterOptions()), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.includes("/cheques")) {
+        return new Response(JSON.stringify({ cheques: routes.cheques ?? [] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response("not found", { status: 404 });
     });
 }
 
@@ -88,12 +127,129 @@ describe("ChequesSection", () => {
     render(<ChequesSection accounts={accounts} parties={parties} />);
 
     await waitFor(() => {
-      const chequeCalls = fetchMock.mock.calls.filter(
-        (call: unknown[]) => String(call[0]).includes("/cheques"),
-      );
+      const chequeCalls = chequeListCalls(fetchMock);
       expect(chequeCalls.length).toBeGreaterThan(0);
       expect(String(chequeCalls[0][0])).toContain("status=open");
     });
+  });
+
+  it("requests party_ids=null when (no party) is selected", async () => {
+    const fetchMock = installFetchMock();
+
+    render(<ChequesSection accounts={accounts} parties={parties} />);
+
+    await waitFor(() => expect(chequeListCalls(fetchMock).length).toBeGreaterThan(0));
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Filter cheques by party" }));
+    await user.click(screen.getByRole("checkbox", { name: "(no party)" }));
+
+    await waitFor(() => {
+      const url = String(chequeListCalls(fetchMock).at(-1)?.[0]);
+      expect(url).toContain("party_ids=null");
+      expect(url).not.toContain("include_no_party");
+    });
+  });
+
+  it("requests numeric party_ids and party_ids=null when both are selected", async () => {
+    const fetchMock = installFetchMock();
+
+    render(<ChequesSection accounts={accounts} parties={parties} />);
+
+    await waitFor(() => expect(chequeListCalls(fetchMock).length).toBeGreaterThan(0));
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Filter cheques by party" }));
+    await user.click(screen.getByRole("checkbox", { name: "Bill Smith" }));
+    await user.click(screen.getByRole("checkbox", { name: "(no party)" }));
+
+    await waitFor(() => {
+      const url = String(chequeListCalls(fetchMock).at(-1)?.[0]);
+      expect(url).toContain("party_ids=10");
+      expect(url).toContain("party_ids=null");
+    });
+  });
+
+  it("requests summary filter in the list URL", async () => {
+    const fetchMock = installFetchMock();
+
+    render(<ChequesSection accounts={accounts} parties={parties} />);
+
+    await waitFor(() => expect(chequeListCalls(fetchMock).length).toBeGreaterThan(0));
+
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText("Filter cheques by summary"), "rent");
+
+    await waitFor(() => {
+      const url = String(chequeListCalls(fetchMock).at(-1)?.[0]);
+      expect(url).toContain("summary=rent");
+    });
+  });
+
+  it("refresh re-requests with current filters", async () => {
+    const fetchMock = installFetchMock();
+
+    render(<ChequesSection accounts={accounts} parties={parties} />);
+
+    await waitFor(() => expect(chequeListCalls(fetchMock).length).toBeGreaterThan(0));
+
+    const user = userEvent.setup();
+    await user.selectOptions(screen.getByLabelText("Filter cheques by status"), "cleared");
+    await waitFor(() => {
+      expect(String(chequeListCalls(fetchMock).at(-1)?.[0])).toContain("status=cleared");
+    });
+
+    fetchMock.mockClear();
+    await user.click(screen.getByRole("button", { name: "Refresh list" }));
+
+    await waitFor(() => {
+      const calls = chequeListCalls(fetchMock);
+      expect(calls.length).toBe(1);
+      expect(String(calls[0][0])).toContain("status=cleared");
+    });
+  });
+
+  it("renders Cleared column with date or em dash", async () => {
+    installFetchMock({
+      cheques: [
+        {
+          id: 1,
+          credit_account_id: 1,
+          debit_account_id: 2,
+          summary: "Open one",
+          cheque_number: 1,
+          issue_date: "2026-05-01",
+          cleared_date: null,
+          amount: "10.00",
+          party_id: null,
+          status: "open",
+          created_at: "2026-04-01T00:00:00Z",
+          updated_at: "2026-04-01T00:00:00Z",
+        },
+        {
+          id: 2,
+          credit_account_id: 1,
+          debit_account_id: 2,
+          summary: "Cleared one",
+          cheque_number: 2,
+          issue_date: "2026-05-02",
+          cleared_date: "2026-05-03",
+          amount: "20.00",
+          party_id: null,
+          status: "cleared",
+          created_at: "2026-04-01T00:00:00Z",
+          updated_at: "2026-04-01T00:00:00Z",
+        },
+      ],
+    });
+
+    render(<ChequesSection accounts={accounts} parties={parties} />);
+
+    const table = await screen.findByRole("table");
+    const openRow = within(table).getByRole("row", { name: /Open one/i });
+    const clearedRow = within(table).getByRole("row", { name: /Cleared one/i });
+    expect(within(openRow).getAllByRole("cell")[4]).toHaveTextContent("—");
+    expect(within(clearedRow).getAllByRole("cell")[4]).toHaveTextContent("2026-05-03");
   });
 
   it("requests status=all when filter is All", async () => {
@@ -110,9 +266,7 @@ describe("ChequesSection", () => {
     await user.selectOptions(screen.getByLabelText("Filter cheques by status"), "all");
 
     await waitFor(() => {
-      const chequeCalls = fetchMock.mock.calls.filter(
-        (call: unknown[]) => String(call[0]).includes("/cheques"),
-      );
+      const chequeCalls = chequeListCalls(fetchMock);
       expect(chequeCalls.length).toBeGreaterThan(0);
       expect(String(chequeCalls[0][0])).toContain("status=all");
     });
@@ -298,6 +452,34 @@ describe("ChequesSection", () => {
     expect(within(dialog).queryByRole("button", { name: /Save changes/i })).not.toBeInTheDocument();
     expect(within(dialog).getByLabelText(/^Summary/i)).toBeDisabled();
   });
+
+  it("shows list fetch errors with error-text styling", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/ledger-settings")) {
+        return new Response(JSON.stringify(defaultSettings()), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.includes("/cheques/filter-options")) {
+        return filterOptionsResponse();
+      }
+      if (url.includes("/cheques")) {
+        return new Response(JSON.stringify({ detail: "service unavailable" }), {
+          status: 503,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    render(<ChequesSection accounts={accounts} parties={parties} />);
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveClass("error-text");
+    expect(alert).toHaveTextContent("service unavailable");
+  });
 });
 
 describe("ChequesSection #105 — picker eligibility and last-used defaults", () => {
@@ -353,7 +535,9 @@ describe("ChequesSection #105 — picker eligibility and last-used defaults", ()
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: /New cheque/i }));
 
-    const creditSelect = await screen.findByLabelText(/Credit account/i);
+    const creditSelect = await within(await screen.findByRole("dialog")).findByLabelText(
+      /Credit account \(cheque\)/i,
+    );
     const optionNames = within(creditSelect)
       .getAllByRole("option")
       .map((o) => (o as HTMLOptionElement).text);
@@ -402,7 +586,9 @@ describe("ChequesSection #105 — picker eligibility and last-used defaults", ()
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: /New cheque/i }));
 
-    const creditSelect = (await screen.findByLabelText(/Credit account/i)) as HTMLSelectElement;
+    const creditSelect = (await within(await screen.findByRole("dialog")).findByLabelText(
+      /Credit account \(cheque\)/i,
+    )) as HTMLSelectElement;
     const debitSelect = (await screen.findByLabelText(/^Debit account/i)) as HTMLSelectElement;
     expect(creditSelect.value).toBe("2");
     expect(debitSelect.value).toBe("3");
@@ -422,7 +608,9 @@ describe("ChequesSection #105 — picker eligibility and last-used defaults", ()
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: /New cheque/i }));
 
-    const creditSelect = (await screen.findByLabelText(/Credit account/i)) as HTMLSelectElement;
+    const creditSelect = (await within(await screen.findByRole("dialog")).findByLabelText(
+      /Credit account \(cheque\)/i,
+    )) as HTMLSelectElement;
     const debitSelect = (await screen.findByLabelText(/^Debit account/i)) as HTMLSelectElement;
     expect(creditSelect.value).toBe("");
     expect(debitSelect.value).toBe("");
@@ -455,7 +643,7 @@ describe("ChequesSection #105 — picker eligibility and last-used defaults", ()
     await user.click(within(table).getByRole("button", { name: "Edit cheque #99" }));
 
     const dialog = await screen.findByRole("dialog");
-    const creditSelect = (await within(dialog).findByLabelText(/Credit account/i)) as HTMLSelectElement;
+    const creditSelect = (await within(dialog).findByLabelText(/Credit account \(cheque\)/i)) as HTMLSelectElement;
     expect(creditSelect.value).toBe("5");
     const optionNames = within(creditSelect)
       .getAllByRole("option")
@@ -475,6 +663,9 @@ describe("ChequesSection #141 — cheque series", () => {
           status: 200,
           headers: { "Content-Type": "application/json" },
         });
+      }
+      if (url.includes("/cheques/filter-options")) {
+        return filterOptionsResponse();
       }
       if (url.includes("/cheques/series/preview") && init?.method === "POST") {
         return new Response(
@@ -512,15 +703,16 @@ describe("ChequesSection #141 — cheque series", () => {
     const user = userEvent.setup();
     await screen.findByRole("table");
     await user.click(screen.getByRole("button", { name: /New cheque/i }));
-    await user.click(screen.getByRole("checkbox", { name: /Create as series/i }));
-    await user.selectOptions(screen.getByLabelText(/^Credit account/i), "1");
-    await user.selectOptions(screen.getByLabelText(/^Debit account/i), "2");
-    await user.type(screen.getByLabelText(/^Summary/i), "Snow");
-    await user.type(screen.getByLabelText(/Starting cheque number/i), "1001");
-    fireEvent.change(screen.getByLabelText(/First issue date/i), {
+    const createDialog = await screen.findByRole("dialog");
+    await user.click(within(createDialog).getByRole("checkbox", { name: /Create as series/i }));
+    await user.selectOptions(within(createDialog).getByLabelText(/Credit account \(cheque\)/i), "1");
+    await user.selectOptions(within(createDialog).getByLabelText(/^Debit account/i), "2");
+    await user.type(within(createDialog).getByLabelText(/^Summary/i), "Snow");
+    await user.type(within(createDialog).getByLabelText(/Starting cheque number/i), "1001");
+    fireEvent.change(within(createDialog).getByLabelText(/First issue date/i), {
       target: { value: "2025-11-01" },
     });
-    await user.type(screen.getByLabelText(/^Amount/i), "900");
+    await user.type(within(createDialog).getByLabelText(/^Amount/i), "900");
     await user.click(screen.getByRole("button", { name: "Preview" }));
     await waitFor(() => {
       expect(screen.getByText("Open cheque number already in use on this credit account")).toBeInTheDocument();
@@ -538,6 +730,9 @@ describe("ChequesSection #141 — cheque series", () => {
           status: 200,
           headers: { "Content-Type": "application/json" },
         });
+      }
+      if (url.includes("/cheques/filter-options")) {
+        return filterOptionsResponse();
       }
       if (url.includes("/cheques/series/preview")) {
         return new Response(
@@ -587,15 +782,16 @@ describe("ChequesSection #141 — cheque series", () => {
     const user = userEvent.setup();
     await screen.findByRole("table");
     await user.click(screen.getByRole("button", { name: /New cheque/i }));
-    await user.click(screen.getByRole("checkbox", { name: /Create as series/i }));
-    await user.selectOptions(screen.getByLabelText(/^Credit account/i), "1");
-    await user.selectOptions(screen.getByLabelText(/^Debit account/i), "2");
-    await user.type(screen.getByLabelText(/^Summary/i), "Series");
-    await user.type(screen.getByLabelText(/Starting cheque number/i), "10");
-    fireEvent.change(screen.getByLabelText(/First issue date/i), {
+    const createDialog = await screen.findByRole("dialog");
+    await user.click(within(createDialog).getByRole("checkbox", { name: /Create as series/i }));
+    await user.selectOptions(within(createDialog).getByLabelText(/Credit account \(cheque\)/i), "1");
+    await user.selectOptions(within(createDialog).getByLabelText(/^Debit account/i), "2");
+    await user.type(within(createDialog).getByLabelText(/^Summary/i), "Series");
+    await user.type(within(createDialog).getByLabelText(/Starting cheque number/i), "10");
+    fireEvent.change(within(createDialog).getByLabelText(/First issue date/i), {
       target: { value: "2026-01-01" },
     });
-    await user.type(screen.getByLabelText(/^Amount/i), "50");
+    await user.type(within(createDialog).getByLabelText(/^Amount/i), "50");
     await user.click(screen.getByRole("button", { name: "Preview" }));
     await waitFor(() => {
       expect(screen.getByRole("button", { name: /create series/i })).toBeEnabled();
@@ -636,6 +832,9 @@ describe("ChequesSection #132 — keyboard shortcuts", () => {
           status: 200,
           headers: { "Content-Type": "application/json" },
         });
+      }
+      if (url.includes("/cheques/filter-options")) {
+        return filterOptionsResponse();
       }
       if (url.includes("/cheques/7") && init?.method === "PATCH") {
         return new Response(
@@ -678,6 +877,9 @@ describe("ChequesSection #132 — keyboard shortcuts", () => {
           status: 200,
           headers: { "Content-Type": "application/json" },
         });
+      }
+      if (url.includes("/cheques/filter-options")) {
+        return filterOptionsResponse();
       }
       if (url.includes("/cheques/7") && init?.method === "PATCH") {
         return new Response(
@@ -762,6 +964,9 @@ describe("ChequesSection #132 — keyboard shortcuts", () => {
           headers: { "Content-Type": "application/json" },
         });
       }
+      if (url.includes("/cheques/filter-options")) {
+        return filterOptionsResponse();
+      }
       if (url.includes("/cheques") && !url.includes("/series") && init?.method === "POST") {
         return new Response(
           JSON.stringify({ ...openCheque, id: 99, summary: "Keyboard create" }),
@@ -778,12 +983,13 @@ describe("ChequesSection #132 — keyboard shortcuts", () => {
     const user = userEvent.setup();
     await screen.findByRole("table");
     await user.click(screen.getByRole("button", { name: /New cheque/i }));
-    await user.selectOptions(screen.getByLabelText(/^Credit account/i), "1");
-    await user.selectOptions(screen.getByLabelText(/^Debit account/i), "2");
-    await user.type(screen.getByLabelText(/^Summary/i), "Keyboard create");
-    await user.type(screen.getByLabelText(/^Cheque number/i), "42");
-    fireEvent.change(screen.getByLabelText(/^Issue date/i), { target: { value: "2026-05-10" } });
-    const amountInput = screen.getByLabelText(/^Amount/i);
+    const createDialog = await screen.findByRole("dialog");
+    await user.selectOptions(within(createDialog).getByLabelText(/Credit account \(cheque\)/i), "1");
+    await user.selectOptions(within(createDialog).getByLabelText(/^Debit account/i), "2");
+    await user.type(within(createDialog).getByLabelText(/^Summary/i), "Keyboard create");
+    await user.type(within(createDialog).getByLabelText(/^Cheque number/i), "42");
+    fireEvent.change(within(createDialog).getByLabelText(/^Issue date/i), { target: { value: "2026-05-10" } });
+    const amountInput = within(createDialog).getByLabelText(/^Amount/i);
     await user.type(amountInput, "100");
     amountInput.focus();
     fireEvent.keyDown(amountInput, { key: "s", code: "KeyS", ctrlKey: true, bubbles: true });
@@ -810,6 +1016,9 @@ describe("ChequesSection #132 — keyboard shortcuts", () => {
           status: 200,
           headers: { "Content-Type": "application/json" },
         });
+      }
+      if (url.includes("/cheques/filter-options")) {
+        return filterOptionsResponse();
       }
       if (url.includes("/cheques/series/preview") && init?.method === "POST") {
         return new Response(
@@ -838,13 +1047,14 @@ describe("ChequesSection #132 — keyboard shortcuts", () => {
     const user = userEvent.setup();
     await screen.findByRole("table");
     await user.click(screen.getByRole("button", { name: /New cheque/i }));
-    await user.click(screen.getByRole("checkbox", { name: /Create as series/i }));
-    await user.selectOptions(screen.getByLabelText(/^Credit account/i), "1");
-    await user.selectOptions(screen.getByLabelText(/^Debit account/i), "2");
-    await user.type(screen.getByLabelText(/^Summary/i), "Series");
-    await user.type(screen.getByLabelText(/Starting cheque number/i), "10");
-    fireEvent.change(screen.getByLabelText(/First issue date/i), { target: { value: "2026-01-01" } });
-    const amountInput = screen.getByLabelText(/^Amount/i);
+    const createDialog = await screen.findByRole("dialog");
+    await user.click(within(createDialog).getByRole("checkbox", { name: /Create as series/i }));
+    await user.selectOptions(within(createDialog).getByLabelText(/Credit account \(cheque\)/i), "1");
+    await user.selectOptions(within(createDialog).getByLabelText(/^Debit account/i), "2");
+    await user.type(within(createDialog).getByLabelText(/^Summary/i), "Series");
+    await user.type(within(createDialog).getByLabelText(/Starting cheque number/i), "10");
+    fireEvent.change(within(createDialog).getByLabelText(/First issue date/i), { target: { value: "2026-01-01" } });
+    const amountInput = within(createDialog).getByLabelText(/^Amount/i);
     await user.type(amountInput, "50");
     amountInput.focus();
     fireEvent.keyDown(amountInput, { key: "s", code: "KeyS", ctrlKey: true, bubbles: true });
@@ -865,6 +1075,9 @@ describe("ChequesSection #132 — keyboard shortcuts", () => {
           status: 200,
           headers: { "Content-Type": "application/json" },
         });
+      }
+      if (url.includes("/cheques/filter-options")) {
+        return filterOptionsResponse();
       }
       if (url.includes("/cheques/series/preview")) {
         return new Response(
@@ -899,13 +1112,14 @@ describe("ChequesSection #132 — keyboard shortcuts", () => {
     const user = userEvent.setup();
     await screen.findByRole("table");
     await user.click(screen.getByRole("button", { name: /New cheque/i }));
-    await user.click(screen.getByRole("checkbox", { name: /Create as series/i }));
-    await user.selectOptions(screen.getByLabelText(/^Credit account/i), "1");
-    await user.selectOptions(screen.getByLabelText(/^Debit account/i), "2");
-    await user.type(screen.getByLabelText(/^Summary/i), "Series");
-    await user.type(screen.getByLabelText(/Starting cheque number/i), "10");
-    fireEvent.change(screen.getByLabelText(/First issue date/i), { target: { value: "2026-01-01" } });
-    await user.type(screen.getByLabelText(/^Amount/i), "50");
+    const createDialog = await screen.findByRole("dialog");
+    await user.click(within(createDialog).getByRole("checkbox", { name: /Create as series/i }));
+    await user.selectOptions(within(createDialog).getByLabelText(/Credit account \(cheque\)/i), "1");
+    await user.selectOptions(within(createDialog).getByLabelText(/^Debit account/i), "2");
+    await user.type(within(createDialog).getByLabelText(/^Summary/i), "Series");
+    await user.type(within(createDialog).getByLabelText(/Starting cheque number/i), "10");
+    fireEvent.change(within(createDialog).getByLabelText(/First issue date/i), { target: { value: "2026-01-01" } });
+    await user.type(within(createDialog).getByLabelText(/^Amount/i), "50");
     await user.click(screen.getByRole("button", { name: "Preview" }));
     await waitFor(() => {
       expect(screen.getByRole("button", { name: /create series \(ctrl\+s\)/i })).toBeEnabled();
@@ -930,7 +1144,8 @@ describe("ChequesSection #132 — keyboard shortcuts", () => {
     const user = userEvent.setup();
     await screen.findByRole("table");
     await user.click(screen.getByRole("button", { name: /New cheque/i }));
-    await user.type(screen.getByLabelText(/^Summary/i), "Draft summary");
+    const createDialog = await screen.findByRole("dialog");
+    await user.type(within(createDialog).getByLabelText(/^Summary/i), "Draft summary");
     fireEvent.keyDown(document, { key: "Escape" });
 
     await waitFor(() => {
@@ -945,10 +1160,11 @@ describe("ChequesSection #132 — keyboard shortcuts", () => {
     const user = userEvent.setup();
     await screen.findByRole("table");
     await user.click(screen.getByRole("button", { name: /New cheque/i }));
-    await user.type(screen.getByLabelText(/^Summary/i), "Changed");
+    const createDialog = await screen.findByRole("dialog");
+    await user.type(within(createDialog).getByLabelText(/^Summary/i), "Changed");
     fireEvent.keyDown(document, { key: "d", ctrlKey: true, shiftKey: true });
 
     expect(screen.getByRole("heading", { name: "New cheque" })).toBeInTheDocument();
-    expect(screen.getByLabelText(/^Summary/i)).toHaveValue("");
+    expect(within(createDialog).getByLabelText(/^Summary/i)).toHaveValue("");
   });
 });
