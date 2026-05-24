@@ -102,3 +102,38 @@ def test_tbload_parse_args_quiet() -> None:
     args = tbload.parse_args(["-q", "-i", "/tmp/snap.zip"])
     assert args.quiet is True
     assert args.input == "/tmp/snap.zip"
+
+
+def test_tbload_parse_args_timeout() -> None:
+    assert tbload.parse_args([]).timeout is None
+    assert tbload.parse_args(["-t", "5"]).timeout == 5.0
+    assert tbload.parse_args(["--timeout", "12.5"]).timeout == 12.5
+
+
+def test_tbload_warns_when_timeout_given_with_file(capsys: pytest.CaptureFixture[str]) -> None:
+    tbload.maybe_warn_timeout_ignored_for_file_input(
+        input_path="/tmp/snap.zip",
+        timeout_specified=True,
+    )
+    captured = capsys.readouterr()
+    assert "warning:" in captured.err
+    assert "standard input" in captured.err
+    assert "ignored" in captured.err
+
+
+def test_tbload_no_timeout_warning_for_stdin(capsys: pytest.CaptureFixture[str]) -> None:
+    tbload.maybe_warn_timeout_ignored_for_file_input(
+        input_path=None,
+        timeout_specified=True,
+    )
+    assert capsys.readouterr().err == ""
+
+
+def test_tbload_no_timeout_warning_for_file_without_timeout_flag(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    tbload.maybe_warn_timeout_ignored_for_file_input(
+        input_path="/tmp/snap.zip",
+        timeout_specified=False,
+    )
+    assert capsys.readouterr().err == ""

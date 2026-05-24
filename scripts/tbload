@@ -35,6 +35,19 @@ def _info(message: str, *, quiet: bool) -> None:
         print(message, file=sys.stderr)
 
 
+def maybe_warn_timeout_ignored_for_file_input(
+    *,
+    input_path: str | None,
+    timeout_specified: bool,
+) -> None:
+    if input_path is not None and timeout_specified:
+        print(
+            "warning: --timeout applies only when reading from standard input; "
+            "ignored when using -i/--input",
+            file=sys.stderr,
+        )
+
+
 def resolve_restore_mode(user_input: str) -> str:
     """Strict prefix match against canonical restore mode names."""
     raw = user_input.strip()
@@ -230,6 +243,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Suppress progress messages (for scripting)",
     )
+    parser.add_argument(
+        "-t",
+        "--timeout",
+        type=float,
+        metavar="SECONDS",
+        help="Seconds to wait for stdin input before failing (default: 30; stdin only)",
+    )
     return parser.parse_args(argv)
 
 
@@ -242,6 +262,16 @@ def main(argv: list[str] | None = None) -> None:
         _die(str(exc))
 
     base_url = build_base_url(base_url=args.base_url, host=args.host, port=args.port)
+    timeout_specified = args.timeout is not None
+    timeout_seconds = args.timeout if timeout_specified else STDIN_READ_TIMEOUT_SECONDS
+    if timeout_specified and timeout_seconds <= 0:
+        _die("--timeout must be a positive number of seconds")
+
+    maybe_warn_timeout_ignored_for_file_input(
+        input_path=args.input,
+        timeout_specified=timeout_specified,
+    )
+
     input_label = args.input if args.input else "standard input"
     _info(f"Reading input from {input_label}.", quiet=args.quiet)
     _info(f"Using {mode} restore mode.", quiet=args.quiet)
@@ -249,7 +279,7 @@ def main(argv: list[str] | None = None) -> None:
     snapshot_bytes: bytes | None = None
     if args.input is None:
         try:
-            snapshot_bytes = read_stdin_snapshot()
+            snapshot_bytes = read_stdin_snapshot(timeout_seconds=timeout_seconds)
         except TbloadError as exc:
             _die(str(exc))
 
