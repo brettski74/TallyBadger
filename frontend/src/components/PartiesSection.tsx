@@ -1,4 +1,3 @@
-import type { CSSProperties } from "react";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDownNarrowWide,
@@ -9,6 +8,7 @@ import {
   RefreshCcw,
   SquareCheckBig,
   SquareX,
+  Trash2,
 } from "lucide-react";
 
 import type { Account } from "../api/accounts";
@@ -51,21 +51,6 @@ const SUBTYPE_NULL_TOKEN = "__null__";
 
 const DOCS_CEL_HINT =
   "Regex patterns are used by import CEL rules (party() function). See docs/cel-function-reference.md in the repo.";
-
-const PATTERN_ROW_GRID: CSSProperties = {
-  display: "grid",
-  gridTemplateColumns: "minmax(0, 1fr) auto",
-  gap: "0.5rem",
-  alignItems: "end",
-  width: "100%",
-};
-const PATTERN_REMOVE_BTN: CSSProperties = {
-  flexShrink: 0,
-  whiteSpace: "nowrap",
-  padding: "0.2rem 0.45rem",
-  fontSize: "0.8125rem",
-};
-const PATTERN_INPUT: CSSProperties = { width: "100%", boxSizing: "border-box" };
 
 const DEFAULT_SORT_KEYS: PartySortKey[] = [{ field: PARTY_REGISTER_SORT_FIELDS.name, direction: "asc" }];
 
@@ -803,9 +788,14 @@ export function PartiesSection({ accounts, onPartyCreated, onPartyUpdated }: Par
           </p>
           {readOnly ? (
             formPatterns.length > 0 ? (
-              <ul>
+              <ul className="party-pattern-list party-pattern-list--view">
                 {formPatterns.map((pat, index) => (
-                  <li key={`view-pat-${index}`}>{pat}</li>
+                  <li key={`view-pat-${index}`} className="party-pattern-row">
+                    <span className="party-pattern-index" aria-hidden>
+                      {index + 1}:
+                    </span>
+                    <span className="party-pattern-view-value">{pat}</span>
+                  </li>
                 ))}
               </ul>
             ) : (
@@ -813,28 +803,29 @@ export function PartiesSection({ accounts, onPartyCreated, onPartyUpdated }: Par
             )
           ) : (
             <>
-              {formPatterns.map((pat, index) => (
-                <div key={`${mode}-pat-${index}`} style={PATTERN_ROW_GRID}>
-                  <label style={{ minWidth: 0, width: "100%" }}>
-                    Pattern {index + 1}
+              <div className="party-pattern-list">
+                {formPatterns.map((pat, index) => (
+                  <div key={`${mode}-pat-${index}`} className="party-pattern-row">
+                    <span className="party-pattern-index" aria-hidden>
+                      {index + 1}:
+                    </span>
                     <input
                       aria-label={`${mode === "create" ? "Create" : "Edit"} match pattern ${index + 1}`}
                       value={pat}
                       onChange={(e) => setPatternAt(mode, index, e.target.value)}
                       placeholder="Python re.search regex"
-                      style={PATTERN_INPUT}
                     />
-                  </label>
-                  <button
-                    type="button"
-                    className="button-secondary"
-                    style={PATTERN_REMOVE_BTN}
-                    onClick={() => removePatternRow(mode, index)}
-                  >
-                    Remove
-                  </button>
-                </div>
-              ))}
+                    <TableRowIconButton
+                      type="button"
+                      aria-label={`Remove match pattern ${index + 1}`}
+                      title={`Remove match pattern ${index + 1}`}
+                      onClick={() => removePatternRow(mode, index)}
+                    >
+                      <Trash2 size={18} strokeWidth={2} aria-hidden />
+                    </TableRowIconButton>
+                  </div>
+                ))}
+              </div>
               <button type="button" className="button-secondary" onClick={() => addPatternRow(mode)}>
                 Add pattern
               </button>

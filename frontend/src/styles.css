@@ -1,6 +1,11 @@
 :root {
   color-scheme: light;
-  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  --form-font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  --form-label-size: 0.8rem;
+  --form-field-size: 1.0625rem;
+  --form-label-color: color-mix(in srgb, var(--text) 55%, white);
+  --form-field-color: var(--text);
+  font-family: var(--form-font-family);
 
   --bg-page: #ffffff;
   --bg-subtle: #f1f5f9;
@@ -93,12 +98,24 @@ body {
 label {
   display: block;
   margin-bottom: 0.75rem;
-  color: var(--text);
+  font-family: var(--form-font-family);
+  font-size: var(--form-label-size);
+  font-weight: 500;
+  color: var(--form-label-color);
+}
+
+input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+select,
+textarea {
+  font-family: var(--form-font-family);
+  font-size: var(--form-field-size);
+  color: var(--form-field-color);
 }
 
 input,
 select,
-button {
+button,
+textarea {
   width: 100%;
   box-sizing: border-box;
   margin-top: 0.25rem;
@@ -106,7 +123,12 @@ button {
   border-radius: 8px;
   border: 1px solid var(--border-input);
   background: var(--bg-page);
-  color: var(--text);
+}
+
+input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+select,
+textarea {
+  color: var(--form-field-color);
 }
 
 input:focus,
@@ -128,6 +150,7 @@ button:focus-visible {
 }
 
 button {
+  font-family: var(--form-font-family);
   margin-top: 0.25rem;
   cursor: pointer;
   background: var(--primary);
@@ -1513,12 +1536,15 @@ th.table-row-actions-heading {
   position: relative;
   width: 100%;
   margin-top: 0.25rem;
-  font: inherit;
+  font-family: var(--form-font-family);
+  font-size: var(--form-field-size);
+  color: var(--form-field-color);
 }
 
 .subtype-ghost-wrap input {
   margin-top: 0;
-  font: inherit;
+  font-family: inherit;
+  font-size: inherit;
   line-height: 1.4;
 }
 
@@ -1665,6 +1691,54 @@ th.table-row-actions-heading {
 .cheque-form-col > label,
 .cheque-form-grid > label {
   margin-bottom: 0;
+}
+
+fieldset legend {
+  font-family: var(--form-font-family);
+  font-size: var(--form-label-size);
+  font-weight: 500;
+  color: var(--form-label-color);
+  padding: 0 0.25rem;
+}
+
+.party-pattern-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 0.5rem 0 0;
+}
+
+.party-pattern-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.party-pattern-index {
+  font-family: var(--form-font-family);
+  font-size: var(--form-field-size);
+  font-weight: 500;
+  color: var(--form-label-color);
+  min-width: 1.75rem;
+  text-align: right;
+  user-select: none;
+}
+
+.party-pattern-row input {
+  margin-top: 0;
+}
+
+.party-pattern-row .table-row-icon-button {
+  margin-top: 0;
+}
+
+.party-pattern-list--view .party-pattern-view-value {
+  margin: 0;
+  font-family: var(--form-font-family);
+  font-size: var(--form-field-size);
+  color: var(--form-field-color);
+  word-break: break-all;
 }
 
 .cheque-form-summary {
