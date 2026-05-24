@@ -13,10 +13,12 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 from typing import NoReturn
 from urllib.parse import urljoin
 
 CANONICAL_RESTORE_MODES: tuple[str, ...] = ("abort", "overwrite", "erase-reload")
+STDIN_READ_TIMEOUT_SECONDS = 30.0
 
 
 class TbloadError(Exception):
@@ -26,6 +28,11 @@ class TbloadError(Exception):
 def _die(message: str, *, code: int = 1) -> NoReturn:
     print(message, file=sys.stderr)
     raise SystemExit(code)
+
+
+def _info(message: str, *, quiet: bool) -> None:
+    if not quiet:
+        print(message, file=sys.stderr)
 
 
 def resolve_restore_mode(user_input: str) -> str:
@@ -68,6 +75,30 @@ def check_curl() -> None:
         _die("tbload requires curl on PATH")
 
 
+def read_stdin_snapshot(*, timeout_seconds: float = STDIN_READ_TIMEOUT_SECONDS) -> bytes:
+    """Read snapshot ZIP bytes from stdin, failing if no data within timeout."""
+    holder: dict[str, bytes | None] = {"data": None}
+
+    def _reader() -> None:
+        source = getattr(sys.stdin, "buffer", sys.stdin)
+        data = source.read()
+        holder["data"] = data.encode("utf-8") if isinstance(data, str) else data
+
+    thread = threading.Thread(target=_reader, daemon=True)
+    thread.start()
+    thread.join(timeout_seconds)
+    if thread.is_alive():
+        raise TbloadError(
+            f"no input received from standard input within {int(timeout_seconds)} seconds; "
+            "pipe a ZIP file or use -i/--input PATH"
+        )
+
+    data = holder["data"] or b""
+    if not data:
+        raise TbloadError("empty snapshot read from standard input")
+    return data
+
+
 def preflight_health(base_url: str) -> None:
     url = urljoin(base_url + "/", "health")
     proc = run_curl(["-fsS", url])
@@ -81,6 +112,7 @@ def import_snapshot(
     *,
     restore_mode: str,
     input_path: str | None,
+    snapshot_bytes: bytes | None = None,
 ) -> dict[str, object]:
     url = urljoin(base_url + "/", "backup/import")
     curl_args = [
@@ -94,7 +126,7 @@ def import_snapshot(
     ]
     if input_path is None:
         curl_args.extend(["-F", "snapshot=@-;filename=snapshot.zip"])
-        stdin = sys.stdin.buffer.read()
+        stdin = snapshot_bytes
     else:
         curl_args.extend(["-F", f"snapshot=@{input_path}"])
         stdin = None
@@ -187,6 +219,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=8080,
         help="API port when base URL not set (default: 8080)",
     )
+    parser.add_argument(
+        "-q",
+        "--quiet",
+        action="store_true",
+        help="Suppress progress messages (for scripting)",
+    )
     return parser.parse_args(argv)
 
 
@@ -199,9 +237,26 @@ def main(argv: list[str] | None = None) -> None:
         _die(str(exc))
 
     base_url = build_base_url(base_url=args.base_url, host=args.host, port=args.port)
+    input_label = args.input if args.input else "standard input"
+    _info(f"Reading input from {input_label}.", quiet=args.quiet)
+    _info(f"Using {mode} restore mode.", quiet=args.quiet)
+
+    snapshot_bytes: bytes | None = None
+    if args.input is None:
+        try:
+            snapshot_bytes = read_stdin_snapshot()
+        except TbloadError as exc:
+            _die(str(exc))
+
+    _info(f"Connecting to {base_url}.", quiet=args.quiet)
     preflight_health(base_url)
     try:
-        data = import_snapshot(base_url, restore_mode=mode, input_path=args.input)
+        data = import_snapshot(
+            base_url,
+            restore_mode=mode,
+            input_path=args.input,
+            snapshot_bytes=snapshot_bytes,
+        )
     except TbloadError as exc:
         _die(str(exc))
 
