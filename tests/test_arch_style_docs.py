@@ -23,8 +23,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
         (
             "STYLE.md",
             [
-                "export-dev-seed",
-                "sql/dev_seed.sql",
+                "tbload",
+                "tallybadger-complete",
+                "kebab-case",
                 "Decimal",
                 "integration",
             ],

@@ -193,7 +193,8 @@ Use **decimal types** (e.g. Python `Decimal` or integer minor units), not binary
 TallyBadger can export and import ledger data as a **versioned ZIP** of JSON table dumps (see **[docs/backup-snapshot-format.md](docs/backup-snapshot-format.md)** for layout, `format_version`, and validation rules).
 
 - **UI:** **Configuration** tab — export scope, restore mode (how to handle duplicate keys on import), download and file picker.
-- **API:** `POST /backup/export?export_type=complete|configuration|financial` (response: ZIP), `POST /backup/import` with multipart field `snapshot` and form field `restore_mode` (`abort`, `overwrite`, `erase_reload`). OpenAPI: `/docs`.
+- **API:** `POST /backup/export?export_type=complete|configuration|financial` (response: ZIP), `POST /backup/import` with multipart field `snapshot` and form field `restore_mode` (`abort`, `overwrite`, `erase-reload`; prefixes allowed). OpenAPI: `/docs`.
+- **CLI:** **`tbload`** (`scripts/tbload`, installed with the package) — thin `curl` wrapper for restore; default mode **`abort`**. Requires `curl` and Python 3.11+ on the host (not inside the API container).
 
 Error responses use plain-English prefixes (integrity vs validation vs database constraint) so you can tell checksum/manifest issues apart from business-rule checks and PostgreSQL FK/unique failures.
 
@@ -201,11 +202,13 @@ Error responses use plain-English prefixes (integrity vs validation vs database 
 
 Use a throwaway database (Compose default is fine). Example with API on `http://127.0.0.1:8080`:
 
-1. **Seed or create data** you care about (e.g. `make dbclean`, use the UI, or integration tests).
-2. **Export:** `curl -fsS -X POST -o /tmp/tb-snap.zip "http://127.0.0.1:8080/backup/export?export_type=complete"`.
-3. **Wipe app data and re-migrate:** `make dbempty` (recreates the DB volume, applies `sql/*.sql` only — no seed). Or `make dbclean` if you want dev seed again after the drill.
-4. **Import:** `curl -fsS -X POST -F "snapshot=@/tmp/tb-snap.zip" -F "restore_mode=erase_reload" "http://127.0.0.1:8080/backup/import"`.
+1. **Seed or create data** you care about (use the UI, integration tests, or restore a snapshot).
+2. **Export:** `curl -fsS -X POST -o /tmp/tb-snap.zip "http://127.0.0.1:8080/backup/export?export_type=complete"` (or copy into `examples/tallybadger-complete-*.zip` for local UAT).
+3. **Wipe schema (optional):** `make dbempty` recreates the DB volume and applies `sql/*.sql` only.
+4. **Import:** `tbload --mode erase-reload -i /tmp/tb-snap.zip` or `curl -fsS -X POST -F "snapshot=@/tmp/tb-snap.zip" -F "restore_mode=erase-reload" "http://127.0.0.1:8080/backup/import"`. Invalid modes such as `erase-spice-girls-music` are rejected. Mode prefixes (`a`, `o`, `e`, `erase-`) resolve to the single matching canonical value.
 5. **Sanity check:** `curl -fsS http://127.0.0.1:8080/health` and confirm accounts / journals in the UI match expectations.
+
+**Local UAT bootstrap:** place a complete snapshot at `examples/tallybadger-complete-*.zip` (gitignored), start the API, then run **`make dbclean`** (runs `tbload --mode erase-reload` on the newest match).
 
 `make backup-restore-drill-help` prints a short pointer to this section.
 

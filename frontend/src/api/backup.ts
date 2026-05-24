@@ -4,7 +4,7 @@ import { ApiHttpError, readApiErrorMessage } from "./errors";
 export type BackupExportType = "complete" | "configuration" | "financial";
 
 /** How to handle conflicts for this restore only (sent on import; never part of the ZIP). */
-export type RestoreMode = "abort" | "overwrite" | "erase_reload";
+export type RestoreMode = "abort" | "overwrite" | "erase-reload";
 
 /** Successful restore response fields consumed by the UI (#202). */
 export type ImportBackupResult = {

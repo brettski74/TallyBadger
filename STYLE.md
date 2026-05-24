@@ -16,6 +16,8 @@ This file is the **single human- and agent-visible source of truth** for how we 
 
 - Treat **published HTTP routes** and **stable JSON response shapes** as contracts: change them together with **tests** and any **user-facing or integration documentation** that promises that shape.
 - **Secrets:** never commit credentials. Use environment variables (prefix **`TALLYBADGER_`** where applicable, see [`Settings`](src/tallybadger/core/config.py)) or your deployment’s secret store.
+- **JSON / form field names (keys):** prefer **`snake_case`** (e.g. `restore_mode`) — aligns with existing API shapes and JS-friendly identifiers.
+- **String enumeration values** (not identifiers): prefer **`kebab-case`** (e.g. `erase-reload`) for new or touched restore/import modes — easier to type than `_` or `+`, and visually distinct from keys.
 
 ## Inactive objects (`is_active`)
 
@@ -34,14 +36,13 @@ Specific flows are free to impose stricter behaviour where it makes product sens
 - Prefer **additive** or **reversible** steps when data is already live.
 - Migrations are applied by [`tallybadger.db_migrations`](src/tallybadger/db_migrations.py) in sorted filename order.
 
-## Dev database and `export-dev-seed`
+## Dev database bootstrap
 
-When the **persisted model or seed-relevant data** changes, keep local bootstrap truthful:
+Local UAT data comes from **snapshot restore**, not a checked-in SQL seed:
 
-1. Recreate/migrate as needed (e.g. `make dbclean` for a clean local DB with migrations + [`sql/dev_seed.sql`](sql/dev_seed.sql)).
-2. After loading representative data, run **`make export-dev-seed`** and commit the updated **`sql/dev_seed.sql`** when the team should see the new shape by default.
-
-This pairs with schema work so portable paths (clone → migrate → seed) stay reliable.
+1. User can keep a complete snapshot under **`examples/tallybadger-complete-*.zip`** (gitignored; refresh from export when the model changes). No need for automatically updating these as compatibility is managed via the import format support window.
+2. With the API running, **`make dbclean`** restores the newest matching ZIP via **`tbload --mode erase-reload`** (see README).
+3. Schema changes still ship as **`sql/NNN_*.sql`** migrations; apply with **`make dbempty`** / **`tallybadger-migrate`** when you need a fresh empty schema before restore.
 
 ## Backup, snapshot, and import
 
@@ -209,7 +210,7 @@ Use this table when preparing a PR; extend it as the repo evolves.
 
 | Area | When it applies | What to update in the same PR |
 |------|-----------------|-------------------------------|
-| **Database schema / domain model** | Migrations or persisted shapes change | `make dbclean` (or equivalent); `sql/` migrations; run **`make export-dev-seed`** and commit `sql/dev_seed.sql` when default seed data must reflect the model. Update **STYLE.md** for process changes; **ARCH.md** only if boundaries or lifecycle change. |
+| **Database schema / domain model** | Migrations or persisted shapes change | `sql/` migrations; refresh **`examples/tallybadger-complete-*.zip`** when default UAT data must reflect the model; **`make dbclean`** to load it. Update **STYLE.md** for process changes; **ARCH.md** only if boundaries or lifecycle change. |
 | **Inactive object handling** | Adding or changing validation around `is_active` on accounts, parties, or any future table with the flag | Apply the default contract from **Inactive objects (`is_active`)** above (new associations rejected, existing preserved, validate on change only); add tests for both the "blocked on change" and "allowed on re-affirm / unrelated edit" cases; update that section in **STYLE.md** if the per-ticket flow needs a stricter rule. |
 | **Backup / snapshot / import** | New or changed tables, FKs, or snapshot semantics | Snapshot/import code paths; integration tests; [docs/backup-snapshot-format.md](docs/backup-snapshot-format.md); bump **`format_version`** when required by the format rules. |
 | **Public API or stable JSON** | Routes or response shapes consumed by clients | Contract/API tests; docs that promise the shape; **STYLE.md** if testing or contract expectations change. |

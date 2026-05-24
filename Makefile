@@ -3,7 +3,7 @@ PIP := .venv/bin/pip
 PYTEST := .venv/bin/pytest
 UVICORN := .venv/bin/uvicorn
 
-.PHONY: help venv install test test-unit test-integration run up down restart status logs frontend-install frontend-dev frontend-test db-up db-down db-wait db-migrate db-migrate-local dbempty dbclean dev-seed export-dev-seed export-bootstrap backup-restore-drill-help
+.PHONY: help venv install test test-unit test-integration run up down restart status logs frontend-install frontend-dev frontend-test db-up db-down db-wait db-migrate db-migrate-local dbempty dbclean backup-restore-drill-help
 
 help:
 	@echo "Available targets:"
@@ -25,11 +25,8 @@ help:
 	@echo "  make db-down   Stop Docker Compose services"
 	@echo "  make db-wait   Wait for Postgres readiness"
 	@echo "  make db-migrate Apply SQL migrations to configured DB"
-	@echo "  make dbempty   Recreate local DB volume and apply schema migrations only (no dev_seed; dev only)"
-	@echo "  make dbclean   Same as dbempty, then load sql/dev_seed.sql (dev only)"
-	@echo "  make dev-seed  Apply sql/dev_seed.sql (accounts, parties, CEL rule sets, templates — dev only)"
-	@echo "  make export-dev-seed  Rewrite sql/dev_seed.sql from the current DB (commit for your team)"
-	@echo "  make export-bootstrap  Alias for export-dev-seed"
+	@echo "  make dbempty   Recreate local DB volume and apply schema migrations only (dev only)"
+	@echo "  make dbclean   Restore newest examples/tallybadger-complete-*.zip via tbload (API must be running)"
 
 venv:
 	python -m venv .venv
@@ -103,16 +100,13 @@ dbempty:
 	$(MAKE) db-wait
 	PYTHONPATH=src $(PYTHON) -m tallybadger.db_migrations
 
-dbclean: dbempty
-	$(MAKE) dev-seed
-
-dev-seed:
-	PYTHONPATH=src $(PYTHON) -m tallybadger.dev_seed apply
-
-export-dev-seed:
-	PYTHONPATH=src $(PYTHON) -m tallybadger.dev_seed export
-
-export-bootstrap: export-dev-seed
+dbclean:
+	@zip=$$(ls -t examples/tallybadger-complete-*.zip 2>/dev/null | head -n 1); \
+	if [ -z "$$zip" ]; then \
+		echo "No examples/tallybadger-complete-*.zip found. Export a complete snapshot into examples/ first."; \
+		exit 1; \
+	fi; \
+	scripts/tbload --mode erase-reload -i "$$zip"
 
 backup-restore-drill-help:
 	@echo "Application snapshot restore drill: see README \"Application snapshot (ZIP)\"."

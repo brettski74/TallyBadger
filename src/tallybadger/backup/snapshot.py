@@ -23,6 +23,7 @@ from tallybadger.backup.errors import (
     SnapshotValidationError,
     UnsupportedFormatVersionError,
 )
+from tallybadger.backup.restore_mode import resolve_restore_mode
 
 # Semver-ordered, oldest first. When the on-wire layout changes, append a new version
 # (see docs/backup-snapshot-format.md). Import accepts the last four entries (STYLE.md).
@@ -100,8 +101,8 @@ ATTACHMENT_SNAPSHOT_TABLES: tuple[str, ...] = ("attachments", "journal_entry_att
 SUPPORTED_EXPORT_TYPES: frozenset[str] = frozenset({"complete", "configuration", "financial"})
 
 # Import-time only (never stored in snapshot metadata).
-RestoreMode = Literal["abort", "overwrite", "erase_reload"]
-SUPPORTED_RESTORE_MODES: frozenset[str] = frozenset({"abort", "overwrite", "erase_reload"})
+RestoreMode = Literal["abort", "overwrite", "erase-reload"]
+SUPPORTED_RESTORE_MODES: frozenset[str] = frozenset({"abort", "overwrite", "erase-reload"})
 
 DATE_COLUMNS = frozenset({"entry_date", "event_date", "start_date", "end_date"})
 DECIMAL_COLUMNS = frozenset(
@@ -322,13 +323,11 @@ def _existing_ids(conn: Connection, table: str) -> set[int]:
 
 
 def _normalize_restore_mode(restore_mode: str) -> str:
-    pol = restore_mode.strip().lower().replace("+", "_").replace("-", "_")
-    if pol not in SUPPORTED_RESTORE_MODES:
-        raise IncompleteSnapshotError(
-            f"restore_mode must be one of {sorted(SUPPORTED_RESTORE_MODES)} "
-            f"(e.g. erase+reload or erase_reload), not {restore_mode!r}"
-        )
-    return pol
+    try:
+        canonical = resolve_restore_mode(restore_mode)
+    except ValueError as exc:
+        raise IncompleteSnapshotError(str(exc)) from exc
+    return canonical
 
 
 def _reverse_tables_for_scope(tables: tuple[str, ...]) -> tuple[str, ...]:
@@ -355,7 +354,7 @@ def _delete_incoming_ids_for_overwrite(
             raise SnapshotValidationError(
                 f"overwrite could not delete existing row(s) in {table!r} "
                 "(another table still references them). "
-                "Try restore_mode erase_reload with a complete snapshot, or remove blocking rows. "
+                "Try restore_mode erase-reload with a complete snapshot, or remove blocking rows. "
                 f"Detail: {exc.diag.message_detail or exc}"
             ) from exc
 
@@ -1195,7 +1194,7 @@ def import_snapshot(
     ``abort`` — insert in one transaction; first PK/unique/FK/business-rule failure rolls back.
     ``overwrite`` — before insert, delete existing rows with the same primary keys as the
     snapshot (in FK-safe reverse order within the snapshot's table set).
-    ``erase_reload`` — truncate all snapshot data tables, then load (requires a
+    ``erase-reload`` — truncate all snapshot data tables, then load (requires a
     self-contained archive: not ``financial``-only).
 
     Returns an optional format-deprecation warning for supported archives older than the
@@ -1227,11 +1226,11 @@ def import_snapshot(
     _assert_manifest_matches_export_type(metadata, files, export_type, fmt)
     tables = tables_for_import(export_type, fmt)
 
-    if mode == "erase_reload" and export_type == "financial":
+    if mode == "erase-reload" and export_type == "financial":
         raise SnapshotValidationError(
-            "restore_mode erase_reload cannot import a financial-only snapshot: "
+            "restore_mode erase-reload cannot import a financial-only snapshot: "
             "the database is cleared first, so accounts/parties/plans would be missing. "
-            "Use a complete or configuration snapshot for erase_reload, "
+            "Use a complete or configuration snapshot for erase-reload, "
             "or import configuration then financial with abort/overwrite."
         )
 
@@ -1267,7 +1266,7 @@ def import_snapshot(
         with conn.cursor() as cur:
             cur.execute("SET CONSTRAINTS ALL DEFERRED")
 
-        if mode == "erase_reload":
+        if mode == "erase-reload":
             _truncate_complete_scope(conn)
         elif mode == "overwrite":
             _delete_incoming_ids_for_overwrite(conn, insert_tables, payloads)

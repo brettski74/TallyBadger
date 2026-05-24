@@ -297,7 +297,7 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
         >
           <option value="abort">Abort — stop on first conflict (default)</option>
           <option value="overwrite">Overwrite — delete snapshot IDs in the DB, then insert</option>
-          <option value="erase_reload">Erase + reload — truncate all app data tables, then load</option>
+          <option value="erase-reload">Erase + reload — truncate all app data tables, then load</option>
         </select>
       </label>
       <div className="backup-actions">
