@@ -3,7 +3,7 @@ PIP := .venv/bin/pip
 PYTEST := .venv/bin/pytest
 UVICORN := .venv/bin/uvicorn
 
-.PHONY: help venv install test test-unit test-integration run up down restart status logs frontend-install frontend-dev frontend-test db-up db-down db-wait db-migrate db-migrate-local dbempty dbclean backup-restore-drill-help
+.PHONY: help venv install test test-unit test-integration run up down restart restart-wait status logs frontend-install frontend-dev frontend-test db-up db-down db-wait db-migrate db-migrate-local dbempty dbclean backup-restore-drill-help
 
 help:
 	@echo "Available targets:"
@@ -15,8 +15,9 @@ help:
 	@echo "  make run       Alias for make up"
 	@echo "  make up        Start DB + API + frontend in background via tbad"
 	@echo "  make down      Stop DB + API + frontend via tbad"
-	@echo "  make restart   Restart DB + API + frontend via tbad"
-	@echo "  make status    Show DB + API + frontend status via tbad"
+	@echo "  make restart       Restart DB + API + frontend via tbad"
+	@echo "  make restart-wait  Restart, then wait until API /health responds"
+	@echo "  make status        Show DB + API + frontend status via tbad"
 	@echo "  make logs      Show API + frontend logs via tbad"
 	@echo "  make frontend-install  Install frontend dependencies"
 	@echo "  make frontend-dev      Run frontend dev server on 127.0.0.1:5173"
@@ -53,6 +54,23 @@ down:
 
 restart:
 	PYTHONPATH=src $(PYTHON) -m tallybadger.tbad restart
+
+restart-wait: restart
+	@echo "Waiting for API health..."
+	@port=$${TALLYBADGER_PORT:-8080}; \
+	for i in $$(seq 1 30); do \
+		if curl -fsS "http://127.0.0.1:$$port/health" >/dev/null 2>&1; then \
+			echo "API is ready (http://127.0.0.1:$$port/health)."; \
+			exit 0; \
+		fi; \
+		sleep 1; \
+	done; \
+	echo "Timed out waiting for API health at http://127.0.0.1:$$port/health."; \
+	exit 1
+
+ship-prepare:
+	$(MAKE) restart-wait dbclean
+	$(MAKE) restart
 
 status:
 	PYTHONPATH=src $(PYTHON) -m tallybadger.tbad status

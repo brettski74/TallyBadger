@@ -12,7 +12,7 @@ Use this workflow for **user-led acceptance testing** after implementation exist
 
 ## Steps
 
-1. **Setup the environment for testing** by running `make restart dbclean restart` to ensure that the environment is cleanly loaded and restarted, which should also trigger the reloading of any current clients.
+1. **Setup the environment for testing** by running `make ship-prepare` to ensure that the environment is cleanly loaded and restarted.
 2. **Confirm** from the code changes, ticket details and acceptance criteria what the user is testing. Display a suggested testing checklist for the user in the chat, then stop and wait for further instructions from the user.
 3. Support **user-led** testing: answer questions, reproduce reported behaviour, and distinguish expected versus defective behaviour using the issue and **[ARCH.md](../ARCH.md)** as reference.
 4. If the user reports a **bug** or **requirement gap**, fix code or docs as agreed and **record** the gap and resolution in **issue comments** (not by rewriting the issue body). Reserve body edits for explicit **refinement**—if the user wants the requirements document itself changed, suggest that the user switch to the **refine** workflow in a fresh chat. Do not rewrite the issue body while within this workflow.
