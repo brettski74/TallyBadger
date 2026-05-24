@@ -46,6 +46,21 @@ describe("backup API", () => {
     expect(call[0]).toContain("export_type=complete");
   });
 
+  it("importBackup returns formatDeprecationWarning when present", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          status: "imported",
+          format_deprecation_warning: "Older format 1.5.0 is deprecated.",
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    const file = new File(["x"], "snap.zip", { type: "application/zip" });
+    const result = await importBackup(file);
+    expect(result.formatDeprecationWarning).toBe("Older format 1.5.0 is deprecated.");
+  });
+
   it("importBackup POSTs multipart with restore_mode", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ status: "imported" }), { status: 200 }));
     const file = new File(["x"], "snap.zip", { type: "application/zip" });

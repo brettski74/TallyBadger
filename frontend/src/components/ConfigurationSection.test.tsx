@@ -119,4 +119,94 @@ describe("ConfigurationSection", () => {
     ).map((o) => o.textContent);
     expect(crOptions.some((t) => t?.includes("Stale suspense"))).toBe(false);
   });
+
+  function ledgerSettingsResponse() {
+    return new Response(
+      JSON.stringify({
+        accounts_receivable_account_id: null,
+        accounts_payable_account_id: null,
+        unearned_revenue_account_id: null,
+        unallocated_debits_account_id: null,
+        unallocated_credits_account_id: null,
+        updated_at: "2026-01-01T00:00:00Z",
+      }),
+      { status: 200 },
+    );
+  }
+
+  it("restore success without deprecation shows only generic success", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(ledgerSettingsResponse())
+      .mockResolvedValueOnce(new Response(JSON.stringify({ status: "imported" }), { status: 200 }));
+
+    render(<ConfigurationSection accounts={accounts} />);
+    const user = userEvent.setup();
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Restore from ZIP/i })).toBeInTheDocument();
+    });
+
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(["zip"], "snap.zip", { type: "application/zip" });
+    await user.upload(input, file);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Restore finished successfully/i)).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/deprecated/i)).not.toBeInTheDocument();
+  });
+
+  it("restore success shows deprecation warning after success line", async () => {
+    const deprecation =
+      "This backup uses snapshot format version 1.5.0. Support is deprecated.";
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(ledgerSettingsResponse())
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ status: "imported", format_deprecation_warning: deprecation }),
+          { status: 200 },
+        ),
+      );
+
+    render(<ConfigurationSection accounts={accounts} />);
+    const user = userEvent.setup();
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Restore from ZIP/i })).toBeInTheDocument();
+    });
+
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(input, new File(["zip"], "snap.zip", { type: "application/zip" }));
+
+    await waitFor(() => {
+      expect(screen.getByText(deprecation)).toBeInTheDocument();
+    });
+    const success = screen.getByText(/Restore finished successfully/i);
+    const warning = screen.getByText(deprecation);
+    expect(
+      success.compareDocumentPosition(warning) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("restore failure shows error only, not deprecation warning", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(ledgerSettingsResponse())
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Unsupported format" }), { status: 400 }));
+
+    render(<ConfigurationSection accounts={accounts} />);
+    const user = userEvent.setup();
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Restore from ZIP/i })).toBeInTheDocument();
+    });
+
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(input, new File(["zip"], "bad.zip", { type: "application/zip" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent(/Unsupported format/i);
+    });
+    expect(screen.queryByText(/Restore finished successfully/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/deprecated/i)).not.toBeInTheDocument();
+  });
 });
