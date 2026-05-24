@@ -93,6 +93,11 @@ function chequeListCalls(fetchMock: ReturnType<typeof vi.spyOn>) {
   });
 }
 
+function sortParamsFromUrl(url: string): string[] {
+  const parsed = new URL(url, "http://localhost");
+  return parsed.searchParams.getAll("sort");
+}
+
 function installFetchMock(routes: RouteMocks = {}) {
   return vi
     .spyOn(globalThis, "fetch")
@@ -1166,5 +1171,116 @@ describe("ChequesSection #132 — keyboard shortcuts", () => {
 
     expect(screen.getByRole("heading", { name: "New cheque" })).toBeInTheDocument();
     expect(within(createDialog).getByLabelText(/^Summary/i)).toHaveValue("");
+  });
+});
+
+describe("ChequesSection sort", () => {
+  it("omits sort params and sort direction labels on initial load", async () => {
+    const fetchMock = installFetchMock();
+
+    render(<ChequesSection accounts={accounts} parties={parties} />);
+
+    await waitFor(() => expect(chequeListCalls(fetchMock).length).toBeGreaterThan(0));
+
+    const url = String(chequeListCalls(fetchMock).at(-1)?.[0]);
+    expect(sortParamsFromUrl(url)).toEqual([]);
+    expect(screen.queryByRole("button", { name: /ascending/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /descending/i })).not.toBeInTheDocument();
+  });
+
+  it("prepends asc and refetches when a non-primary column is clicked", async () => {
+    const fetchMock = installFetchMock();
+
+    render(<ChequesSection accounts={accounts} parties={parties} />);
+    const user = userEvent.setup();
+
+    await waitFor(() => expect(chequeListCalls(fetchMock).length).toBeGreaterThan(0));
+
+    await user.click(screen.getByRole("button", { name: "Sort by Cleared" }));
+    await waitFor(() => {
+      const url = String(chequeListCalls(fetchMock).at(-1)?.[0]);
+      expect(sortParamsFromUrl(url)).toEqual(["cleared_date:asc"]);
+    });
+    expect(screen.getByRole("button", { name: "Sort by Cleared, ascending" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Sort by Amount, (ascending|descending)/i })).not.toBeInTheDocument();
+  });
+
+  it("cycles the primary column asc, desc, then unsorted", async () => {
+    const fetchMock = installFetchMock();
+    const user = userEvent.setup();
+
+    render(<ChequesSection accounts={accounts} parties={parties} />);
+    await waitFor(() => expect(chequeListCalls(fetchMock).length).toBeGreaterThan(0));
+
+    const clearedSort = () => screen.getByRole("button", { name: /^Sort by Cleared/i });
+
+    await user.click(clearedSort());
+    await waitFor(() => {
+      expect(sortParamsFromUrl(String(chequeListCalls(fetchMock).at(-1)?.[0]))).toEqual(["cleared_date:asc"]);
+    });
+
+    await user.click(clearedSort());
+    await waitFor(() => {
+      expect(sortParamsFromUrl(String(chequeListCalls(fetchMock).at(-1)?.[0]))).toEqual(["cleared_date:desc"]);
+    });
+    expect(screen.getByRole("button", { name: "Sort by Cleared, descending" })).toBeInTheDocument();
+
+    await user.click(clearedSort());
+    await waitFor(() => {
+      expect(sortParamsFromUrl(String(chequeListCalls(fetchMock).at(-1)?.[0]))).toEqual([]);
+    });
+    expect(screen.queryByRole("button", { name: /ascending|descending/i })).not.toBeInTheDocument();
+  });
+
+  it("stacks secondary keys and shows the icon only on the primary column", async () => {
+    const fetchMock = installFetchMock();
+    const user = userEvent.setup();
+
+    render(<ChequesSection accounts={accounts} parties={parties} />);
+    await waitFor(() => expect(chequeListCalls(fetchMock).length).toBeGreaterThan(0));
+
+    const clearedSort = () => screen.getByRole("button", { name: /^Sort by Cleared/i });
+
+    await user.click(clearedSort());
+    await waitFor(() => {
+      expect(sortParamsFromUrl(String(chequeListCalls(fetchMock).at(-1)?.[0]))).toEqual(["cleared_date:asc"]);
+    });
+
+    await user.click(clearedSort());
+    await waitFor(() => {
+      expect(sortParamsFromUrl(String(chequeListCalls(fetchMock).at(-1)?.[0]))).toEqual(["cleared_date:desc"]);
+    });
+
+    await user.click(screen.getByRole("button", { name: "Sort by Amount" }));
+    await waitFor(() => {
+      expect(sortParamsFromUrl(String(chequeListCalls(fetchMock).at(-1)?.[0]))).toEqual([
+        "amount:asc",
+        "cleared_date:desc",
+      ]);
+    });
+
+    expect(screen.getByRole("button", { name: "Sort by Amount, ascending" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sort by Cleared" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Sort by Cleared, descending" })).not.toBeInTheDocument();
+  });
+
+  it("combines sort params with active filters", async () => {
+    const fetchMock = installFetchMock();
+    const user = userEvent.setup();
+
+    render(<ChequesSection accounts={accounts} parties={parties} />);
+    await waitFor(() => expect(chequeListCalls(fetchMock).length).toBeGreaterThan(0));
+
+    await user.selectOptions(screen.getByLabelText("Filter cheques by status"), "cleared");
+    await waitFor(() => {
+      expect(String(chequeListCalls(fetchMock).at(-1)?.[0])).toContain("status=cleared");
+    });
+
+    await user.click(screen.getByRole("button", { name: "Sort by Amount" }));
+    await waitFor(() => {
+      const url = String(chequeListCalls(fetchMock).at(-1)?.[0]);
+      expect(url).toContain("status=cleared");
+      expect(sortParamsFromUrl(url)).toEqual(["amount:asc"]);
+    });
   });
 });

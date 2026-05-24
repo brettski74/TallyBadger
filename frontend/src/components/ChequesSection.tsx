@@ -1,5 +1,5 @@
 import { FormEvent, Fragment, MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Ban, Eye, FilePlus2, Pencil, RefreshCcw, SquareCheck } from "lucide-react";
+import { Ban, ArrowDownNarrowWide, ArrowDownWideNarrow, Eye, FilePlus2, Pencil, RefreshCcw, SquareCheck } from "lucide-react";
 
 import type { Account } from "../api/accounts";
 import { useChequeCreateModalShortcuts } from "../hooks/useChequeCreateModalShortcuts";
@@ -15,6 +15,14 @@ import {
   saveAriaKeyShortcuts,
 } from "../lib/keyboardHints";
 import { isMacLikeUserAgent } from "../lib/platformKeyboard";
+import {
+  CHEQUE_REGISTER_SORT_FIELDS,
+  cycleSortKeys,
+  primarySortKey,
+  toSortParams,
+  type ChequeRegisterSortField,
+  type ChequeSortKey,
+} from "../lib/chequeRegisterSort";
 import {
   type Cheque,
   type ChequeFilterOptions,
@@ -43,6 +51,48 @@ interface ChequesSectionProps {
 
 function statusLabel(s: Cheque["status"]): string {
   return s;
+}
+
+function ChequeSortableColumnHeader({
+  label,
+  field,
+  sortKeys,
+  onSort,
+}: {
+  label: string;
+  field: ChequeRegisterSortField;
+  sortKeys: ChequeSortKey[];
+  onSort: (field: ChequeRegisterSortField) => void;
+}) {
+  const primary = primarySortKey(sortKeys);
+  const isPrimary = primary?.field === field;
+  const ariaSort = isPrimary
+    ? primary.direction === "asc"
+      ? "ascending"
+      : "descending"
+    : "none";
+  const sortLabel = isPrimary
+    ? `Sort by ${label}, ${primary.direction === "asc" ? "ascending" : "descending"}`
+    : `Sort by ${label}`;
+
+  return (
+    <th aria-sort={ariaSort}>
+      <button
+        type="button"
+        className="cheque-register-sort-header"
+        onClick={() => onSort(field)}
+        aria-label={sortLabel}
+      >
+        <span>{label}</span>
+        {isPrimary && primary.direction === "asc" && (
+          <ArrowDownNarrowWide size={16} strokeWidth={2} aria-hidden />
+        )}
+        {isPrimary && primary.direction === "desc" && (
+          <ArrowDownWideNarrow size={16} strokeWidth={2} aria-hidden />
+        )}
+      </button>
+    </th>
+  );
 }
 
 function isCreditEligible(account: Account): boolean {
@@ -129,6 +179,7 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
   const [minAmount, setMinAmount] = useState("");
   const [maxAmount, setMaxAmount] = useState("");
   const [summaryFilter, setSummaryFilter] = useState("");
+  const [sortKeys, setSortKeys] = useState<ChequeSortKey[]>([]);
   const [filterOptions, setFilterOptions] = useState<ChequeFilterOptions>({
     parties: [],
     credit_accounts: [],
@@ -235,6 +286,7 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
       min_amount: minAmount.trim() || undefined,
       max_amount: maxAmount.trim() || undefined,
       summary: summaryFilter.trim() || undefined,
+      sort: sortKeys.length > 0 ? toSortParams(sortKeys) : undefined,
     }),
     [
       listStatus,
@@ -248,8 +300,13 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
       minAmount,
       maxAmount,
       summaryFilter,
+      sortKeys,
     ],
   );
+
+  const handleSortColumn = useCallback((field: ChequeRegisterSortField) => {
+    setSortKeys((current) => cycleSortKeys(current, field));
+  }, []);
 
   const reloadList = useCallback(async () => {
     setListError(null);
@@ -1310,15 +1367,60 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
           <table>
             <thead>
               <tr>
-                <th>Status</th>
-                <th>#</th>
-                <th>Summary</th>
-                <th>Issue</th>
-                <th>Cleared</th>
-                <th>Amount</th>
-                <th>Credit</th>
-                <th>Debit</th>
-                <th>Party</th>
+                <ChequeSortableColumnHeader
+                  label="Status"
+                  field={CHEQUE_REGISTER_SORT_FIELDS.status}
+                  sortKeys={sortKeys}
+                  onSort={handleSortColumn}
+                />
+                <ChequeSortableColumnHeader
+                  label="#"
+                  field={CHEQUE_REGISTER_SORT_FIELDS.chequeNumber}
+                  sortKeys={sortKeys}
+                  onSort={handleSortColumn}
+                />
+                <ChequeSortableColumnHeader
+                  label="Summary"
+                  field={CHEQUE_REGISTER_SORT_FIELDS.summary}
+                  sortKeys={sortKeys}
+                  onSort={handleSortColumn}
+                />
+                <ChequeSortableColumnHeader
+                  label="Issue"
+                  field={CHEQUE_REGISTER_SORT_FIELDS.issueDate}
+                  sortKeys={sortKeys}
+                  onSort={handleSortColumn}
+                />
+                <ChequeSortableColumnHeader
+                  label="Cleared"
+                  field={CHEQUE_REGISTER_SORT_FIELDS.clearedDate}
+                  sortKeys={sortKeys}
+                  onSort={handleSortColumn}
+                />
+                <ChequeSortableColumnHeader
+                  label="Amount"
+                  field={CHEQUE_REGISTER_SORT_FIELDS.amount}
+                  sortKeys={sortKeys}
+                  onSort={handleSortColumn}
+                />
+                <ChequeSortableColumnHeader
+                  label="Credit"
+                  field={CHEQUE_REGISTER_SORT_FIELDS.creditAccountId}
+                  sortKeys={sortKeys}
+                  onSort={handleSortColumn}
+                />
+                <ChequeSortableColumnHeader
+                  label="Debit"
+                  field={CHEQUE_REGISTER_SORT_FIELDS.debitAccountId}
+                  sortKeys={sortKeys}
+                  onSort={handleSortColumn}
+                />
+                <ChequeSortableColumnHeader
+                  label="Party"
+                  field={CHEQUE_REGISTER_SORT_FIELDS.partyId}
+                  sortKeys={sortKeys}
+                  onSort={handleSortColumn}
+                />
                 <th>Actions</th>
               </tr>
             </thead>

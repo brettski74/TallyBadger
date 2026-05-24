@@ -1565,6 +1565,28 @@ th.table-row-actions-heading {
   margin-bottom: 0;
 }
 
+.cheque-register-sort-header {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  width: auto;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: inherit;
+}
+
+.cheque-register-sort-header:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
 .cheque-dialog {
   max-width: min(52rem, calc(100vw - 2rem));
   width: 100%;
