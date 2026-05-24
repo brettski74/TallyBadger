@@ -14,6 +14,8 @@ import json
 import sys
 from pathlib import Path
 
+from psycopg.rows import dict_row
+
 from tallybadger.core.config import get_settings
 from tallybadger.db import connect_database
 
