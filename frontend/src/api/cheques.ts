@@ -98,6 +98,7 @@ export interface ChequeListParams {
   min_amount?: string;
   max_amount?: string;
   summary?: string;
+  sort?: string[];
 }
 
 function appendIdList(search: URLSearchParams, key: string, ids: number[] | undefined): void {
@@ -146,6 +147,11 @@ export async function listCheques(params: ChequeListParams = {}): Promise<Cheque
   }
   if (params.summary?.trim()) {
     search.set("summary", params.summary.trim());
+  }
+  if (params.sort?.length) {
+    for (const token of params.sort) {
+      search.append("sort", token);
+    }
   }
   const query = search.toString();
   const response = await fetch(`${getApiBase()}/cheques${query ? `?${query}` : ""}`);
