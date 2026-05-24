@@ -733,70 +733,68 @@ export function PartiesSection({ accounts, onPartyCreated, onPartyUpdated }: Par
               Status
               <input aria-label="Party status" value={statusLabel} readOnly />
             </label>
+            {revenuePickable(formRole) && (
+              <label>
+                Default revenue / equity account{mode === "create" ? " (optional)" : ""}
+                {readOnly ? (
+                  <input
+                    aria-label="Default revenue or equity account"
+                    value={
+                      party?.default_revenue_account_name ? `${party.default_revenue_account_name}` : "—"
+                    }
+                    readOnly
+                  />
+                ) : (
+                  <select
+                    aria-label={
+                      mode === "create"
+                        ? "Default revenue or equity account"
+                        : "Edit default revenue or equity account"
+                    }
+                    value={formDefRev}
+                    onChange={(e) =>
+                      mode === "create" ? setCreateDefRev(e.target.value) : setEditDefRev(e.target.value)
+                    }
+                  >
+                    <option value="">— none —</option>
+                    {revenueEquityAccounts.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name} ({a.type})
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </label>
+            )}
+            {expensePickable(formRole) && (
+              <label>
+                Default expense account{mode === "create" ? " (optional)" : ""}
+                {readOnly ? (
+                  <input
+                    aria-label="Default expense account"
+                    value={party?.default_expense_account_name ? `${party.default_expense_account_name}` : "—"}
+                    readOnly
+                  />
+                ) : (
+                  <select
+                    aria-label={mode === "create" ? "Default expense account" : "Edit default expense account"}
+                    value={formDefExp}
+                    onChange={(e) =>
+                      mode === "create" ? setCreateDefExp(e.target.value) : setEditDefExp(e.target.value)
+                    }
+                  >
+                    <option value="">— none —</option>
+                    {expenseAccounts.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name} ({a.type})
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </label>
+            )}
           </div>
         </div>
-
-        {revenuePickable(formRole) && (
-          <label>
-            Default revenue / equity account{mode === "create" ? " (optional)" : ""}
-            {readOnly ? (
-              <input
-                aria-label="Default revenue or equity account"
-                value={
-                  party?.default_revenue_account_name
-                    ? `${party.default_revenue_account_name}`
-                    : "—"
-                }
-                readOnly
-              />
-            ) : (
-              <select
-                aria-label={
-                  mode === "create" ? "Default revenue or equity account" : "Edit default revenue or equity account"
-                }
-                value={formDefRev}
-                onChange={(e) =>
-                  mode === "create" ? setCreateDefRev(e.target.value) : setEditDefRev(e.target.value)
-                }
-              >
-                <option value="">— none —</option>
-                {revenueEquityAccounts.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name} ({a.type})
-                  </option>
-                ))}
-              </select>
-            )}
-          </label>
-        )}
-
-        {expensePickable(formRole) && (
-          <label>
-            Default expense account{mode === "create" ? " (optional)" : ""}
-            {readOnly ? (
-              <input
-                aria-label="Default expense account"
-                value={party?.default_expense_account_name ? `${party.default_expense_account_name}` : "—"}
-                readOnly
-              />
-            ) : (
-              <select
-                aria-label={mode === "create" ? "Default expense account" : "Edit default expense account"}
-                value={formDefExp}
-                onChange={(e) =>
-                  mode === "create" ? setCreateDefExp(e.target.value) : setEditDefExp(e.target.value)
-                }
-              >
-                <option value="">— none —</option>
-                {expenseAccounts.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name} ({a.type})
-                  </option>
-                ))}
-              </select>
-            )}
-          </label>
-        )}
 
         <fieldset style={{ width: "100%", minWidth: 0 }}>
           <legend>Match patterns{mode === "create" ? " (optional)" : ""}</legend>

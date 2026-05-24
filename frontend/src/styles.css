@@ -1814,11 +1814,11 @@ th.table-row-actions-heading {
 }
 
 .cheque-dialog.party-dialog .cheque-dialog-inner {
-  max-height: min(90vh, 28rem);
+  max-height: min(90vh, 42rem);
 }
 
 .cheque-dialog.party-dialog.party-dialog-many-patterns .cheque-dialog-inner {
-  max-height: min(90vh, 36rem);
+  max-height: min(90vh, 54rem);
 }
 
 .cheque-dialog.accrual-view-dialog {
