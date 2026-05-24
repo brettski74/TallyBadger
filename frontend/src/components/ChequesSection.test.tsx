@@ -74,7 +74,7 @@ function installFetchMock(routes: RouteMocks = {}) {
           headers: { "Content-Type": "application/json" },
         });
       }
-      return new Response(JSON.stringify(routes.cheques ?? []), {
+      return new Response(JSON.stringify({ cheques: routes.cheques ?? [] }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
       });
@@ -502,7 +502,7 @@ describe("ChequesSection #141 — cheque series", () => {
       if (url.includes("/cheques/series") && init?.method === "POST") {
         return new Response(JSON.stringify([]), { status: 201 });
       }
-      return new Response(JSON.stringify([]), {
+      return new Response(JSON.stringify({ cheques: [] }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
       });
@@ -577,7 +577,7 @@ describe("ChequesSection #141 — cheque series", () => {
           { status: 201, headers: { "Content-Type": "application/json" } },
         );
       }
-      return new Response(JSON.stringify([]), {
+      return new Response(JSON.stringify({ cheques: [] }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
       });
@@ -643,7 +643,7 @@ describe("ChequesSection #132 — keyboard shortcuts", () => {
           { status: 200, headers: { "Content-Type": "application/json" } },
         );
       }
-      return new Response(JSON.stringify([openCheque]), {
+      return new Response(JSON.stringify({ cheques: [openCheque] }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
       });
@@ -685,7 +685,7 @@ describe("ChequesSection #132 — keyboard shortcuts", () => {
           { status: 200, headers: { "Content-Type": "application/json" } },
         );
       }
-      return new Response(JSON.stringify([openCheque]), {
+      return new Response(JSON.stringify({ cheques: [openCheque] }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
       });
@@ -768,7 +768,7 @@ describe("ChequesSection #132 — keyboard shortcuts", () => {
           { status: 201, headers: { "Content-Type": "application/json" } },
         );
       }
-      return new Response(JSON.stringify([]), {
+      return new Response(JSON.stringify({ cheques: [] }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
       });
@@ -828,7 +828,7 @@ describe("ChequesSection #132 — keyboard shortcuts", () => {
           { status: 200, headers: { "Content-Type": "application/json" } },
         );
       }
-      return new Response(JSON.stringify([]), {
+      return new Response(JSON.stringify({ cheques: [] }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
       });
@@ -889,7 +889,7 @@ describe("ChequesSection #132 — keyboard shortcuts", () => {
           headers: { "Content-Type": "application/json" },
         });
       }
-      return new Response(JSON.stringify([]), {
+      return new Response(JSON.stringify({ cheques: [] }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
       });

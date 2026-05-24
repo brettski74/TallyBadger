@@ -301,6 +301,21 @@ class ChequeOut(BaseModel):
     updated_at: datetime
 
 
+class ChequeListResponse(BaseModel):
+    cheques: list[ChequeOut]
+
+
+class ChequeFilterOption(BaseModel):
+    id: int | None
+    name: str
+
+
+class ChequeFilterOptionsResponse(BaseModel):
+    parties: list[ChequeFilterOption]
+    credit_accounts: list[ChequeFilterOption]
+    debit_accounts: list[ChequeFilterOption]
+
+
 ChequeIncrementUnit = Literal["days", "weeks", "months"]
 
 
