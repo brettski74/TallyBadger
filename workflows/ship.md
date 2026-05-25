@@ -12,11 +12,12 @@ Use this workflow for **user-led acceptance testing** after implementation exist
 
 ## Steps
 
-1. **Confirm** what the user is testing (environment, branch, PR, or release) and the acceptance criteria from the issue then stop and wait for further instructions from the user.
-2. Support **user-led** testing: answer questions, reproduce reported behaviour, and distinguish expected versus defective behaviour using the issue and **[ARCH.md](../ARCH.md)** as reference.
-3. If the user reports a **bug** or **requirement gap**, fix code or docs as agreed and **record** the gap and resolution in **issue comments** (not by rewriting the issue body). Reserve body edits for explicit **refinement**—if the user wants the requirements document itself changed, suggest that the user switch to the **refine** workflow in a fresh chat. Do not rewrite the issue body while within this workflow.
-4. **Commit** and **push** fixes on the **same feature branch** as the implementation under test until UAT is complete. Remind the user that you are waiting for them to confirm when the merge is done before performing final cleanup and switching back to the main branch.
-5. When the user **explicitly says** the PR is **merged** (or integration to the default branch is complete **on their side**): **check out** the default branch, **pull** latest, and treat the workspace as ready for the next piece of work. This step is **not** “the assistant merges the PR”; it is **sync local git after the human merged**. The feature branch will be deleted remotely when the branch is merged. Ensure that the same thing happens on the local repo.
+1. **Setup the environment for testing** by running `make ship-prepare` to ensure that the environment is cleanly loaded and restarted.
+2. **Confirm** from the code changes, ticket details and acceptance criteria what the user is testing. Display a suggested testing checklist for the user in the chat, then stop and wait for further instructions from the user.
+3. Support **user-led** testing: answer questions, reproduce reported behaviour, and distinguish expected versus defective behaviour using the issue and **[ARCH.md](../ARCH.md)** as reference.
+4. If the user reports a **bug** or **requirement gap**, fix code or docs as agreed and **record** the gap and resolution in **issue comments** (not by rewriting the issue body). Reserve body edits for explicit **refinement**—if the user wants the requirements document itself changed, suggest that the user switch to the **refine** workflow in a fresh chat. Do not rewrite the issue body while within this workflow.
+5. **Commit** and **push** fixes on the **same feature branch** as the implementation under test until UAT is complete. Remind the user that you are waiting for them to confirm when the merge is done before performing final cleanup and switching back to the main branch.
+6. When the user **explicitly says** the PR is **merged** (or integration to the default branch is complete **on their side**): **check out** the default branch, **pull** latest, and treat the workspace as ready for the next piece of work. This step is **not** “the assistant merges the PR”; it is **sync local git after the human merged**. The feature branch will be deleted remotely when the branch is merged. Ensure that the same thing happens on the local repo.
 
 ## Notes
 
@@ -27,5 +28,6 @@ Use this workflow for **user-led acceptance testing** after implementation exist
 - Design and implement tests before implementing to solution to any reported issues.
 - Commit any unsaved prior work before starting work on a new issue.
 - Acceptance test is generally run against the local dev instance, running locally in the current workspace.
+- If the required work appears very large, suggest a proposed breakdown of the work into more manageable child tickets in the chat. **Do not create child tickets** unless and until the user agrees. As a guideline, a ticket should be considered too large if it appears likely to consume more than 150k of context during implementation, including automated test runs but not user driven UAT.
 - Prior to merge and after any code changes have been made, all tests must have been run. This includes front-end, back-end, integration and any other automated tests that exist for this project. If any code changes have been made after any tests have been run, you need to re-run those tests to ensure that all tests have been run after any and all code changes before we are ready to merge. For the purposes of this point, any change to a file other than a markdown (*.md) file is considered a code change. Include test execution time as well as total number of tests passed in the PR body, if available.
 

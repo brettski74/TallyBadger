@@ -189,9 +189,6 @@ function App() {
         {tab === "parties" && (
           <PartiesSection
             accounts={accounts}
-            parties={parties}
-            loading={loading}
-            error={error}
             onPartyCreated={handlePartyCreated}
             onPartyUpdated={handlePartyUpdated}
           />

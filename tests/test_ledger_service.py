@@ -383,3 +383,10 @@ def test_split_receipt_allocations_separates_due_and_early() -> None:
     )
     assert due == Decimal("40.00")
     assert early == Decimal("60.00")
+
+
+def test_list_party_subtype_suggestions_reads_dict_rows() -> None:
+    service, _conn, cur = _build_service_with_mocks()
+    cur.fetchall.return_value = [{"s": "Tenant"}, {"s": "utility"}]
+
+    assert service.list_party_subtype_suggestions() == ["Tenant", "utility"]

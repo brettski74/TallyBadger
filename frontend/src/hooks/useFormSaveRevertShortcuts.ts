@@ -91,8 +91,12 @@ export interface FormSaveRevertShortcutOptions {
   requestCreateClose?: () => void;
   /** Esc: close inline edit without saving. */
   requestEditClose?: () => void;
-  /** When true, Esc invokes create/edit close handlers when the matching editor is active. */
+  /** When true, Esc invokes create/edit/view close handlers when the matching editor is active. */
   escapeActive?: boolean;
+  /** When true, Esc closes the read-only view modal. */
+  viewDialogActive?: boolean;
+  /** Esc: close read-only view modal. */
+  requestViewClose?: () => void;
   /** Ctrl/Cmd+Shift+N: open create flow for the current view. */
   requestNew?: () => void;
   /** When false, Ctrl/Cmd+Shift+N is ignored (e.g. modal already open). */
@@ -118,6 +122,11 @@ export function useFormSaveRevertShortcuts(opts: FormSaveRevertShortcutOptions):
       }
 
       if (e.key === "Escape" && o.escapeActive) {
+        if (o.viewDialogActive && o.requestViewClose) {
+          e.preventDefault();
+          o.requestViewClose();
+          return;
+        }
         if (o.inlineCreateActive && o.requestCreateClose) {
           e.preventDefault();
           o.requestCreateClose();

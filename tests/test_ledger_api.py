@@ -16,7 +16,7 @@ class StubLedgerService:
     def list_accounts(self):
         return []
 
-    def list_parties(self):
+    def list_parties(self, **_kwargs):
         return []
 
     def list_party_subtype_suggestions(self):

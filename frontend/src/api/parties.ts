@@ -38,8 +38,46 @@ export interface PartyUpdateInput {
   default_expense_account_id?: number | null;
 }
 
+export type PartyActiveFilter = "active" | "inactive" | "all";
+
+export interface PartyListParams {
+  name?: string;
+  is_active?: boolean;
+  roles?: PartyRole[];
+  subtypes?: string[];
+  sort?: string[];
+}
+
 export async function listParties(): Promise<Party[]> {
-  const response = await fetch(`${getApiBase()}/parties`);
+  return listPartiesRegister();
+}
+
+export async function listPartiesRegister(params: PartyListParams = {}): Promise<Party[]> {
+  const search = new URLSearchParams();
+  if (params.name != null && params.name.trim()) {
+    search.set("name", params.name.trim());
+  }
+  if (params.is_active !== undefined) {
+    search.set("is_active", String(params.is_active));
+  }
+  if (params.roles) {
+    for (const role of params.roles) {
+      search.append("roles", role);
+    }
+  }
+  if (params.subtypes) {
+    for (const subtype of params.subtypes) {
+      search.append("subtypes", subtype);
+    }
+  }
+  if (params.sort) {
+    for (const token of params.sort) {
+      search.append("sort", token);
+    }
+  }
+  const query = search.toString();
+  const url = query ? `${getApiBase()}/parties?${query}` : `${getApiBase()}/parties`;
+  const response = await fetch(url);
   if (!response.ok) {
     throw new Error(await readApiErrorMessage(response));
   }

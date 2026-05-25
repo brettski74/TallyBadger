@@ -60,9 +60,51 @@ def list_accounts(service: LedgerService = Depends(get_ledger_service)) -> list[
     return service.list_accounts()
 
 
+PartyRoleParam = Literal["customer", "vendor", "both", "other"]
+
+
 @router.get("/parties", response_model=list[PartyOut])
-def list_parties(service: LedgerService = Depends(get_ledger_service)) -> list[PartyOut]:
-    return service.list_parties()
+def list_parties(
+    name: str | None = Query(
+        default=None,
+        description="Case-insensitive POSIX regular expression matched against party name.",
+    ),
+    is_active: bool | None = None,
+    roles: Annotated[
+        list[PartyRoleParam] | None,
+        Query(description="Repeat for each role filter (OR within facet)."),
+    ] = None,
+    subtypes: Annotated[
+        list[str] | None,
+        Query(
+            description=(
+                "Repeat for each subtype filter (OR within facet). "
+                "Use the literal token __null__ for parties with null or empty subtype."
+            ),
+        ),
+    ] = None,
+    sort: Annotated[
+        list[str] | None,
+        Query(
+            description=(
+                "Sort keys in priority order, each field:asc or field:desc. "
+                "Allowed fields: name, role, subtype, is_active. "
+                "When omitted, sorts by name ascending then id ascending."
+            ),
+        ),
+    ] = None,
+    service: LedgerService = Depends(get_ledger_service),
+) -> list[PartyOut]:
+    try:
+        return service.list_parties(
+            name_pattern=name,
+            is_active=is_active,
+            roles=roles,
+            subtype_tokens=subtypes,
+            sort_tokens=sort,
+        )
+    except LedgerValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("/parties/subtype-suggestions", response_model=list[str])
