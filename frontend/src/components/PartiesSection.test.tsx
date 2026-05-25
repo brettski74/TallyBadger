@@ -95,6 +95,32 @@ describe("PartiesSection", () => {
     expect(registerCalls.some((u) => u.includes("is_active=true"))).toBe(true);
   });
 
+  it("opens role and subtype filter dropdowns with options from the API", async () => {
+    mockPartiesFetch([tenantParty]);
+
+    render(
+      <PartiesSection accounts={emptyAccounts} onPartyCreated={vi.fn()} onPartyUpdated={vi.fn()} />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Ridge Unit A")).toBeInTheDocument();
+    });
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Filter parties by role" }));
+
+    const roleMenu = await screen.findByRole("listbox", { name: "Filter parties by role" });
+    expect(within(roleMenu).getByLabelText("customer")).toBeInTheDocument();
+    expect(within(roleMenu).getByLabelText("vendor")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Filter parties by subtype" }));
+
+    const subtypeMenu = await screen.findByRole("listbox", { name: "Filter parties by subtype" });
+    expect(within(subtypeMenu).getByLabelText("(no subtype)")).toBeInTheDocument();
+    expect(within(subtypeMenu).getByLabelText("Tenant")).toBeInTheDocument();
+    expect(within(subtypeMenu).getByLabelText("Utilities")).toBeInTheDocument();
+  });
+
   it("surfaces 422 regex errors on the filter row", async () => {
     mockPartiesFetch([]);
 

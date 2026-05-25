@@ -1,11 +1,22 @@
 import { useEffect, useRef, useState } from "react";
 
-export interface JournalFilterMultiOption {
-  id: number;
+export interface JournalFilterMultiOption<TId extends string | number = number> {
+  id: TId;
   name: string;
 }
 
-export function JournalFilterMultiDropdown({
+function sortSelectedIds<TId extends string | number>(ids: TId[]): TId[] {
+  const copy = [...ids];
+  if (copy.length === 0) {
+    return copy;
+  }
+  if (typeof copy[0] === "number") {
+    return copy.sort((a, b) => (a as number) - (b as number));
+  }
+  return copy.sort((a, b) => String(a).localeCompare(String(b)));
+}
+
+export function JournalFilterMultiDropdown<TId extends string | number = number>({
   label,
   ariaFilterLabel,
   options,
@@ -14,15 +25,14 @@ export function JournalFilterMultiDropdown({
 }: {
   label: string;
   ariaFilterLabel: string;
-  options: JournalFilterMultiOption[];
-  selectedIds: number[];
-  onIdsChange: (ids: number[]) => void;
+  options: JournalFilterMultiOption<TId>[];
+  selectedIds: TId[];
+  onIdsChange: (ids: TId[]) => void;
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
-  const summaryText =
-    selectedIds.length === 0 ? "All" : `${selectedIds.length} selected`;
+  const summaryText = selectedIds.length === 0 ? "All" : `${selectedIds.length} selected`;
 
   useEffect(() => {
     if (!open) {
@@ -55,14 +65,14 @@ export function JournalFilterMultiDropdown({
     };
   }, [open]);
 
-  function toggle(id: number) {
+  function toggle(id: TId) {
     const set = new Set(selectedIds);
     if (set.has(id)) {
       set.delete(id);
     } else {
       set.add(id);
     }
-    onIdsChange([...set].sort((a, b) => a - b));
+    onIdsChange(sortSelectedIds([...set]));
   }
 
   return (
@@ -94,12 +104,8 @@ export function JournalFilterMultiDropdown({
             </button>
           )}
           {options.map((o) => (
-            <label key={o.id} className="journal-filter-menu-option">
-              <input
-                type="checkbox"
-                checked={selectedIds.includes(o.id)}
-                onChange={() => toggle(o.id)}
-              />
+            <label key={String(o.id)} className="journal-filter-menu-option">
+              <input type="checkbox" checked={selectedIds.includes(o.id)} onChange={() => toggle(o.id)} />
               <span>{o.name}</span>
             </label>
           ))}

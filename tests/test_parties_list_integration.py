@@ -99,6 +99,20 @@ def test_list_parties_filters_and_sort(
     assert inactive == []
 
 
+def test_list_party_subtype_suggestions(
+    api_client: TestClient,
+    ledger_service: LedgerService,
+) -> None:
+    tag = uuid.uuid4().hex[:8]
+    _create_party(ledger_service, name=f"Subtype A {tag}", role="customer", subtype="Tenant")
+    _create_party(ledger_service, name=f"Subtype B {tag}", role="vendor", subtype="Utilities")
+    _create_party(ledger_service, name=f"Subtype C {tag}", role="other", subtype="Tenant")
+    _create_party(ledger_service, name=f"No Subtype {tag}", role="other", subtype=None)
+
+    suggestions = api_client.get("/parties/subtype-suggestions").json()
+    assert suggestions == ["Tenant", "Utilities"]
+
+
 def test_list_parties_validation_errors(api_client: TestClient) -> None:
     blank_name = api_client.get("/parties", params={"name": "   "})
     assert blank_name.status_code == 422

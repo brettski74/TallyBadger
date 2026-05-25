@@ -42,6 +42,7 @@ import {
   type PartyRegisterSortField,
   type PartySortKey,
 } from "../lib/partyRegisterSort";
+import { JournalFilterMultiDropdown } from "./JournalFilterMultiDropdown";
 import { SubtypeCombobox } from "./SubtypeCombobox";
 import { TableRowIconButton } from "./TableRowIconButton";
 
@@ -89,78 +90,6 @@ function revenuePickable(role: PartyRole): boolean {
 
 function expensePickable(role: PartyRole): boolean {
   return role === "vendor" || role === "both";
-}
-
-function StringFilterMultiDropdown({
-  label,
-  ariaFilterLabel,
-  options,
-  selected,
-  onSelectedChange,
-}: {
-  label: string;
-  ariaFilterLabel: string;
-  options: { id: string; label: string }[];
-  selected: string[];
-  onSelectedChange: (ids: string[]) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-  const summaryText = selected.length === 0 ? "All" : `${selected.length} selected`;
-
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-    function handlePointerDown(event: PointerEvent) {
-      const root = rootRef.current;
-      if (root && !root.contains(event.target as Node)) {
-        setOpen(false);
-      }
-    }
-    document.addEventListener("pointerdown", handlePointerDown, true);
-    return () => document.removeEventListener("pointerdown", handlePointerDown, true);
-  }, [open]);
-
-  function toggle(id: string) {
-    const set = new Set(selected);
-    if (set.has(id)) {
-      set.delete(id);
-    } else {
-      set.add(id);
-    }
-    onSelectedChange([...set].sort((a, b) => a.localeCompare(b)));
-  }
-
-  return (
-    <div ref={rootRef} className="journal-filter-slot journal-filter-slot-multi">
-      <button
-        type="button"
-        className="journal-filter-multi-trigger"
-        aria-expanded={open}
-        aria-haspopup="listbox"
-        aria-label={ariaFilterLabel}
-        onClick={() => setOpen((v) => !v)}
-      >
-        <span className="journal-filter-inline-label">{label}</span>
-        <span className="journal-filter-multi-value">{summaryText}</span>
-      </button>
-      {open && (
-        <div className="journal-filter-menu" role="listbox" aria-label={ariaFilterLabel}>
-          {options.map((opt) => (
-            <label key={opt.id} className="journal-filter-menu-option">
-              <input
-                type="checkbox"
-                checked={selected.includes(opt.id)}
-                onChange={() => toggle(opt.id)}
-              />
-              <span>{opt.label}</span>
-            </label>
-          ))}
-        </div>
-      )}
-    </div>
-  );
 }
 
 function PartySortableColumnHeader({
@@ -335,11 +264,6 @@ export function PartiesSection({ accounts, onPartyCreated, onPartyUpdated }: Par
       ...subtypeSuggestions.map((s) => ({ id: s, label: s })),
     ],
     [subtypeSuggestions],
-  );
-
-  const roleFilterOptions = useMemo(
-    () => PARTY_ROLES.map((r) => ({ id: r, label: r })),
-    [],
   );
 
   const subtypeCandidates = useMemo(() => {
@@ -926,19 +850,19 @@ export function PartiesSection({ accounts, onPartyCreated, onPartyUpdated }: Par
               <option value="all">All</option>
             </select>
           </label>
-          <StringFilterMultiDropdown
+          <JournalFilterMultiDropdown<PartyRole>
             label="Role"
             ariaFilterLabel="Filter parties by role"
-            options={roleFilterOptions}
-            selected={selectedRoles}
-            onSelectedChange={(ids) => setSelectedRoles(ids as PartyRole[])}
+            options={PARTY_ROLES.map((r) => ({ id: r, name: r }))}
+            selectedIds={selectedRoles}
+            onIdsChange={setSelectedRoles}
           />
-          <StringFilterMultiDropdown
+          <JournalFilterMultiDropdown
             label="Subtype"
             ariaFilterLabel="Filter parties by subtype"
-            options={subtypeFilterOptions}
-            selected={selectedSubtypes}
-            onSelectedChange={setSelectedSubtypes}
+            options={subtypeFilterOptions.map((o) => ({ id: o.id, name: o.label }))}
+            selectedIds={selectedSubtypes}
+            onIdsChange={setSelectedSubtypes}
           />
         </div>
 
