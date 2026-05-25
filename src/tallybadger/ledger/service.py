@@ -485,7 +485,7 @@ class LedgerService:
 
     def list_party_subtype_suggestions(self) -> list[str]:
         with self._connection_factory() as conn:
-            with conn.cursor() as cur:
+            with conn.cursor(row_factory=dict_row) as cur:
                 cur.execute(
                     """
                     SELECT DISTINCT BTRIM(subtype) AS s
@@ -494,7 +494,7 @@ class LedgerService:
                     ORDER BY 1 ASC
                     """
                 )
-                return [str(r[0]) for r in cur.fetchall()]
+                return [str(r["s"]) for r in cur.fetchall()]
 
     def create_party(self, party: PartyCreate) -> PartyOut:
         patterns = _normalize_party_match_patterns(party.match_patterns)

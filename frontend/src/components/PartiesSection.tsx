@@ -154,6 +154,7 @@ export function PartiesSection({ accounts, onPartyCreated, onPartyUpdated }: Par
   const [sortKeys, setSortKeys] = useState<PartySortKey[]>(DEFAULT_SORT_KEYS);
 
   const [subtypeSuggestions, setSubtypeSuggestions] = useState<string[]>([]);
+  const [subtypeSuggestionsError, setSubtypeSuggestionsError] = useState<string | null>(null);
 
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
@@ -246,10 +247,14 @@ export function PartiesSection({ accounts, onPartyCreated, onPartyUpdated }: Par
         const s = await listPartySubtypeSuggestions();
         if (!cancelled) {
           setSubtypeSuggestions(s);
+          setSubtypeSuggestionsError(null);
         }
-      } catch {
+      } catch (err) {
         if (!cancelled) {
           setSubtypeSuggestions([]);
+          setSubtypeSuggestionsError(
+            err instanceof Error ? err.message : "Failed to load subtype filter options",
+          );
         }
       }
     })();
@@ -867,6 +872,7 @@ export function PartiesSection({ accounts, onPartyCreated, onPartyUpdated }: Par
         </div>
 
         {filterError && <p className="error-text">{filterError}</p>}
+        {subtypeSuggestionsError && <p className="error-text">{subtypeSuggestionsError}</p>}
         {registerError && (
           <p className="error" role="alert">
             {registerError}

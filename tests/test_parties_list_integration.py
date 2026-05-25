@@ -8,6 +8,7 @@ from collections.abc import Iterator
 import pytest
 from fastapi.testclient import TestClient
 from psycopg import connect
+from psycopg.rows import dict_row
 
 from tallybadger.api.routes.ledger import get_ledger_service
 from tallybadger.ledger.models import PartyCreate
@@ -17,13 +18,13 @@ from tallybadger.main import app
 
 @pytest.fixture
 def ledger_service(integration_db_url: str) -> LedgerService:
-    return LedgerService(connection_factory=lambda: connect(integration_db_url))
+    return LedgerService(connection_factory=lambda: connect(integration_db_url, row_factory=dict_row))
 
 
 @pytest.fixture
 def api_client(integration_db_url: str) -> Iterator[TestClient]:
     app.dependency_overrides[get_ledger_service] = lambda: LedgerService(
-        connection_factory=lambda: connect(integration_db_url),
+        connection_factory=lambda: connect(integration_db_url, row_factory=dict_row),
     )
     with TestClient(app) as client:
         yield client
