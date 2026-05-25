@@ -738,7 +738,7 @@ export function PartiesSection({ accounts, onPartyCreated, onPartyUpdated }: Par
           <div className="cheque-form-col">
             <label>
               Status
-              <input aria-label="Party status" value={statusLabel} readOnly />
+              <input aria-label="Party status" value={statusLabel} readOnly tabIndex={-1} />
             </label>
             {revenuePickable(formRole) && (
               <label>
