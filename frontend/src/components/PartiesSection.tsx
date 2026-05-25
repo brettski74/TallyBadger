@@ -260,6 +260,9 @@ export function PartiesSection({ accounts, onPartyCreated, onPartyUpdated }: Par
   const viewDialogRef = useRef<HTMLDialogElement>(null);
   const createNameInputRef = useRef<HTMLInputElement>(null);
   const editNameInputRef = useRef<HTMLInputElement>(null);
+  const createPatternInputRefs = useRef<(HTMLInputElement | null)[]>([]);
+  const editPatternInputRefs = useRef<(HTMLInputElement | null)[]>([]);
+  const pendingPatternFocusRef = useRef<{ which: "create" | "edit"; index: number } | null>(null);
   const createFormBaselineRef = useRef<PartyFormSnapshot>(EMPTY_CREATE_SNAPSHOT);
   const editFormBaselineRef = useRef<PartyFormSnapshot | null>(null);
 
@@ -456,6 +459,14 @@ export function PartiesSection({ accounts, onPartyCreated, onPartyUpdated }: Par
   }, [editDialogOpen]);
 
   useEffect(() => {
+    const pending = pendingPatternFocusRef.current;
+    if (!pending) return;
+    pendingPatternFocusRef.current = null;
+    const refs = pending.which === "create" ? createPatternInputRefs : editPatternInputRefs;
+    queueMicrotask(() => refs.current[pending.index]?.focus());
+  }, [createPatterns, editPatterns]);
+
+  useEffect(() => {
     const el = viewDialogRef.current;
     if (!el) return;
     if (viewDialogOpen && !el.open) el.showModal();
@@ -526,9 +537,15 @@ export function PartiesSection({ accounts, onPartyCreated, onPartyUpdated }: Par
 
   function addPatternRow(which: "create" | "edit") {
     if (which === "create") {
-      setCreatePatterns((prev) => [...prev, ""]);
+      setCreatePatterns((prev) => {
+        pendingPatternFocusRef.current = { which: "create", index: prev.length };
+        return [...prev, ""];
+      });
     } else {
-      setEditPatterns((prev) => [...prev, ""]);
+      setEditPatterns((prev) => {
+        pendingPatternFocusRef.current = { which: "edit", index: prev.length };
+        return [...prev, ""];
+      });
     }
   }
 
@@ -815,6 +832,13 @@ export function PartiesSection({ accounts, onPartyCreated, onPartyUpdated }: Par
                       {index + 1}:
                     </span>
                     <input
+                      ref={(el) => {
+                        if (mode === "create") {
+                          createPatternInputRefs.current[index] = el;
+                        } else {
+                          editPatternInputRefs.current[index] = el;
+                        }
+                      }}
                       aria-label={`${mode === "create" ? "Create" : "Edit"} match pattern ${index + 1}`}
                       value={pat}
                       onChange={(e) => setPatternAt(mode, index, e.target.value)}
