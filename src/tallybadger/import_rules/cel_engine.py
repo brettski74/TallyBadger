@@ -289,6 +289,34 @@ def _append_review_messages_list(rule_label: str, value: Any, acc: list[str]) ->
             acc.append(s)
 
 
+def build_import_cel_functions(
+    *,
+    bag: dict[str, Any] | None = None,
+    parties: list[PartyOut] | None = None,
+    accounts: list[AccountOut] | None = None,
+    cheques: list[ChequeOut] | None = None,
+    debug_records: list[CelDebugEvent] | None = None,
+    current_rule_label: list[str] | None = None,
+    row_number: int | None = None,
+) -> dict[str, CELFunction]:
+    """Custom CEL function registry shared by evaluate and compile-time validation (#160)."""
+    row_bag = bag if bag is not None else {}
+    label_holder = current_rule_label if current_rule_label is not None else [""]
+    records = debug_records if debug_records is not None else []
+    party_functions = build_party_cel_functions(parties or [])
+    stdlib_functions = build_stdlib_cel_functions(row_bag, accounts)
+    cheque_functions = build_cheque_cel_functions(cheques, accounts, parties)
+    debug_fn = _build_debug_cel_function(records, label_holder, row_number)
+    unset_fn = _build_unset_cel_function()
+    return {
+        **party_functions,
+        **stdlib_functions,
+        **cheque_functions,
+        "debug": debug_fn,
+        "unset": unset_fn,
+    }
+
+
 def evaluate_cel(
     rule_set: CelRuleSet,
     attributes: dict[str, Any],
@@ -309,18 +337,15 @@ def evaluate_cel(
     trace: list[CelTraceEvent] = []
     debug_records: list[CelDebugEvent] = []
     current_rule_label: list[str] = [""]
-    party_functions = build_party_cel_functions(parties or [])
-    stdlib_functions = build_stdlib_cel_functions(bag, accounts)
-    cheque_functions = build_cheque_cel_functions(cheques, accounts, parties)
-    debug_fn = _build_debug_cel_function(debug_records, current_rule_label, row_number)
-    unset_fn = _build_unset_cel_function()
-    cel_functions: dict[str, CELFunction] = {
-        **party_functions,
-        **stdlib_functions,
-        **cheque_functions,
-        "debug": debug_fn,
-        "unset": unset_fn,
-    }
+    cel_functions = build_import_cel_functions(
+        bag=bag,
+        parties=parties,
+        accounts=accounts,
+        cheques=cheques,
+        debug_records=debug_records,
+        current_rule_label=current_rule_label,
+        row_number=row_number,
+    )
     dropped = False
     drop_reason: str | None = None
     review_messages: list[str] = []

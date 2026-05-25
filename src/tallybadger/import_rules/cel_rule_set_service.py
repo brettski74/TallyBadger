@@ -11,6 +11,7 @@ from psycopg.rows import dict_row
 
 from tallybadger.db import get_connection
 from tallybadger.import_rules.cel_models import CelRuleSet
+from tallybadger.import_rules.cel_rule_set_validation import validate_cel_rule_set
 
 
 class CelRuleSetConflictError(Exception):
@@ -107,6 +108,7 @@ class CelRuleSetService:
         clean = name.strip()
         if not clean:
             raise ValueError("name must not be empty")
+        validate_cel_rule_set(rule_set)
         payload = rule_set.model_dump(mode="json")
         with self._connection_factory() as conn:
             try:
@@ -142,6 +144,7 @@ class CelRuleSetService:
 
         definition_json: str | None
         if rule_set is not None:
+            validate_cel_rule_set(rule_set)
             definition_json = json.dumps(rule_set.model_dump(mode="json"))
         else:
             definition_json = None

@@ -1,5 +1,62 @@
 import { getApiBase } from "./baseUrl";
-import { ApiHttpError, readApiErrorMessage } from "./errors";
+import { ApiHttpError, messageFromErrorBody, readApiErrorMessage } from "./errors";
+
+export interface CelRuleSetValidationErrorItem {
+  rule_index: number;
+  rule_label: string;
+  field: "expression" | "pattern";
+  message: string;
+  capture_index?: number;
+  matcher_label?: string;
+}
+
+export class CelRuleSetSaveValidationError extends Error {
+  readonly status = 422;
+  readonly errors: CelRuleSetValidationErrorItem[];
+
+  constructor(errors: CelRuleSetValidationErrorItem[]) {
+    super("Rule set validation failed");
+    this.name = "CelRuleSetSaveValidationError";
+    this.errors = errors;
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function parseValidationErrorsFromBody(data: unknown): CelRuleSetValidationErrorItem[] | null {
+  if (!isRecord(data)) {
+    return null;
+  }
+  const detail = data.detail;
+  if (!isRecord(detail) || !Array.isArray(detail.errors)) {
+    return null;
+  }
+  const items: CelRuleSetValidationErrorItem[] = [];
+  for (const raw of detail.errors) {
+    if (!isRecord(raw)) {
+      continue;
+    }
+    if (
+      typeof raw.rule_index !== "number" ||
+      typeof raw.rule_label !== "string" ||
+      (raw.field !== "expression" && raw.field !== "pattern") ||
+      typeof raw.message !== "string"
+    ) {
+      continue;
+    }
+    items.push({
+      rule_index: raw.rule_index,
+      rule_label: raw.rule_label,
+      field: raw.field,
+      message: raw.message,
+      capture_index: typeof raw.capture_index === "number" ? raw.capture_index : undefined,
+      matcher_label: typeof raw.matcher_label === "string" ? raw.matcher_label : undefined,
+    });
+  }
+  return items.length > 0 ? items : null;
+}
 
 export interface CelRuleSetSummary {
   id: number;
@@ -43,7 +100,21 @@ export interface PatchCelRuleSetPayload {
 
 async function throwIfNotOk(response: Response): Promise<void> {
   if (!response.ok) {
-    throw new ApiHttpError(response.status, await readApiErrorMessage(response));
+    let data: unknown;
+    try {
+      data = await response.json();
+    } catch {
+      data = null;
+    }
+    if (response.status === 422) {
+      const validationErrors = parseValidationErrorsFromBody(data);
+      if (validationErrors) {
+        throw new CelRuleSetSaveValidationError(validationErrors);
+      }
+    }
+    const message =
+      (data != null ? messageFromErrorBody(data) : null) ?? `Request failed (${response.status})`;
+    throw new ApiHttpError(response.status, message);
   }
 }
 
