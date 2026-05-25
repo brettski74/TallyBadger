@@ -13,6 +13,7 @@ from tallybadger.import_rules.cel_rule_set_service import (
     CelRuleSetService,
     CelRuleSetStored,
 )
+from tallybadger.import_rules.cel_rule_set_validation import CelRuleSetValidationError
 
 router = APIRouter(prefix="", tags=["import-rules-cel"])
 
@@ -82,6 +83,14 @@ def create_cel_rule_set(
 ) -> CelRuleSetStoredOut:
     try:
         row = service.create_rule_set(payload.name, payload.rule_set)
+    except CelRuleSetValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "message": "Rule set validation failed",
+                "errors": [issue.to_dict() for issue in exc.issues],
+            },
+        ) from exc
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -120,6 +129,14 @@ def patch_cel_rule_set(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except CelRuleSetConflictError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except CelRuleSetValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "message": "Rule set validation failed",
+                "errors": [issue.to_dict() for issue in exc.issues],
+            },
+        ) from exc
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,

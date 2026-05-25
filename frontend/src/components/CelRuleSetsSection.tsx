@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 
 import {
+  CelRuleSetSaveValidationError,
   createCelRuleSet,
   deleteCelRuleSet,
   getCelRuleSet,
@@ -19,6 +20,7 @@ import {
   type CelRule,
   type CelRegexCapture,
   type CelRuleSetSummary,
+  type CelRuleSetValidationErrorItem,
 } from "../api/celRuleSets";
 import { ApiHttpError } from "../api/errors";
 import { useFormSaveRevertShortcuts } from "../hooks/useFormSaveRevertShortcuts";
@@ -124,6 +126,31 @@ function ruleDisplayName(rule: CelRule): string {
   return "Untitled rule";
 }
 
+function errorsForRule(
+  errors: CelRuleSetValidationErrorItem[],
+  ruleIndex: number,
+): CelRuleSetValidationErrorItem[] {
+  return errors.filter((e) => e.rule_index === ruleIndex);
+}
+
+function expressionErrorsForRule(
+  errors: CelRuleSetValidationErrorItem[],
+  ruleIndex: number,
+): CelRuleSetValidationErrorItem[] {
+  return errors.filter((e) => e.rule_index === ruleIndex && e.field === "expression");
+}
+
+function patternErrorsForCapture(
+  errors: CelRuleSetValidationErrorItem[],
+  ruleIndex: number,
+  captureIndex: number,
+): CelRuleSetValidationErrorItem[] {
+  return errors.filter(
+    (e) =>
+      e.rule_index === ruleIndex && e.field === "pattern" && e.capture_index === captureIndex,
+  );
+}
+
 export function CelRuleSetsSection() {
   const [summaries, setSummaries] = useState<CelRuleSetSummary[]>([]);
   const [listLoading, setListLoading] = useState(true);
@@ -139,6 +166,9 @@ export function CelRuleSetsSection() {
 
   const [detailLoading, setDetailLoading] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [inlineValidationErrors, setInlineValidationErrors] = useState<
+    CelRuleSetValidationErrorItem[]
+  >([]);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -183,6 +213,7 @@ export function CelRuleSetsSection() {
     setSelectedRuleIndex(null);
     setBaseline("");
     setSaveError(null);
+    setInlineValidationErrors([]);
   }, []);
 
   const applyNew = useCallback(() => {
@@ -193,6 +224,7 @@ export function CelRuleSetsSection() {
     setBaseline(serializeState("", []));
     setSelectKey("new");
     setSaveError(null);
+    setInlineValidationErrors([]);
   }, []);
 
   const applyExisting = useCallback(
@@ -258,6 +290,7 @@ export function CelRuleSetsSection() {
       return;
     }
     setSaveError(null);
+    setInlineValidationErrors([]);
     if (next === "" || next === "__pick__") {
       resetToEmptyPicker();
       return;
@@ -276,6 +309,7 @@ export function CelRuleSetsSection() {
       return;
     }
     setSaveError(null);
+    setInlineValidationErrors([]);
     setSaving(true);
     try {
       const payload = buildPayload(draftName, draftRules);
@@ -303,8 +337,11 @@ export function CelRuleSetsSection() {
           idx != null && idx < rules.length ? idx : rules.length ? 0 : null,
         );
       }
+      setInlineValidationErrors([]);
     } catch (err) {
-      if (err instanceof ApiHttpError) {
+      if (err instanceof CelRuleSetSaveValidationError) {
+        setInlineValidationErrors(err.errors);
+      } else if (err instanceof ApiHttpError) {
         setSaveError(err.message);
       } else {
         setSaveError(err instanceof Error ? err.message : "Save failed");
@@ -632,6 +669,11 @@ export function CelRuleSetsSection() {
                           )}
                         </div>
                       </div>
+                      {errorsForRule(inlineValidationErrors, index).map((issue, ei) => (
+                        <p key={`rule-err-${index}-${ei}`} className="error-text" role="alert">
+                          {issue.message}
+                        </p>
+                      ))}
                     </li>
                   ))}
                 </ul>
@@ -746,6 +788,19 @@ export function CelRuleSetsSection() {
                               required
                               autoComplete="off"
                             />
+                            {patternErrorsForCapture(
+                              inlineValidationErrors,
+                              selectedRuleIndex!,
+                              ci,
+                            ).map((issue, ei) => (
+                              <p
+                                key={`pattern-err-${ci}-${ei}`}
+                                className="error-text"
+                                role="alert"
+                              >
+                                {issue.message}
+                              </p>
+                            ))}
                           </label>
                         </div>
                         <div
@@ -821,6 +876,17 @@ export function CelRuleSetsSection() {
                       className="rule-sets-cel-textarea"
                       spellCheck={false}
                     />
+                    {expressionErrorsForRule(inlineValidationErrors, selectedRuleIndex!).map(
+                      (issue, ei) => (
+                        <p
+                          key={`expr-err-${selectedRuleIndex}-${ei}`}
+                          className="error-text"
+                          role="alert"
+                        >
+                          {issue.message}
+                        </p>
+                      ),
+                    )}
                   </div>
                 </>
               )}

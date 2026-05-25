@@ -232,6 +232,61 @@ describe("CelRuleSetsSection", () => {
     expect(saveBtn).toHaveAttribute("aria-keyshortcuts", expect.stringMatching(/Control|Meta/));
   });
 
+  it("maps 422 validation errors to inline error-text under rule row and fields", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/import-rules/cel/rule-sets") && init?.method === "POST") {
+        return new Response(
+          JSON.stringify({
+            detail: {
+              message: "Rule set validation failed",
+              errors: [
+                {
+                  rule_index: 0,
+                  rule_label: "rule[0]",
+                  field: "expression",
+                  message: "syntax error in CEL",
+                },
+                {
+                  rule_index: 0,
+                  rule_label: "rule[0]",
+                  field: "pattern",
+                  message: "unclosed bracket",
+                  capture_index: 0,
+                  matcher_label: "description",
+                },
+              ],
+            },
+          }),
+          { status: 422, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (url.endsWith("/import-rules/cel/rule-sets")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      return new Response("x", { status: 500 });
+    });
+
+    render(<CelRuleSetsSection />);
+    await userEvent.selectOptions(await screen.findByRole("combobox"), "New rule set…");
+    await userEvent.type(screen.getByRole("textbox", { name: /^Rule set name$/i }), "Bad");
+    await userEvent.click(screen.getByRole("button", { name: "Add rule" }));
+    await userEvent.click(screen.getByRole("button", { name: "Add matcher" }));
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      const alerts = screen.getAllByRole("alert");
+      const texts = alerts.map((el) => el.textContent);
+      expect(texts.filter((t) => t?.includes("syntax error in CEL"))).toHaveLength(2);
+      expect(texts.filter((t) => t?.includes("unclosed bracket"))).toHaveLength(2);
+    });
+    for (const el of screen.getAllByRole("alert")) {
+      if (el.textContent?.includes("syntax error") || el.textContent?.includes("unclosed")) {
+        expect(el).toHaveClass("error-text");
+      }
+    }
+  });
+
   it("submits when Ctrl+S is pressed while focus is inside the form", async () => {
     const fetchMock = mockFetchListAndCreate();
     render(<CelRuleSetsSection />);

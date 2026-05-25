@@ -156,6 +156,117 @@ def test_patch_empty_body_422(cel_client: TestClient) -> None:
     assert r.status_code == 422
 
 
+def test_create_invalid_cel_expression_422_no_row(cel_client: TestClient) -> None:
+    r = cel_client.post(
+        "/import-rules/cel/rule-sets",
+        json={
+            "name": "bad-cel",
+            "rule_set": {"rules": [{"sort_order": 0, "expression": "1 + ", "captures": []}]},
+        },
+    )
+    assert r.status_code == 422, r.text
+    detail = r.json()["detail"]
+    assert detail["message"] == "Rule set validation failed"
+    errors = detail["errors"]
+    assert len(errors) == 1
+    assert errors[0]["field"] == "expression"
+    assert errors[0]["rule_index"] == 0
+    assert cel_client.get("/import-rules/cel/rule-sets").json() == []
+
+
+def test_create_invalid_regex_422_with_capture_index(cel_client: TestClient) -> None:
+    r = cel_client.post(
+        "/import-rules/cel/rule-sets",
+        json={
+            "name": "bad-regex",
+            "rule_set": {
+                "rules": [
+                    {
+                        "sort_order": 0,
+                        "expression": "null",
+                        "captures": [
+                            {
+                                "attribute": "description",
+                                "pattern": "[unclosed",
+                                "flags": [],
+                                "label": "Line match",
+                            },
+                        ],
+                    },
+                ],
+            },
+        },
+    )
+    assert r.status_code == 422, r.text
+    errors = r.json()["detail"]["errors"]
+    assert len(errors) == 1
+    assert errors[0]["field"] == "pattern"
+    assert errors[0]["capture_index"] == 0
+    assert errors[0]["matcher_label"] == "Line match"
+
+
+def test_patch_invalid_rule_set_422_does_not_update_db(cel_client: TestClient) -> None:
+    create = cel_client.post(
+        "/import-rules/cel/rule-sets",
+        json={"name": "keep", "rule_set": _sample_rule_set()},
+    )
+    assert create.status_code == 201
+    rid = create.json()["id"]
+    before = cel_client.get(f"/import-rules/cel/rule-sets/{rid}").json()
+
+    bad = cel_client.patch(
+        f"/import-rules/cel/rule-sets/{rid}",
+        json={"rule_set": {"rules": [{"sort_order": 0, "expression": "!!!", "captures": []}]}},
+    )
+    assert bad.status_code == 422
+
+    after = cel_client.get(f"/import-rules/cel/rule-sets/{rid}").json()
+    assert after["rule_set"] == before["rule_set"]
+
+
+def test_create_multiple_validation_errors_at_once(cel_client: TestClient) -> None:
+    r = cel_client.post(
+        "/import-rules/cel/rule-sets",
+        json={
+            "name": "multi",
+            "rule_set": {
+                "rules": [
+                    {"sort_order": 0, "expression": "1 + ", "captures": []},
+                    {
+                        "sort_order": 1,
+                        "enabled": False,
+                        "expression": "null",
+                        "captures": [{"attribute": "x", "pattern": "[bad", "flags": []}],
+                    },
+                ],
+            },
+        },
+    )
+    assert r.status_code == 422
+    errors = r.json()["detail"]["errors"]
+    assert len(errors) >= 2
+
+
+def test_create_invalid_regex_flag_422(cel_client: TestClient) -> None:
+    r = cel_client.post(
+        "/import-rules/cel/rule-sets",
+        json={
+            "name": "bad-flag",
+            "rule_set": {
+                "rules": [
+                    {
+                        "sort_order": 0,
+                        "expression": "null",
+                        "captures": [{"attribute": "d", "pattern": ".*", "flags": ["nope"]}],
+                    },
+                ],
+            },
+        },
+    )
+    assert r.status_code == 422
+    assert "unsupported regex flag" in r.json()["detail"]["errors"][0]["message"]
+
+
 def test_capture_matcher_label_round_trip(cel_client: TestClient) -> None:
     payload = {
         "name": "with-labels",

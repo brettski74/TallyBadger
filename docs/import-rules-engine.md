@@ -34,6 +34,8 @@ CEL rule sets can be stored in the database and referenced by id from CSV execut
 
 Implementation: [`cel_rule_sets.py`](../src/tallybadger/api/routes/cel_rule_sets.py), [`cel_rule_set_service.py`](../src/tallybadger/import_rules/cel_rule_set_service.py).
 
+**Save-time validation (#160):** `POST` and `PATCH` requests that include a `rule_set` body compile-check every rule’s CEL expression and regex capture patterns before persisting. Failures return HTTP **422** with structured `errors[]` (no database write); name-only `PATCH` is unchanged.
+
 ---
 
 ## CEL rule set model
