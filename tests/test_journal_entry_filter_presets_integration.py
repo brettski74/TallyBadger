@@ -104,3 +104,36 @@ def test_delete_missing_raises_not_found(
 ) -> None:
     with pytest.raises(JournalEntryFilterPresetNotFoundError):
         preset_service.delete_preset(99999)
+
+
+def test_preset_roundtrips_sort_keys(
+    preset_service: JournalEntryFilterPresetService,
+) -> None:
+    created = preset_service.create_preset(
+        name="By amount desc",
+        definition=JournalEntryFilterPresetDefinition(
+            needs_review=True,
+            sort=[
+                {"field": "amount", "direction": "desc"},
+                {"field": "entry_date", "direction": "asc"},
+            ],
+        ),
+    )
+    assert len(created.definition.sort) == 2
+    assert created.definition.sort[0].field == "amount"
+    assert created.definition.sort[0].direction == "desc"
+
+    loaded = preset_service.get_preset(created.id)
+    assert loaded.definition.sort[1].field == "entry_date"
+
+
+def test_invalid_sort_field_raises_value_error(
+    preset_service: JournalEntryFilterPresetService,
+) -> None:
+    with pytest.raises(ValueError, match="unknown sort field"):
+        preset_service.create_preset(
+            name="Bad",
+            definition=JournalEntryFilterPresetDefinition(
+                sort=[{"field": "created_at", "direction": "asc"}],
+            ),
+        )

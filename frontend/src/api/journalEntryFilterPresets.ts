@@ -2,6 +2,11 @@ import { getApiBase } from "./baseUrl";
 import { readApiErrorMessage } from "./errors";
 import type { ChequeAssociation } from "./journalEntries";
 
+export interface JournalEntryFilterPresetSortKey {
+  field: string;
+  direction: "asc" | "desc";
+}
+
 export interface JournalEntryFilterPresetDefinition {
   from_date?: string | null;
   to_date?: string | null;
@@ -14,6 +19,7 @@ export interface JournalEntryFilterPresetDefinition {
   cheque_association?: ChequeAssociation;
   /** CSV import file basename (matches journal list filter; #136). */
   import_basename?: string | null;
+  sort?: JournalEntryFilterPresetSortKey[];
 }
 
 export interface JournalEntryFilterPreset {

@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { NotebookPen, Paperclip, Pencil, Save } from "lucide-react";
+import {
+  ArrowDownNarrowWide,
+  ArrowDownWideNarrow,
+  NotebookPen,
+  Paperclip,
+  Pencil,
+  Save,
+} from "lucide-react";
 
 import type { Account } from "../api/accounts";
 import type { Cheque } from "../api/cheques";
@@ -26,6 +33,15 @@ import {
 } from "../api/journalEntryFilterPresets";
 import { useJournalListNewShortcut } from "../hooks/useJournalEntryFormShortcuts";
 import { newActionTooltip, newAriaKeyShortcuts, newEntityAriaLabel } from "../lib/keyboardHints";
+import {
+  cycleSortKeys,
+  JOURNAL_REGISTER_SORT_FIELDS,
+  primarySortKey,
+  sameSortKeys,
+  toSortParams,
+  type JournalRegisterSortField,
+  type JournalSortKey,
+} from "../lib/journalRegisterSort";
 import { isMacLikeUserAgent } from "../lib/platformKeyboard";
 import { JournalEntryAttachmentsDialog } from "./JournalEntryAttachmentsDialog";
 import { JournalEntryForm, type LineDraft } from "./JournalEntryForm";
@@ -33,6 +49,50 @@ import { JournalFilterMultiDropdown } from "./JournalFilterMultiDropdown";
 import { TableRowIconButton } from "./TableRowIconButton";
 
 const PAGE_SIZE = 50;
+
+function JournalSortableColumnHeader({
+  label,
+  field,
+  sortKeys,
+  onSort,
+  className,
+}: {
+  label: string;
+  field: JournalRegisterSortField;
+  sortKeys: JournalSortKey[];
+  onSort: (field: JournalRegisterSortField) => void;
+  className?: string;
+}) {
+  const primary = primarySortKey(sortKeys);
+  const isPrimary = primary?.field === field;
+  const ariaSort = isPrimary
+    ? primary.direction === "asc"
+      ? "ascending"
+      : "descending"
+    : "none";
+  const sortLabel = isPrimary
+    ? `Sort by ${label}, ${primary.direction === "asc" ? "ascending" : "descending"}`
+    : `Sort by ${label}`;
+
+  return (
+    <th aria-sort={ariaSort} className={className}>
+      <button
+        type="button"
+        className="cheque-register-sort-header"
+        onClick={() => onSort(field)}
+        aria-label={sortLabel}
+      >
+        <span>{label}</span>
+        {isPrimary && primary.direction === "asc" && (
+          <ArrowDownNarrowWide size={16} strokeWidth={2} aria-hidden />
+        )}
+        {isPrimary && primary.direction === "desc" && (
+          <ArrowDownWideNarrow size={16} strokeWidth={2} aria-hidden />
+        )}
+      </button>
+    </th>
+  );
+}
 
 function sortedIds(ids: number[]): number[] {
   return [...ids].sort((a, b) => a - b);
@@ -91,6 +151,17 @@ function definitionFromFilter(state: FilterState): JournalEntryFilterPresetDefin
   return def;
 }
 
+function definitionFromFilterAndSort(
+  state: FilterState,
+  sortKeys: JournalSortKey[],
+): JournalEntryFilterPresetDefinition {
+  const def = definitionFromFilter(state);
+  if (sortKeys.length > 0) {
+    def.sort = sortKeys.map(({ field, direction }) => ({ field, direction }));
+  }
+  return def;
+}
+
 function filterFromDefinition(def: JournalEntryFilterPresetDefinition): FilterState {
   return {
     fromDate: def.from_date ?? "",
@@ -106,9 +177,14 @@ function filterFromDefinition(def: JournalEntryFilterPresetDefinition): FilterSt
   };
 }
 
+function sortKeysFromDefinition(def: JournalEntryFilterPresetDefinition): JournalSortKey[] {
+  return (def.sort ?? []).map(({ field, direction }) => ({ field, direction }));
+}
+
 function filterMatchesDefinition(
   state: FilterState,
   def: JournalEntryFilterPresetDefinition,
+  sortKeys: JournalSortKey[],
 ): boolean {
   const normalized = filterFromDefinition(def);
   return (
@@ -121,7 +197,8 @@ function filterMatchesDefinition(
     (state.importBasename || "") === (normalized.importBasename || "") &&
     sameIdList(state.accountIds, normalized.accountIds) &&
     sameIdList(state.partyIds, normalized.partyIds) &&
-    sameIdList(state.accrualPlanIds, normalized.accrualPlanIds)
+    sameIdList(state.accrualPlanIds, normalized.accrualPlanIds) &&
+    sameSortKeys(sortKeys, sortKeysFromDefinition(def))
   );
 }
 
@@ -174,6 +251,7 @@ export function JournalEntriesPanel({
       : EMPTY_FILTER,
   );
   const [hasMore, setHasMore] = useState(false);
+  const [sortKeys, setSortKeys] = useState<JournalSortKey[]>([]);
 
   const [accrualPlans, setAccrualPlans] = useState<AccrualPlan[]>([]);
   const [importBatches, setImportBatches] = useState<ImportBatchListItem[]>([]);
@@ -214,8 +292,9 @@ export function JournalEntriesPanel({
       cheque_association:
         filter.chequeAssociation !== "any" ? filter.chequeAssociation : undefined,
       import_basename: filter.importBasename.trim() || undefined,
+      sort: sortKeys.length > 0 ? toSortParams(sortKeys) : undefined,
     }),
-    [filter],
+    [filter, sortKeys],
   );
 
   const updateFilter = useCallback(
@@ -225,6 +304,11 @@ export function JournalEntriesPanel({
     },
     [],
   );
+
+  const handleSort = useCallback((field: JournalRegisterSortField) => {
+    setSortKeys((current) => cycleSortKeys(current, field));
+    setAppliedPresetId(null);
+  }, []);
 
   const refreshList = useCallback(async () => {
     setListLoading(true);
@@ -305,11 +389,14 @@ export function JournalEntriesPanel({
   );
 
   const displayedPresetId = useMemo(() => {
-    if (appliedPreset && filterMatchesDefinition(filter, appliedPreset.definition)) {
+    if (
+      appliedPreset &&
+      filterMatchesDefinition(filter, appliedPreset.definition, sortKeys)
+    ) {
       return appliedPreset.id;
     }
     return null;
-  }, [appliedPreset, filter]);
+  }, [appliedPreset, filter, sortKeys]);
 
   const importBasenameOptions = useMemo(() => {
     const seen = new Set<string>();
@@ -331,6 +418,7 @@ export function JournalEntriesPanel({
       return;
     }
     setFilter(filterFromDefinition(preset.definition));
+    setSortKeys(sortKeysFromDefinition(preset.definition));
     setAppliedPresetId(preset.id);
   }
 
@@ -360,7 +448,7 @@ export function JournalEntriesPanel({
     setSavePending(true);
     setSaveError(null);
     try {
-      const definition = definitionFromFilter(filter);
+      const definition = definitionFromFilterAndSort(filter, sortKeys);
       const existing = presets.find(
         (p) => p.name.toLowerCase() === name.toLowerCase(),
       );
@@ -855,13 +943,49 @@ export function JournalEntriesPanel({
         <table className="journal-entry-list">
           <thead>
             <tr>
-              <th>Date</th>
-              <th>Summary</th>
-              <th>Needs review</th>
-              <th>Parties</th>
-              <th>Debit account</th>
-              <th>Credit account</th>
-              <th className="journal-list-amount">Amount</th>
+              <JournalSortableColumnHeader
+                label="Date"
+                field={JOURNAL_REGISTER_SORT_FIELDS.entryDate}
+                sortKeys={sortKeys}
+                onSort={handleSort}
+              />
+              <JournalSortableColumnHeader
+                label="Summary"
+                field={JOURNAL_REGISTER_SORT_FIELDS.summary}
+                sortKeys={sortKeys}
+                onSort={handleSort}
+              />
+              <JournalSortableColumnHeader
+                label="Needs review"
+                field={JOURNAL_REGISTER_SORT_FIELDS.requiresReview}
+                sortKeys={sortKeys}
+                onSort={handleSort}
+              />
+              <JournalSortableColumnHeader
+                label="Parties"
+                field={JOURNAL_REGISTER_SORT_FIELDS.partyLabels}
+                sortKeys={sortKeys}
+                onSort={handleSort}
+              />
+              <JournalSortableColumnHeader
+                label="Debit account"
+                field={JOURNAL_REGISTER_SORT_FIELDS.debitLabel}
+                sortKeys={sortKeys}
+                onSort={handleSort}
+              />
+              <JournalSortableColumnHeader
+                label="Credit account"
+                field={JOURNAL_REGISTER_SORT_FIELDS.creditLabel}
+                sortKeys={sortKeys}
+                onSort={handleSort}
+              />
+              <JournalSortableColumnHeader
+                label="Amount"
+                field={JOURNAL_REGISTER_SORT_FIELDS.amount}
+                sortKeys={sortKeys}
+                onSort={handleSort}
+                className="journal-list-amount"
+              />
               <th aria-label="actions" />
             </tr>
           </thead>

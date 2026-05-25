@@ -114,6 +114,59 @@ def read_upload_file_limited(file_obj: object, max_bytes: int) -> bytes:
 
 
 JOURNAL_LIST_SPLIT_LABEL = "-- Split --"
+JOURNAL_LIST_NO_PARTY_LABEL = "—"
+
+# Per-entry list amount (debits when positive lines exist; else credit magnitude).
+JOURNAL_ENTRY_LIST_AMOUNT_EXPR = (
+    "(SELECT CASE "
+    "WHEN COALESCE(SUM(amount) FILTER (WHERE amount > 0), 0) > 0 "
+    "THEN COALESCE(SUM(amount) FILTER (WHERE amount > 0), 0) "
+    "ELSE COALESCE(-SUM(amount) FILTER (WHERE amount < 0), 0) "
+    "END FROM journal_lines WHERE entry_id = je.id)"
+)
+
+JOURNAL_ENTRY_PARTY_LABELS_EXPR = (
+    "COALESCE("
+    "(SELECT string_agg(party_name, ', ' ORDER BY first_jl_id) "
+    "FROM ("
+    "SELECT p.name AS party_name, MIN(jl.id) AS first_jl_id "
+    "FROM journal_lines jl "
+    "INNER JOIN parties p ON p.id = jl.party_id "
+    "WHERE jl.entry_id = je.id "
+    "GROUP BY p.name"
+    ") parties_ordered), "
+    f"'{JOURNAL_LIST_NO_PARTY_LABEL}')"
+)
+
+JOURNAL_ENTRY_DEBIT_LABEL_EXPR = (
+    "CASE "
+    "WHEN (SELECT COUNT(*) FROM journal_lines jl "
+    "WHERE jl.entry_id = je.id AND jl.amount > 0) = 1 "
+    "THEN ("
+    "SELECT TRIM(a.name) FROM journal_lines jl "
+    "JOIN accounts a ON a.id = jl.account_id "
+    "WHERE jl.entry_id = je.id AND jl.amount > 0 LIMIT 1"
+    ") "
+    f"WHEN (SELECT COUNT(*) FROM journal_lines jl "
+    f"WHERE jl.entry_id = je.id AND jl.amount > 0) > 1 "
+    f"THEN '{JOURNAL_LIST_SPLIT_LABEL}' "
+    f"ELSE '{JOURNAL_LIST_NO_PARTY_LABEL}' END"
+)
+
+JOURNAL_ENTRY_CREDIT_LABEL_EXPR = (
+    "CASE "
+    "WHEN (SELECT COUNT(*) FROM journal_lines jl "
+    "WHERE jl.entry_id = je.id AND jl.amount < 0) = 1 "
+    "THEN ("
+    "SELECT TRIM(a.name) FROM journal_lines jl "
+    "JOIN accounts a ON a.id = jl.account_id "
+    "WHERE jl.entry_id = je.id AND jl.amount < 0 LIMIT 1"
+    ") "
+    f"WHEN (SELECT COUNT(*) FROM journal_lines jl "
+    f"WHERE jl.entry_id = je.id AND jl.amount < 0) > 1 "
+    f"THEN '{JOURNAL_LIST_SPLIT_LABEL}' "
+    f"ELSE '{JOURNAL_LIST_NO_PARTY_LABEL}' END"
+)
 
 
 def _normalize_party_match_patterns(patterns: list[str]) -> list[str]:
@@ -1565,6 +1618,7 @@ class LedgerService:
         import_basename: str | None = None,
         limit: int = 50,
         offset: int = 0,
+        sort_tokens: list[str] | None = None,
     ) -> list[JournalEntryListItem]:
         if import_batch_id is not None and import_basename is not None:
             raise LedgerValidationError(
@@ -1632,23 +1686,15 @@ class LedgerService:
             )
             params.append(import_basename)
         if amount_low is not None or amount_high is not None:
-            # Per-entry "list amount" mirrors labels_and_amount_for_journal_list_lines:
-            # debits when there are positive lines; otherwise the magnitude of credit lines.
-            amount_expr = (
-                "(SELECT CASE "
-                "WHEN COALESCE(SUM(amount) FILTER (WHERE amount > 0), 0) > 0 "
-                "THEN COALESCE(SUM(amount) FILTER (WHERE amount > 0), 0) "
-                "ELSE COALESCE(-SUM(amount) FILTER (WHERE amount < 0), 0) "
-                "END FROM journal_lines WHERE entry_id = je.id)"
-            )
             if amount_low is not None:
-                conditions.append(f"{amount_expr} >= %s")
+                conditions.append(f"{JOURNAL_ENTRY_LIST_AMOUNT_EXPR} >= %s")
                 params.append(Decimal(amount_low))
             if amount_high is not None:
-                conditions.append(f"{amount_expr} <= %s")
+                conditions.append(f"{JOURNAL_ENTRY_LIST_AMOUNT_EXPR} <= %s")
                 params.append(Decimal(amount_high))
 
         and_clause = f"AND {' AND '.join(conditions)}" if conditions else ""
+        order_by = self._journal_entry_list_order_by(sort_tokens)
         list_params = [*params, limit, offset]
         with self._connection_factory() as conn:
             with conn.cursor(row_factory=dict_row) as cur:
@@ -1659,7 +1705,7 @@ class LedgerService:
                     FROM journal_entries je
                     WHERE EXISTS (SELECT 1 FROM journal_lines jl WHERE jl.entry_id = je.id)
                     {and_clause}
-                    ORDER BY je.entry_date DESC, je.id DESC
+                    {order_by}
                     LIMIT %s OFFSET %s
                     """,
                     list_params,
@@ -2073,6 +2119,44 @@ class LedgerService:
             "id",
         }
     )
+
+    _JOURNAL_ENTRY_SORT_SQL: dict[str, str] = {
+        "entry_date": "je.entry_date",
+        "summary": "je.summary",
+        "requires_review": "je.requires_review",
+        "party_labels": JOURNAL_ENTRY_PARTY_LABELS_EXPR,
+        "debit_label": JOURNAL_ENTRY_DEBIT_LABEL_EXPR,
+        "credit_label": JOURNAL_ENTRY_CREDIT_LABEL_EXPR,
+        "amount": JOURNAL_ENTRY_LIST_AMOUNT_EXPR,
+        "id": "je.id",
+    }
+
+    _JOURNAL_ENTRY_SORT_FIELDS: frozenset[str] = frozenset(_JOURNAL_ENTRY_SORT_SQL.keys())
+
+    @classmethod
+    def _journal_entry_list_order_by(cls, sort_tokens: list[str] | None) -> str:
+        if not sort_tokens:
+            return "ORDER BY je.entry_date DESC, je.id DESC"
+        clauses: list[str] = []
+        saw_id = False
+        for token in sort_tokens:
+            if ":" not in token:
+                raise LedgerValidationError(
+                    f"invalid sort token {token!r}; use field:asc or field:desc",
+                )
+            field, direction = token.rsplit(":", 1)
+            if field not in cls._JOURNAL_ENTRY_SORT_FIELDS:
+                raise LedgerValidationError(f"unknown sort field: {field}")
+            if direction not in ("asc", "desc"):
+                raise LedgerValidationError(
+                    f"invalid sort direction for {field!r}; use asc or desc",
+                )
+            clauses.append(f"{cls._JOURNAL_ENTRY_SORT_SQL[field]} {direction.upper()}")
+            if field == "id":
+                saw_id = True
+        if not saw_id:
+            clauses.append("je.id DESC")
+        return "ORDER BY " + ", ".join(clauses)
 
     @classmethod
     def _parse_cheque_party_ids(

@@ -30,6 +30,7 @@ import {
   CHEQUE_REGISTER_SORT_FIELDS,
   cycleSortKeys,
   primarySortKey,
+  sameSortKeys,
   toSortParams,
   type ChequeRegisterSortField,
   type ChequeSortKey,
@@ -207,18 +208,6 @@ function samePartyFilterList(a: ChequePartyFilterId[], b: ChequePartyFilterId[])
   }
   for (let i = 0; i < aa.length; i += 1) {
     if (aa[i] !== bb[i]) {
-      return false;
-    }
-  }
-  return true;
-}
-
-function sameSortKeys(a: ChequeSortKey[], b: ChequeSortKey[]): boolean {
-  if (a.length !== b.length) {
-    return false;
-  }
-  for (let i = 0; i < a.length; i += 1) {
-    if (a[i].field !== b[i].field || a[i].direction !== b[i].direction) {
       return false;
     }
   }

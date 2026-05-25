@@ -794,4 +794,193 @@ describe("JournalEntriesPanel", () => {
       expect(listCalls.length).toBeGreaterThan(0);
     });
   });
+
+  it("cycles amount sort on header click and refetches with sort query param", async () => {
+    const listPayload = [
+      {
+        id: 7,
+        entry_date: "2026-04-10",
+        summary: "Rent accrual",
+        description: "Test",
+        requires_review: false,
+        cheque_id: null,
+        created_at: "2026-04-01T00:00:00Z",
+        updated_at: "2026-04-01T00:00:00Z",
+        debit_side_label: "Cash",
+        credit_side_label: "Income",
+        party_labels: "—",
+        amount: "25.00",
+      },
+    ];
+    const fetchMock = vi.spyOn(global, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes("/accrual-plans")) {
+        return new Response(JSON.stringify({ plans: [] }), { status: 200 });
+      }
+      if (url.includes("/journal-entry-filter-presets")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      if (url.includes("/cheques")) {
+        return new Response(JSON.stringify({ cheques: [] }), { status: 200 });
+      }
+      if (url.includes("/journal-entries") && !/\/journal-entries\/\d/.test(url)) {
+        return new Response(JSON.stringify(listPayload), { status: 200 });
+      }
+      return new Response("not mocked", { status: 500 });
+    });
+
+    render(
+      <JournalEntriesPanel
+        accounts={accounts}
+        parties={parties}
+        accountsLoading={false}
+        accountsError={null}
+      />,
+    );
+
+    const user = userEvent.setup();
+    await screen.findByText("Rent accrual");
+    await screen.findByRole("button", { name: "Sort by Amount" });
+
+    await user.click(screen.getByRole("button", { name: "Sort by Amount" }));
+    await waitFor(() => {
+      const listCalls = fetchMock.mock.calls.filter(([u]) => {
+        const s = String(u);
+        return (
+          s.includes("/journal-entries")
+          && !s.includes("/journal-entry-filter-presets")
+          && !/\/journal-entries\/\d/.test(s)
+        );
+      });
+      const last = String(listCalls[listCalls.length - 1]![0]);
+      expect(last).toContain("sort=amount%3Aasc");
+    });
+
+    await user.click(screen.getByRole("button", { name: "Sort by Amount, ascending" }));
+    await waitFor(() => {
+      const listCalls = fetchMock.mock.calls.filter(([u]) => {
+        const s = String(u);
+        return (
+          s.includes("/journal-entries")
+          && !s.includes("/journal-entry-filter-presets")
+          && !/\/journal-entries\/\d/.test(s)
+        );
+      });
+      const last = String(listCalls[listCalls.length - 1]![0]);
+      expect(last).toContain("sort=amount%3Adesc");
+    });
+
+    await user.click(screen.getByRole("button", { name: "Sort by Amount, descending" }));
+    await waitFor(() => {
+      const listCalls = fetchMock.mock.calls.filter(([u]) => {
+        const s = String(u);
+        return (
+          s.includes("/journal-entries")
+          && !s.includes("/journal-entry-filter-presets")
+          && !/\/journal-entries\/\d/.test(s)
+        );
+      });
+      const last = String(listCalls[listCalls.length - 1]![0]);
+      expect(last).not.toContain("sort=");
+    });
+  });
+
+  it("applies preset sort keys and saves them with filters", async () => {
+    const listPayload = [
+      {
+        id: 7,
+        entry_date: "2026-04-10",
+        summary: "Rent accrual",
+        description: "Test",
+        requires_review: true,
+        cheque_id: null,
+        created_at: "2026-04-01T00:00:00Z",
+        updated_at: "2026-04-01T00:00:00Z",
+        debit_side_label: "Cash",
+        credit_side_label: "Income",
+        party_labels: "Acme Yard Maintenance",
+        amount: "25.00",
+      },
+    ];
+    const presetWithSort = {
+      id: 44,
+      name: "By amount",
+      definition: {
+        needs_review: true,
+        sort: [{ field: "amount", direction: "desc" }],
+      },
+      created_at: "2026-04-01T00:00:00Z",
+      updated_at: "2026-04-01T00:00:00Z",
+    };
+    const createdPreset = {
+      ...presetWithSort,
+      id: 45,
+      name: "By amount copy",
+    };
+
+    const fetchMock = vi.spyOn(global, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.includes("/accrual-plans")) {
+        return new Response(JSON.stringify({ plans: [] }), { status: 200 });
+      }
+      if (url.includes("/journal-entry-filter-presets") && (init?.method ?? "GET") === "POST") {
+        return new Response(JSON.stringify(createdPreset), { status: 201 });
+      }
+      if (url.includes("/journal-entry-filter-presets")) {
+        return new Response(JSON.stringify([presetWithSort]), { status: 200 });
+      }
+      if (url.includes("/cheques")) {
+        return new Response(JSON.stringify({ cheques: [] }), { status: 200 });
+      }
+      if (url.includes("/journal-entries") && !/\/journal-entries\/\d/.test(url)) {
+        return new Response(JSON.stringify(listPayload), { status: 200 });
+      }
+      return new Response(JSON.stringify([]), { status: 200 });
+    });
+
+    render(
+      <JournalEntriesPanel
+        accounts={accounts}
+        parties={parties}
+        accountsLoading={false}
+        accountsError={null}
+      />,
+    );
+
+    const user = userEvent.setup();
+    await screen.findByText("Rent accrual");
+    const presetSelect = await screen.findByLabelText("Filter preset");
+    await user.selectOptions(presetSelect, ["44"]);
+
+    await waitFor(() => {
+      const listCalls = fetchMock.mock.calls.filter(([u]) => {
+        const s = String(u);
+        return (
+          s.includes("/journal-entries")
+          && !s.includes("/journal-entry-filter-presets")
+          && !/\/journal-entries\/\d/.test(s)
+        );
+      });
+      const last = String(listCalls[listCalls.length - 1]![0]);
+      expect(last).toContain("needs_review=true");
+      expect(last).toContain("sort=amount%3Adesc");
+    });
+    expect(screen.getByRole("button", { name: "Sort by Amount, descending" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Save current filter as preset/ }));
+    await user.type(screen.getByLabelText("Preset name"), "By amount copy");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      const postCalls = fetchMock.mock.calls.filter(
+        ([u, i]) =>
+          String(u).includes("/journal-entry-filter-presets")
+          && (i?.method ?? "GET") === "POST",
+      );
+      expect(postCalls.length).toBeGreaterThan(0);
+      const body = JSON.parse(String(postCalls[postCalls.length - 1]![1]?.body));
+      expect(body.definition.sort).toEqual([{ field: "amount", direction: "desc" }]);
+      expect(body.definition.needs_review).toBe(true);
+    });
+  });
 });
