@@ -342,6 +342,15 @@ def list_journal_entries(
     import_basename: str | None = Query(default=None, min_length=1, max_length=512),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    sort: Annotated[
+        list[str] | None,
+        Query(
+            description=(
+                "Sort keys in priority order, each `field:asc` or `field:desc`. "
+                "When omitted, sorts by entry_date descending then id descending."
+            ),
+        ),
+    ] = None,
     service: LedgerService = Depends(get_ledger_service),
 ) -> list[JournalEntryListItem]:
     try:
@@ -359,6 +368,7 @@ def list_journal_entries(
             import_basename=import_basename,
             limit=limit,
             offset=offset,
+            sort_tokens=sort,
         )
     except LedgerValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

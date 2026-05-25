@@ -75,6 +75,22 @@ def test_create_filter_preset_duplicate_name_maps_to_409() -> None:
     app.dependency_overrides.clear()
 
 
+def test_create_filter_preset_invalid_sort_field_maps_to_422() -> None:
+    app.dependency_overrides[get_journal_entry_filter_preset_service] = _StubService
+    client = TestClient(app)
+    response = client.post(
+        "/journal-entry-filter-presets",
+        json={
+            "name": "Bad sort",
+            "definition": {
+                "sort": [{"field": "id", "direction": "asc"}],
+            },
+        },
+    )
+    assert response.status_code == 422
+    app.dependency_overrides.clear()
+
+
 def test_replace_filter_preset_not_found_maps_to_404() -> None:
     class StubMissing(_StubService):
         def update_preset(self, preset_id, *, name=None, definition=None):  # noqa: ARG002

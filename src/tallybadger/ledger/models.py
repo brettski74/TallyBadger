@@ -158,6 +158,25 @@ class JournalEntryListItem(BaseModel):
 
 ChequeAssociation = Literal["any", "with_cheque", "without_cheque"]
 
+JOURNAL_ENTRY_PRESET_SORT_FIELDS: frozenset[str] = frozenset(
+    {
+        "entry_date",
+        "summary",
+        "requires_review",
+        "party_labels",
+        "debit_label",
+        "credit_label",
+        "amount",
+    },
+)
+
+
+class JournalEntryFilterPresetSortKey(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    field: str
+    direction: Literal["asc", "desc"]
+
 
 class JournalEntryFilterPresetDefinition(BaseModel):
     """Serialised form of the journal entry list filter dimensions (#107).
@@ -178,6 +197,7 @@ class JournalEntryFilterPresetDefinition(BaseModel):
     amount_high: int | None = Field(default=None, ge=0)
     cheque_association: ChequeAssociation = "any"
     import_basename: str | None = Field(default=None, max_length=512)
+    sort: list[JournalEntryFilterPresetSortKey] = Field(default_factory=list)
 
     @field_validator("import_basename", mode="before")
     @classmethod
@@ -207,6 +227,9 @@ class JournalEntryFilterPresetDefinition(BaseModel):
             for v in getattr(self, field_name):
                 if v <= 0:
                     raise ValueError(f"{field_name} entries must be positive integers")
+        for key in self.sort:
+            if key.field not in JOURNAL_ENTRY_PRESET_SORT_FIELDS:
+                raise ValueError(f"unknown sort field: {key.field}")
         return self
 
 
