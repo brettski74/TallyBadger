@@ -106,6 +106,46 @@ def test_delete_missing_raises_not_found(
         preset_service.delete_preset(99999)
 
 
+def test_preset_roundtrips_date_math_expressions(
+    preset_service: JournalEntryFilterPresetService,
+) -> None:
+    created = preset_service.create_preset(
+        name="Last seven days",
+        definition=JournalEntryFilterPresetDefinition(
+            from_date="now-7d",
+            to_date="now",
+        ),
+    )
+    assert created.definition.from_date == "now-7d"
+    assert created.definition.to_date == "now"
+
+    loaded = preset_service.get_preset(created.id)
+    assert loaded.definition.from_date == "now-7d"
+    assert loaded.definition.to_date == "now"
+
+
+def test_preset_legacy_iso_dates_coerced_to_strings(
+    preset_service: JournalEntryFilterPresetService,
+) -> None:
+    from datetime import date
+
+    created = preset_service.create_preset(
+        name="Fixed range",
+        definition=JournalEntryFilterPresetDefinition.model_validate(
+            {"from_date": date(2026, 1, 1), "to_date": date(2026, 1, 31)},
+        ),
+    )
+    assert created.definition.from_date == "2026-01-01"
+    assert created.definition.to_date == "2026-01-31"
+
+
+def test_preset_invalid_date_expression_rejected() -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="could not parse"):
+        JournalEntryFilterPresetDefinition(from_date="not-valid", to_date="now")
+
+
 def test_preset_roundtrips_sort_keys(
     preset_service: JournalEntryFilterPresetService,
 ) -> None:

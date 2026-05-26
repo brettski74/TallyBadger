@@ -1259,6 +1259,8 @@ def test_filter_presets_round_trip_through_configuration_snapshot(
             account_ids=[cash.id],
             amount_low=0,
             amount_high=1000,
+            from_date="now-7d",
+            to_date="now",
         ),
     )
 
@@ -1274,6 +1276,8 @@ def test_filter_presets_round_trip_through_configuration_snapshot(
     assert [p.name for p in restored] == ["Cash only"]
     assert restored[0].definition.account_ids == [cash.id]
     assert restored[0].definition.amount_high == 1000
+    assert restored[0].definition.from_date == "now-7d"
+    assert restored[0].definition.to_date == "now"
 
 
 def test_filter_preset_with_missing_account_id_rejected_by_import(

@@ -9,6 +9,23 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+function maybeDateRangeResolveResponse(url: string): Response | undefined {
+  if (!url.includes("/date-range/resolve")) {
+    return undefined;
+  }
+  const parsed = new URL(url, "http://localhost");
+  const expr = parsed.searchParams.get("expr");
+  if (expr) {
+    const trimmed = expr.trim();
+    const iso = /^\d{4}-\d{2}-\d{2}$/.test(trimmed) ? trimmed : "2026-05-06";
+    return new Response(JSON.stringify({ date: iso }), { status: 200 });
+  }
+  return new Response(
+    JSON.stringify({ from_date: "2026-01-01", to_date: "2026-05-06" }),
+    { status: 200 },
+  );
+}
+
 const accounts: Account[] = [
   {
     id: 1,
@@ -72,6 +89,10 @@ describe("JournalEntriesPanel", () => {
       }
       if (url.includes("/journal-entries")) {
         return new Response(JSON.stringify(listPayload), { status: 200 });
+      }
+      const dateRange = maybeDateRangeResolveResponse(url);
+      if (dateRange) {
+        return dateRange;
       }
       return new Response("not mocked", { status: 500 });
     });
@@ -175,6 +196,10 @@ describe("JournalEntriesPanel", () => {
       }
       if (url.includes("/journal-entries")) {
         return new Response(JSON.stringify(listPayload), { status: 200 });
+      }
+      const dateRange = maybeDateRangeResolveResponse(url);
+      if (dateRange) {
+        return dateRange;
       }
       return new Response("not mocked", { status: 500 });
     });
@@ -299,6 +324,10 @@ describe("JournalEntriesPanel", () => {
       if (url.includes("/journal-entries")) {
         return new Response(JSON.stringify(listPayload), { status: 200 });
       }
+      const dateRange = maybeDateRangeResolveResponse(url);
+      if (dateRange) {
+        return dateRange;
+      }
       return new Response("not mocked", { status: 500 });
     });
 
@@ -387,6 +416,10 @@ describe("JournalEntriesPanel", () => {
       if (url.includes("/journal-entries")) {
         return new Response(JSON.stringify(listPayload), { status: 200 });
       }
+      const dateRange = maybeDateRangeResolveResponse(url);
+      if (dateRange) {
+        return dateRange;
+      }
       return new Response("not mocked", { status: 500 });
     });
 
@@ -460,6 +493,10 @@ describe("JournalEntriesPanel", () => {
       }
       if (url.includes("/journal-entries")) {
         return new Response(JSON.stringify(listPayload), { status: 200 });
+      }
+      const dateRange = maybeDateRangeResolveResponse(url);
+      if (dateRange) {
+        return dateRange;
       }
       return new Response("not mocked", { status: 500 });
     });
@@ -581,6 +618,10 @@ describe("JournalEntriesPanel", () => {
       if (url.includes("/journal-entries")) {
         return new Response(JSON.stringify([]), { status: 200 });
       }
+      const dateRange = maybeDateRangeResolveResponse(url);
+      if (dateRange) {
+        return dateRange;
+      }
       return new Response("not mocked", { status: 500 });
     });
 
@@ -654,6 +695,10 @@ describe("JournalEntriesPanel", () => {
       }
       if (url.includes("/journal-entries")) {
         return new Response(JSON.stringify([]), { status: 200 });
+      }
+      const dateRange = maybeDateRangeResolveResponse(url);
+      if (dateRange) {
+        return dateRange;
       }
       return new Response("not mocked", { status: 500 });
     });
@@ -771,6 +816,10 @@ describe("JournalEntriesPanel", () => {
       if (url.includes("/journal-entries") && !/\/journal-entries\/\d/.test(url)) {
         return new Response(JSON.stringify([]), { status: 200 });
       }
+      const dateRange = maybeDateRangeResolveResponse(url);
+      if (dateRange) {
+        return dateRange;
+      }
       return new Response("not mocked", { status: 500 });
     });
 
@@ -825,6 +874,10 @@ describe("JournalEntriesPanel", () => {
       }
       if (url.includes("/journal-entries") && !/\/journal-entries\/\d/.test(url)) {
         return new Response(JSON.stringify(listPayload), { status: 200 });
+      }
+      const dateRange = maybeDateRangeResolveResponse(url);
+      if (dateRange) {
+        return dateRange;
       }
       return new Response("not mocked", { status: 500 });
     });

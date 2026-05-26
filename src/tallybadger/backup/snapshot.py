@@ -607,6 +607,12 @@ def _validate_filter_preset_definitions_against_config(
     accrual_plans: set[int],
 ) -> None:
     """Embedded ids in a preset ``definition`` must match the archive's configuration set."""
+    from tallybadger.ledger.date_range_math import (
+        DateRangeMathError,
+        parse_optional_entry_date_expression,
+        resolve_entry_date_range,
+    )
+
     for i, row in enumerate(presets):
         defn = row.get("definition")
         if not isinstance(defn, dict):
@@ -624,6 +630,44 @@ def _validate_filter_preset_definitions_against_config(
                         f"journal_entry_filter_presets[{i}] definition.{field_name} "
                         f"contains id={v} that has no matching row in the archive"
                     )
+        raw_from = defn.get("from_date")
+        raw_to = defn.get("to_date")
+        if raw_from is not None or raw_to is not None:
+            try:
+                if raw_from is not None:
+                    expr_from = (
+                        raw_from.isoformat()
+                        if hasattr(raw_from, "isoformat")
+                        else str(raw_from).strip()
+                    )
+                    if not expr_from:
+                        raise DateRangeMathError("from_date must not be empty")
+                    parse_optional_entry_date_expression(expr_from)
+                if raw_to is not None:
+                    expr_to = (
+                        raw_to.isoformat()
+                        if hasattr(raw_to, "isoformat")
+                        else str(raw_to).strip()
+                    )
+                    if not expr_to:
+                        raise DateRangeMathError("to_date must not be empty")
+                    parse_optional_entry_date_expression(expr_to)
+                if raw_from is not None and raw_to is not None:
+                    expr_from = (
+                        raw_from.isoformat()
+                        if hasattr(raw_from, "isoformat")
+                        else str(raw_from).strip()
+                    )
+                    expr_to = (
+                        raw_to.isoformat()
+                        if hasattr(raw_to, "isoformat")
+                        else str(raw_to).strip()
+                    )
+                    resolve_entry_date_range(expr_from, expr_to)
+            except DateRangeMathError as exc:
+                raise SnapshotValidationError(
+                    f"journal_entry_filter_presets[{i}] definition date range: {exc}",
+                ) from exc
 
 
 def _validate_configuration_fks(
