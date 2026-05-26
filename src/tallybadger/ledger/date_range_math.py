@@ -6,7 +6,10 @@ import re
 from datetime import date, datetime
 from typing import NamedTuple
 
-_DATE_ONLY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+# Plain YYYY-M-D / YYYY-MM-DD literals (no date math). Must not use datemath: it treats
+# them as UTC instants and .to(app_tz).date() can shift the calendar day (e.g. 2026-4-30
+# → 2026-04-29 in US timezones).
+_CALENDAR_DATE_LITERAL_RE = re.compile(r"^\d{4}-\d{1,2}-\d{1,2}$")
 
 import arrow
 import pendulum
@@ -51,6 +54,16 @@ def quick_range_label_for(from_expr: str | None, to_expr: str | None) -> str | N
     return None
 
 
+def _parse_calendar_date_literal(stripped: str) -> date:
+    year_s, month_s, day_s = stripped.split("-", 2)
+    try:
+        return date(int(year_s), int(month_s), int(day_s))
+    except ValueError as exc:
+        raise DateRangeMathError(
+            f"could not parse date expression {stripped!r}: {exc}",
+        ) from exc
+
+
 def _anchor_for_datemath(anchor: datetime | None) -> dict[str, str]:
     tz_name = application_timezone_name()
     kwargs: dict[str, str] = {"tz": tz_name}
@@ -69,8 +82,8 @@ def parse_entry_date_expression(expr: str, *, anchor: datetime | None = None) ->
     stripped = expr.strip()
     if not stripped:
         raise DateRangeMathError("date expression must not be empty")
-    if _DATE_ONLY_RE.match(stripped):
-        return date.fromisoformat(stripped)
+    if _CALENDAR_DATE_LITERAL_RE.match(stripped):
+        return _parse_calendar_date_literal(stripped)
     try:
         resolved = dm(stripped, **_anchor_for_datemath(anchor))
     except Exception as exc:

@@ -41,6 +41,15 @@ def test_absolute_iso_date_expression() -> None:
     assert parse_entry_date_expression("2026-01-15", anchor=ANCHOR) == date(2026, 1, 15)
 
 
+def test_unpadded_iso_calendar_date_literal_ignores_timezone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unpadded month/day must not go through datemath UTC→local conversion."""
+    monkeypatch.setenv("TALLYBADGER_TIMEZONE", "America/Los_Angeles")
+    assert parse_entry_date_expression("2026-4-30", anchor=ANCHOR) == date(2026, 4, 30)
+    assert parse_entry_date_expression("2026-04-30", anchor=ANCHOR) == date(2026, 4, 30)
+
+
 def test_now_resolves_to_anchor_local_calendar_date() -> None:
     assert parse_entry_date_expression("now", anchor=ANCHOR) == date(2026, 5, 6)
 
