@@ -45,6 +45,7 @@ import {
 import { isMacLikeUserAgent } from "../lib/platformKeyboard";
 import { JournalEntryAttachmentsDialog } from "./JournalEntryAttachmentsDialog";
 import { JournalEntryForm, type LineDraft } from "./JournalEntryForm";
+import { JournalEntryDateRangeFilter } from "./JournalEntryDateRangeFilter";
 import { JournalFilterMultiDropdown } from "./JournalFilterMultiDropdown";
 import { TableRowIconButton } from "./TableRowIconButton";
 
@@ -855,26 +856,10 @@ export function JournalEntriesPanel({
             onChange={(e) => updateFilter({ amountHigh: e.target.value })}
           />
         </label>
-        <label className="journal-filter-slot journal-filter-slot-date">
-          <span className="journal-filter-inline-label">From Date</span>
-          <input
-            className="journal-filter-control"
-            aria-label="Filter from date"
-            type="date"
-            value={filter.fromDate}
-            onChange={(e) => updateFilter({ fromDate: e.target.value })}
-          />
-        </label>
-        <label className="journal-filter-slot journal-filter-slot-date">
-          <span className="journal-filter-inline-label">To Date</span>
-          <input
-            className="journal-filter-control"
-            aria-label="Filter to date"
-            type="date"
-            value={filter.toDate}
-            onChange={(e) => updateFilter({ toDate: e.target.value })}
-          />
-        </label>
+        <JournalEntryDateRangeFilter
+          value={{ fromDate: filter.fromDate, toDate: filter.toDate }}
+          onChange={(patch) => updateFilter(patch)}
+        />
         </div>
         <TableRowIconButton
           type="button"
@@ -889,7 +874,7 @@ export function JournalEntriesPanel({
       </div>
 
       {presetsError && (
-        <p className="error journal-presets-fetch-error" role="alert">
+        <p className="error-text journal-presets-fetch-error" role="alert">
           {presetsError}
         </p>
       )}
@@ -932,7 +917,7 @@ export function JournalEntriesPanel({
 
       {listLoading && entries.length === 0 && <p>Loading…</p>}
       {listError && (
-        <p className="error" role="alert">
+        <p className="error-text" role="alert">
           {listError}
         </p>
       )}

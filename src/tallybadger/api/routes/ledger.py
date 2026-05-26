@@ -1,13 +1,17 @@
 from functools import lru_cache
 
 import io
-from datetime import date
+from datetime import date, datetime
+
+import pendulum
 from typing import Annotated, Literal
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from starlette.responses import StreamingResponse
 
+from tallybadger.core.timezone import application_timezone_name
+from tallybadger.ledger.date_range_math import DateRangeMathError, parse_optional_entry_date_expression
 from tallybadger.ledger.models import (
     AccountCreate,
     AccountLedgerLineOut,
@@ -329,8 +333,14 @@ def create_settlement(
 
 @router.get("/journal-entries", response_model=list[JournalEntryListItem])
 def list_journal_entries(
-    from_date: date | None = None,
-    to_date: date | None = None,
+    from_date: str | None = Query(
+        default=None,
+        description="Inclusive start: Elasticsearch date math or plain ISO date (e.g. now/y).",
+    ),
+    to_date: str | None = Query(
+        default=None,
+        description="Inclusive end: Elasticsearch date math or plain ISO date (e.g. now).",
+    ),
     needs_review: bool | None = None,
     account_ids: Annotated[list[int] | None, Query()] = None,
     party_ids: Annotated[list[int] | None, Query()] = None,
@@ -351,12 +361,29 @@ def list_journal_entries(
             ),
         ),
     ] = None,
+    anchor: str | None = Query(
+        default=None,
+        description="Optional ISO datetime anchor for resolving date math (mainly for tests).",
+    ),
     service: LedgerService = Depends(get_ledger_service),
 ) -> list[JournalEntryListItem]:
     try:
+        anchor_dt: datetime | None = None
+        if anchor is not None and anchor.strip():
+            try:
+                anchor_dt = pendulum.parse(anchor.strip()).in_timezone(
+                    application_timezone_name(),
+                )
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"could not parse anchor {anchor.strip()!r}: {exc}",
+                ) from exc
+        resolved_from = parse_optional_entry_date_expression(from_date, anchor=anchor_dt)
+        resolved_to = parse_optional_entry_date_expression(to_date, anchor=anchor_dt)
         return service.list_entries(
-            from_date=from_date,
-            to_date=to_date,
+            from_date=resolved_from,
+            to_date=resolved_to,
             needs_review=needs_review,
             account_ids=account_ids,
             party_ids=party_ids,
@@ -370,6 +397,8 @@ def list_journal_entries(
             offset=offset,
             sort_tokens=sort,
         )
+    except DateRangeMathError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except LedgerValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 

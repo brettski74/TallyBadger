@@ -12,6 +12,7 @@ from tallybadger.api.routes import (
     cel_rule_sets,
     cheque_register_filter_presets,
     cheques,
+    date_range,
     health,
     import_csv,
     import_rules_cel,
@@ -40,6 +41,7 @@ app.add_middleware(
 app.include_router(backup.router)
 app.include_router(cheques.router)
 app.include_router(cheque_register_filter_presets.router)
+app.include_router(date_range.router)
 app.include_router(health.router)
 app.include_router(import_rules_cel.router)
 app.include_router(cel_rule_sets.router)

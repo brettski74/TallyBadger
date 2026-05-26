@@ -11,6 +11,7 @@ export const DEV_SERVER_API_PROXY_PREFIXES = [
   "backup",
   "cheques",
   "cheque-register-filter-presets",
+  "date-range",
   "health",
   "import-rules",
   "import-templates",

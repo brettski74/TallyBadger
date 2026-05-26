@@ -5,6 +5,11 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator, model_validator
 
 from tallybadger.core.byte_size import parse_byte_size
+from tallybadger.ledger.date_range_math import (
+    DateRangeMathError,
+    parse_optional_entry_date_expression,
+    resolve_entry_date_range,
+)
 
 AccountType = Literal["asset", "liability", "equity", "revenue", "expense", "suspense"]
 PartyRole = Literal["customer", "vendor", "both", "other"]
@@ -187,8 +192,8 @@ class JournalEntryFilterPresetDefinition(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    from_date: date | None = None
-    to_date: date | None = None
+    from_date: str | None = None
+    to_date: str | None = None
     needs_review: bool | None = None
     account_ids: list[int] = Field(default_factory=list)
     party_ids: list[int] = Field(default_factory=list)
@@ -209,6 +214,18 @@ class JournalEntryFilterPresetDefinition(BaseModel):
         stripped = value.strip()
         return stripped if stripped else None
 
+    @field_validator("from_date", "to_date", mode="before")
+    @classmethod
+    def _coerce_date_expression(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, date):
+            return value.isoformat()
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped if stripped else None
+        raise ValueError("from_date and to_date must be strings, dates, or null")
+
     @model_validator(mode="after")
     def _validate(self) -> "JournalEntryFilterPresetDefinition":
         if (
@@ -217,12 +234,26 @@ class JournalEntryFilterPresetDefinition(BaseModel):
             and self.amount_low > self.amount_high
         ):
             raise ValueError("amount_low must be less than or equal to amount_high")
-        if (
-            self.from_date is not None
-            and self.to_date is not None
-            and self.from_date > self.to_date
-        ):
-            raise ValueError("from_date must be on or before to_date")
+        if self.from_date is not None or self.to_date is not None:
+            try:
+                resolved_from = parse_optional_entry_date_expression(self.from_date)
+                resolved_to = parse_optional_entry_date_expression(self.to_date)
+            except DateRangeMathError as exc:
+                raise ValueError(str(exc)) from exc
+            if self.from_date is not None and resolved_from is None:
+                raise ValueError("from_date must not be empty")
+            if self.to_date is not None and resolved_to is None:
+                raise ValueError("to_date must not be empty")
+            if (
+                self.from_date is not None
+                and self.to_date is not None
+                and resolved_from is not None
+                and resolved_to is not None
+            ):
+                try:
+                    resolve_entry_date_range(self.from_date, self.to_date)
+                except DateRangeMathError as exc:
+                    raise ValueError(str(exc)) from exc
         for field_name in ("account_ids", "party_ids", "accrual_plan_ids"):
             for v in getattr(self, field_name):
                 if v <= 0:
