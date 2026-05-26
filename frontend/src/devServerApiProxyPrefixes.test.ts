@@ -11,6 +11,10 @@ describe("DEV_SERVER_API_PROXY_PREFIXES", () => {
     expect(DEV_SERVER_API_PROXY_PREFIXES).toContain("cheque-register-filter-presets");
   });
 
+  it("includes date-range for dev proxy JSON", () => {
+    expect(DEV_SERVER_API_PROXY_PREFIXES).toContain("date-range");
+  });
+
   it("has no duplicate prefixes", () => {
     const set = new Set(DEV_SERVER_API_PROXY_PREFIXES);
     expect(set.size).toBe(DEV_SERVER_API_PROXY_PREFIXES.length);
