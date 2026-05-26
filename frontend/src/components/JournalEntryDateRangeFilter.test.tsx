@@ -161,7 +161,7 @@ describe("JournalEntryDateRangeFilter", () => {
     });
   });
 
-  it("shows custom when resolve fails", async () => {
+  it("shows custom and keeps expression when resolve fails", async () => {
     const user = userEvent.setup();
     vi.spyOn(global, "fetch").mockImplementation(async (input) => {
       const url = String(input);
@@ -175,8 +175,9 @@ describe("JournalEntryDateRangeFilter", () => {
     await user.tab();
 
     await waitFor(() => {
-      expect(screen.getAllByRole("alert")[0]).toHaveTextContent(/bad expr/i);
       expect(screen.getByLabelText("Quick date range")).toHaveValue("custom");
+      expect(screen.getByLabelText("Filter from date")).toHaveValue("bad");
     });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });

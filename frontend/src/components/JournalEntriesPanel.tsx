@@ -874,7 +874,7 @@ export function JournalEntriesPanel({
       </div>
 
       {presetsError && (
-        <p className="error journal-presets-fetch-error" role="alert">
+        <p className="error-text journal-presets-fetch-error" role="alert">
           {presetsError}
         </p>
       )}
@@ -917,7 +917,7 @@ export function JournalEntriesPanel({
 
       {listLoading && entries.length === 0 && <p>Loading…</p>}
       {listError && (
-        <p className="error" role="alert">
+        <p className="error-text" role="alert">
           {listError}
         </p>
       )}

@@ -29,8 +29,6 @@ export function JournalEntryDateRangeFilter({
   const [toDraft, setToDraft] = useState(value.toDate);
   const [fromDisplay, setFromDisplay] = useState("");
   const [toDisplay, setToDisplay] = useState("");
-  const [fromResolveError, setFromResolveError] = useState<string | null>(null);
-  const [toResolveError, setToResolveError] = useState<string | null>(null);
   const [fromResolving, setFromResolving] = useState(false);
   const [toResolving, setToResolving] = useState(false);
   const suppressQuickRangeSyncRef = useRef(false);
@@ -63,19 +61,15 @@ export function JournalEntryDateRangeFilter({
     if (!trimmed) {
       if (bound === "from") {
         setFromDisplay("");
-        setFromResolveError(null);
       } else {
         setToDisplay("");
-        setToResolveError(null);
       }
       return;
     }
     if (bound === "from") {
       setFromResolving(true);
-      setFromResolveError(null);
     } else {
       setToResolving(true);
-      setToResolveError(null);
     }
     try {
       const resolved = await resolveDateExpression(trimmed);
@@ -84,14 +78,12 @@ export function JournalEntryDateRangeFilter({
       } else {
         setToDisplay(resolved);
       }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Could not resolve date";
+    } catch {
+      // List fetch surfaces parse errors below the filter row; keep the expression visible here.
       if (bound === "from") {
-        setFromResolveError(message);
-        setFromDisplay("");
+        setFromDisplay(trimmed);
       } else {
-        setToResolveError(message);
-        setToDisplay("");
+        setToDisplay(trimmed);
       }
     } finally {
       if (bound === "from") {
@@ -180,22 +172,15 @@ export function JournalEntryDateRangeFilter({
           aria-label="Filter from date"
           type="text"
           value={fromFocused ? fromDraft : fromResolving ? "…" : fromDisplay}
-          aria-invalid={fromResolveError != null}
           onFocus={() => {
             setFromFocused(true);
             setFromDraft(value.fromDate);
-            setFromResolveError(null);
           }}
           onBlur={() => {
             commitFromDraft();
           }}
           onChange={(e) => setFromDraft(e.target.value)}
         />
-        {fromResolveError && !fromFocused && (
-          <span className="error journal-filter-resolve-error" role="alert">
-            {fromResolveError}
-          </span>
-        )}
       </label>
       <label className="journal-filter-slot journal-filter-slot-date">
         <span className="journal-filter-inline-label">To Date</span>
@@ -204,22 +189,15 @@ export function JournalEntryDateRangeFilter({
           aria-label="Filter to date"
           type="text"
           value={toFocused ? toDraft : toResolving ? "…" : toDisplay}
-          aria-invalid={toResolveError != null}
           onFocus={() => {
             setToFocused(true);
             setToDraft(value.toDate);
-            setToResolveError(null);
           }}
           onBlur={() => {
             commitToDraft();
           }}
           onChange={(e) => setToDraft(e.target.value)}
         />
-        {toResolveError && !toFocused && (
-          <span className="error journal-filter-resolve-error" role="alert">
-            {toResolveError}
-          </span>
-        )}
       </label>
     </>
   );
