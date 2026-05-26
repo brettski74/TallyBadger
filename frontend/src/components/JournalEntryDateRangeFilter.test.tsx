@@ -125,7 +125,39 @@ describe("JournalEntryDateRangeFilter", () => {
     await user.tab();
 
     await waitFor(() => {
-      expect((from as HTMLInputElement).value).toBe("15/01/2026");
+      expect((from as HTMLInputElement).value).toBe("2026-01-15");
+    });
+  });
+
+  it("does not commit filter or resolve until blur", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    vi.spyOn(global, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes("/date-range/resolve")) {
+        return new Response(JSON.stringify({ date: "2026-04-01" }), { status: 200 });
+      }
+      return new Response("not mocked", { status: 500 });
+    });
+
+    render(
+      <JournalEntryDateRangeFilter
+        value={{ fromDate: "", toDate: "" }}
+        onChange={onChange}
+      />,
+    );
+
+    const from = screen.getByLabelText("Filter from date");
+    await user.click(from);
+    await user.type(from, "2026-04-01");
+
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+    await user.tab();
+
+    await waitFor(() => {
+      expect(onChange).toHaveBeenCalledWith({ fromDate: "2026-04-01" });
     });
   });
 

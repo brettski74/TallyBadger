@@ -18,14 +18,6 @@ interface JournalEntryDateRangeFilterProps {
   onChange: (patch: Partial<JournalEntryDateRangeValue>) => void;
 }
 
-function formatDisplayDate(isoDate: string): string {
-  const [year, month, day] = isoDate.split("-");
-  if (!year || !month || !day) {
-    return isoDate;
-  }
-  return `${day}/${month}/${year}`;
-}
-
 export function JournalEntryDateRangeFilter({
   value,
   onChange,
@@ -33,6 +25,8 @@ export function JournalEntryDateRangeFilter({
   const [quickRangeId, setQuickRangeId] = useState<JournalQuickRangeId>("custom");
   const [fromFocused, setFromFocused] = useState(false);
   const [toFocused, setToFocused] = useState(false);
+  const [fromDraft, setFromDraft] = useState(value.fromDate);
+  const [toDraft, setToDraft] = useState(value.toDate);
   const [fromDisplay, setFromDisplay] = useState("");
   const [toDisplay, setToDisplay] = useState("");
   const [fromResolveError, setFromResolveError] = useState<string | null>(null);
@@ -40,6 +34,18 @@ export function JournalEntryDateRangeFilter({
   const [fromResolving, setFromResolving] = useState(false);
   const [toResolving, setToResolving] = useState(false);
   const suppressQuickRangeSyncRef = useRef(false);
+
+  useEffect(() => {
+    if (!fromFocused) {
+      setFromDraft(value.fromDate);
+    }
+  }, [fromFocused, value.fromDate]);
+
+  useEffect(() => {
+    if (!toFocused) {
+      setToDraft(value.toDate);
+    }
+  }, [toFocused, value.toDate]);
 
   const runReverseMatch = useCallback(() => {
     if (fromFocused || toFocused || suppressQuickRangeSyncRef.current) {
@@ -73,11 +79,10 @@ export function JournalEntryDateRangeFilter({
     }
     try {
       const resolved = await resolveDateExpression(trimmed);
-      const formatted = formatDisplayDate(resolved);
       if (bound === "from") {
-        setFromDisplay(formatted);
+        setFromDisplay(resolved);
       } else {
-        setToDisplay(formatted);
+        setToDisplay(resolved);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Could not resolve date";
@@ -111,6 +116,24 @@ export function JournalEntryDateRangeFilter({
     void resolveBound(value.toDate, "to");
   }, [toFocused, value.toDate, resolveBound]);
 
+  function commitFromDraft() {
+    const trimmed = fromDraft.trim();
+    setFromFocused(false);
+    setFromDraft(trimmed);
+    if (trimmed !== value.fromDate) {
+      onChange({ fromDate: trimmed });
+    }
+  }
+
+  function commitToDraft() {
+    const trimmed = toDraft.trim();
+    setToFocused(false);
+    setToDraft(trimmed);
+    if (trimmed !== value.toDate) {
+      onChange({ toDate: trimmed });
+    }
+  }
+
   function handleQuickRangeChange(nextId: string) {
     if (nextId === "custom") {
       setQuickRangeId("custom");
@@ -121,7 +144,11 @@ export function JournalEntryDateRangeFilter({
       return;
     }
     suppressQuickRangeSyncRef.current = true;
+    setFromFocused(false);
+    setToFocused(false);
     setQuickRangeId(option.id);
+    setFromDraft(option.fromExpr);
+    setToDraft(option.toExpr);
     onChange({ fromDate: option.fromExpr, toDate: option.toExpr });
     queueMicrotask(() => {
       suppressQuickRangeSyncRef.current = false;
@@ -152,16 +179,17 @@ export function JournalEntryDateRangeFilter({
           className="journal-filter-control"
           aria-label="Filter from date"
           type="text"
-          value={fromFocused ? value.fromDate : fromResolving ? "…" : fromDisplay}
+          value={fromFocused ? fromDraft : fromResolving ? "…" : fromDisplay}
           aria-invalid={fromResolveError != null}
           onFocus={() => {
             setFromFocused(true);
+            setFromDraft(value.fromDate);
             setFromResolveError(null);
           }}
           onBlur={() => {
-            setFromFocused(false);
+            commitFromDraft();
           }}
-          onChange={(e) => onChange({ fromDate: e.target.value })}
+          onChange={(e) => setFromDraft(e.target.value)}
         />
         {fromResolveError && !fromFocused && (
           <span className="error journal-filter-resolve-error" role="alert">
@@ -175,16 +203,17 @@ export function JournalEntryDateRangeFilter({
           className="journal-filter-control"
           aria-label="Filter to date"
           type="text"
-          value={toFocused ? value.toDate : toResolving ? "…" : toDisplay}
+          value={toFocused ? toDraft : toResolving ? "…" : toDisplay}
           aria-invalid={toResolveError != null}
           onFocus={() => {
             setToFocused(true);
+            setToDraft(value.toDate);
             setToResolveError(null);
           }}
           onBlur={() => {
-            setToFocused(false);
+            commitToDraft();
           }}
-          onChange={(e) => onChange({ toDate: e.target.value })}
+          onChange={(e) => setToDraft(e.target.value)}
         />
         {toResolveError && !toFocused && (
           <span className="error journal-filter-resolve-error" role="alert">

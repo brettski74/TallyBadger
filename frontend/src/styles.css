@@ -471,7 +471,8 @@ th {
 }
 
 .journal-filter-slot-date .journal-filter-control {
-  min-width: 9.5rem;
+  width: 7.5rem;
+  max-width: 7.5rem;
 }
 
 .journal-filter-range-group {
