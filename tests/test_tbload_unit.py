@@ -1,4 +1,4 @@
-"""Unit tests for standalone scripts/tbload (#206)."""
+"""Unit tests for standalone scripts/tbload (#206, #207)."""
 
 from __future__ import annotations
 
@@ -8,12 +8,15 @@ import json
 import os
 import sys
 import time
+import zipfile
+from io import BytesIO
 from pathlib import Path
 
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TBLOAD_PATH = REPO_ROOT / "scripts" / "tbload"
+EXPANDED_FIXTURE = REPO_ROOT / "tests" / "fixtures" / "tbload-expanded"
 
 
 def _load_tbload():
@@ -184,3 +187,47 @@ def test_tbload_parse_curl_import_response() -> None:
     body, status = tbload.parse_curl_import_response(raw)
     assert body == '{"status":"imported"}'
     assert status == 200
+
+
+def test_tbload_collect_directory_zip_members_includes_json_and_attachments_only() -> None:
+    members = tbload.collect_directory_zip_members(EXPANDED_FIXTURE)
+    names = [name for name, _path in members]
+    assert names == ["accounts.json", "metadata.json", "attachments/doc.pdf"]
+
+
+def test_tbload_require_directory_metadata_file_rejects_missing(tmp_path: Path) -> None:
+    with pytest.raises(tbload.TbloadError, match="seed/metadata.json"):
+        tbload.require_directory_metadata_file(input_label="seed", directory=tmp_path)
+
+
+def test_tbload_pack_directory_to_zip_builds_expected_archive(capsys: pytest.CaptureFixture[str]) -> None:
+    input_label = "seed"
+    packed = tbload.pack_directory_to_zip(
+        EXPANDED_FIXTURE,
+        input_label=input_label,
+        quiet=False,
+    )
+    captured = capsys.readouterr()
+    assert f"{input_label} is a directory" in captured.err
+    assert f"{input_label}/metadata.json" in captured.err
+    assert f"{input_label}/attachments/doc.pdf" in captured.err
+    assert f"{input_label}/README.md" not in captured.err
+
+    with zipfile.ZipFile(BytesIO(packed)) as archive:
+        assert set(archive.namelist()) == {
+            "accounts.json",
+            "metadata.json",
+            "attachments/doc.pdf",
+        }
+
+
+def test_tbload_pack_directory_to_zip_quiet_suppresses_progress(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    tbload.pack_directory_to_zip(EXPANDED_FIXTURE, input_label="seed", quiet=True)
+    assert capsys.readouterr().err == ""
+
+
+def test_tbload_pack_directory_to_zip_uses_user_input_label_in_errors(tmp_path: Path) -> None:
+    with pytest.raises(tbload.TbloadError, match="my-seed/metadata.json"):
+        tbload.pack_directory_to_zip(tmp_path, input_label="my-seed", quiet=True)

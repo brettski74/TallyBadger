@@ -8,12 +8,15 @@ Does not import the TallyBadger application package.
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
 import select
 import shutil
 import subprocess
 import sys
+import zipfile
+from pathlib import Path
 from typing import NoReturn
 from urllib.parse import urljoin
 
@@ -87,6 +90,54 @@ def run_curl(args: list[str]) -> subprocess.CompletedProcess[bytes]:
 def check_curl() -> None:
     if shutil.which("curl") is None:
         _die("tbload requires curl on PATH")
+
+
+def require_directory_metadata_file(*, input_label: str, directory: Path) -> None:
+    """Fail before HTTP when metadata.json is missing or not a regular file."""
+    metadata_path = directory / "metadata.json"
+    if not metadata_path.is_file():
+        raise TbloadError(f"expected regular file {input_label}/metadata.json")
+
+
+def collect_directory_zip_members(directory: Path) -> list[tuple[str, Path]]:
+    """Return (archive_name, source_path) pairs for expanded snapshot packing."""
+    members: list[tuple[str, Path]] = []
+
+    for entry in sorted(directory.iterdir(), key=lambda path: path.name):
+        if entry.is_symlink():
+            continue
+        if entry.is_file() and entry.suffix == ".json":
+            members.append((entry.name, entry))
+
+    attachments_dir = directory / "attachments"
+    if attachments_dir.is_dir() and not attachments_dir.is_symlink():
+        for path in sorted(attachments_dir.rglob("*")):
+            if path.is_symlink():
+                continue
+            if path.is_file():
+                archive_name = path.relative_to(directory).as_posix()
+                members.append((archive_name, path))
+
+    return members
+
+
+def pack_directory_to_zip(
+    directory: Path,
+    *,
+    input_label: str,
+    quiet: bool,
+) -> bytes:
+    """Pack expanded snapshot directory contents into an in-memory ZIP."""
+    require_directory_metadata_file(input_label=input_label, directory=directory)
+    _info(f"{input_label} is a directory", quiet=quiet)
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, mode="w") as archive:
+        for archive_name, source_path in collect_directory_zip_members(directory):
+            _info(f"{input_label}/{archive_name}", quiet=quiet)
+            archive.write(source_path, arcname=archive_name)
+
+    return buffer.getvalue()
 
 
 def read_stdin_snapshot(*, timeout_seconds: float = STDIN_READ_TIMEOUT_SECONDS) -> bytes:
@@ -260,7 +311,10 @@ def report_success(data: dict[str, object]) -> None:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="tbload",
-        description="Restore a TallyBadger backup ZIP via POST /backup/import (curl transport).",
+        description=(
+            "Restore a TallyBadger backup via POST /backup/import (curl transport). "
+            "Input may be a ZIP file, an expanded snapshot directory, or a ZIP on stdin."
+        ),
         add_help=False,
     )
     parser.add_argument(
@@ -272,7 +326,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "-i",
         "--input",
         metavar="PATH",
-        help="Snapshot ZIP file (default: read ZIP from stdin)",
+        help=(
+            "Snapshot ZIP file or expanded snapshot directory containing metadata.json "
+            "(default: read ZIP from stdin; stdin accepts ZIP only)"
+        ),
     )
     parser.add_argument(
         "-m",
@@ -334,15 +391,28 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     input_label = args.input if args.input else "standard input"
-    _info(f"Reading input from {input_label}.", quiet=args.quiet)
     _info(f"Using {mode} restore mode.", quiet=args.quiet)
 
     snapshot_bytes: bytes | None = None
+    input_path: str | None = args.input
     if args.input is None:
+        _info(f"Reading input from {input_label}.", quiet=args.quiet)
         try:
             snapshot_bytes = read_stdin_snapshot(timeout_seconds=timeout_seconds)
         except TbloadError as exc:
             _die(str(exc))
+    elif os.path.isdir(args.input):
+        try:
+            snapshot_bytes = pack_directory_to_zip(
+                Path(args.input),
+                input_label=args.input,
+                quiet=args.quiet,
+            )
+        except TbloadError as exc:
+            _die(str(exc))
+        input_path = None
+    else:
+        _info(f"Reading input from {input_label}.", quiet=args.quiet)
 
     _info(f"Connecting to {base_url}.", quiet=args.quiet)
     preflight_health(base_url)
@@ -350,7 +420,7 @@ def main(argv: list[str] | None = None) -> None:
         data = import_snapshot(
             base_url,
             restore_mode=mode,
-            input_path=args.input,
+            input_path=input_path,
             snapshot_bytes=snapshot_bytes,
         )
     except TbloadError as exc:
