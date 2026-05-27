@@ -1,0 +1,322 @@
+#!/usr/bin/env python3
+"""Refresh or verify snapshot metadata member_manifest SHA-256 digests (#216).
+
+Standalone: stdlib only. Copy anywhere Python 3.11+ exists.
+Does not import the TallyBadger application package.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import re
+import sys
+from datetime import datetime
+from pathlib import Path
+from typing import Any, NoReturn
+
+BACKUP_TIMESTAMP_RE = re.compile(r"\.(\d{8}-\d{6})$")
+
+
+class MkmetaError(Exception):
+    """User-facing mkmeta failure."""
+
+
+def _die(message: str, *, code: int = 1) -> NoReturn:
+    print(message, file=sys.stderr)
+    raise SystemExit(code)
+
+
+def _info(message: str, *, quiet: bool) -> None:
+    if not quiet:
+        print(message)
+
+
+def load_metadata(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        raise MkmetaError(f"metadata file not found: {path}")
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise MkmetaError(f"cannot read metadata file {path}: {exc}") from exc
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise MkmetaError(f"metadata file is not valid JSON: {path}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise MkmetaError(f"metadata root must be a JSON object, got {type(data).__name__}")
+    manifest = data.get("member_manifest")
+    if not isinstance(manifest, list):
+        raise MkmetaError("metadata.member_manifest must be an array")
+    for index, item in enumerate(manifest):
+        if not isinstance(item, dict):
+            raise MkmetaError(f"member_manifest[{index}] must be an object")
+        member_path = item.get("path")
+        if not isinstance(member_path, str) or not member_path:
+            raise MkmetaError(f"member_manifest[{index}].path must be a non-empty string")
+    return data
+
+
+def sha256_hex_for_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def resolve_member_file(*, base_dir: Path, manifest_path: str) -> Path:
+    resolved = (base_dir / manifest_path).resolve(strict=False)
+    base_resolved = base_dir.resolve(strict=False)
+    try:
+        resolved.relative_to(base_resolved)
+    except ValueError as exc:
+        raise MkmetaError(
+            f"member path {manifest_path!r} resolves outside metadata directory {base_dir}"
+        ) from exc
+    return resolved
+
+
+def assert_hashable_member(path: Path, *, manifest_path: str) -> None:
+    if not path.exists():
+        raise MkmetaError(f"member file missing: {manifest_path}")
+    if path.is_symlink():
+        raise MkmetaError(f"member path must not be a symlink: {manifest_path}")
+    if not path.is_file():
+        raise MkmetaError(f"member path is not a regular file: {manifest_path}")
+
+
+def compute_manifest_digests(
+    metadata: dict[str, Any],
+    *,
+    base_dir: Path,
+) -> dict[str, str]:
+    manifest = metadata["member_manifest"]
+    digests: dict[str, str] = {}
+    for item in manifest:
+        manifest_path = item["path"]
+        member_file = resolve_member_file(base_dir=base_dir, manifest_path=manifest_path)
+        assert_hashable_member(member_file, manifest_path=manifest_path)
+        digests[manifest_path] = sha256_hex_for_file(member_file)
+    return digests
+
+
+def stored_sha256(item: dict[str, Any]) -> str | None:
+    value = item.get("sha256")
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped if stripped else None
+
+
+def find_check_mismatches(
+    metadata: dict[str, Any],
+    *,
+    base_dir: Path,
+) -> list[str]:
+    computed = compute_manifest_digests(metadata, base_dir=base_dir)
+    mismatches: list[str] = []
+    for item in metadata["member_manifest"]:
+        manifest_path = item["path"]
+        expected = computed[manifest_path]
+        stored = stored_sha256(item)
+        if stored is None or stored.lower() != expected:
+            mismatches.append(manifest_path)
+    return mismatches
+
+
+def apply_digests_to_metadata(metadata: dict[str, Any], digests: dict[str, str]) -> None:
+    for item in metadata["member_manifest"]:
+        item["sha256"] = digests[item["path"]]
+
+
+def backup_timestamp_label() -> str:
+    return datetime.now().strftime("%Y%m%d-%H%M%S")
+
+
+def backup_path_for(output_path: Path) -> Path:
+    return output_path.with_name(f"{output_path.name}.{backup_timestamp_label()}")
+
+
+def rename_existing_output(output_path: Path) -> Path:
+    backup_path = backup_path_for(output_path)
+    if backup_path.exists():
+        raise MkmetaError(f"refusing to overwrite existing backup file: {backup_path}")
+    output_path.rename(backup_path)
+    return backup_path
+
+
+def parse_backup_timestamp(path: Path) -> datetime | None:
+    match = BACKUP_TIMESTAMP_RE.search(path.name)
+    if not match:
+        return None
+    try:
+        return datetime.strptime(match.group(1), "%Y%m%d-%H%M%S")
+    except ValueError:
+        return None
+
+
+def list_backup_files(*, directory: Path, base_name: str) -> list[Path]:
+    prefix = f"{base_name}."
+    backups: list[Path] = []
+    for candidate in directory.iterdir():
+        if not candidate.is_file() or candidate.is_symlink():
+            continue
+        if not candidate.name.startswith(prefix):
+            continue
+        if parse_backup_timestamp(candidate) is not None:
+            backups.append(candidate)
+    return backups
+
+
+def prune_backups(*, directory: Path, base_name: str, retain: int) -> list[Path]:
+    if retain < 1:
+        raise MkmetaError("--retain count must be at least 1")
+    backups = list_backup_files(directory=directory, base_name=base_name)
+    backups.sort(key=lambda path: parse_backup_timestamp(path) or datetime.min)
+    excess = len(backups) - retain
+    if excess <= 0:
+        return []
+    removed = backups[:excess]
+    for path in removed:
+        path.unlink()
+    return removed
+
+
+def serialize_metadata(metadata: dict[str, Any]) -> bytes:
+    text = json.dumps(metadata, indent=2, ensure_ascii=False)
+    return (text + "\n").encode("utf-8")
+
+
+def write_metadata_file(
+    metadata: dict[str, Any],
+    output_path: Path,
+    *,
+    retain: int | None,
+    quiet: bool,
+) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    backup_created: Path | None = None
+    if output_path.exists():
+        backup_created = rename_existing_output(output_path)
+        if not quiet:
+            print(f"Backed up existing file to {backup_created.name}", file=sys.stderr)
+
+    output_path.write_bytes(serialize_metadata(metadata))
+
+    if retain is not None:
+        removed = prune_backups(
+            directory=output_path.parent,
+            base_name=output_path.name,
+            retain=retain,
+        )
+        for path in removed:
+            if not quiet:
+                print(f"Removed old backup {path.name}", file=sys.stderr)
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="mkmeta",
+        description=(
+            "Recompute member_manifest SHA-256 digests for an expanded snapshot metadata file."
+        ),
+    )
+    parser.add_argument(
+        "-i",
+        "--input",
+        metavar="PATH",
+        default="metadata.json",
+        help="Input metadata JSON file (default: metadata.json in cwd)",
+    )
+    parser.add_argument(
+        "-o",
+        "--output",
+        metavar="PATH",
+        help="Output metadata JSON file (default: same as --input)",
+    )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Verify digests only; do not write",
+    )
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Suppress non-error stdout",
+    )
+    parser.add_argument(
+        "-r",
+        action="store_true",
+        help="After writing, keep at most 3 timestamped backups of the output file",
+    )
+    parser.add_argument(
+        "-R",
+        "--retain",
+        type=int,
+        metavar="COUNT",
+        help="After writing, keep at most COUNT timestamped backups of the output file",
+    )
+    return parser.parse_args(argv)
+
+
+def resolve_retain_count(args: argparse.Namespace) -> int | None:
+    if args.r and args.retain is not None:
+        raise MkmetaError("use either -r or --retain, not both")
+    if args.r:
+        return 3
+    if args.retain is not None:
+        return args.retain
+    return None
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
+    try:
+        retain = resolve_retain_count(args)
+    except MkmetaError as exc:
+        _die(str(exc))
+
+    input_path = Path(args.input)
+    output_path = Path(args.output) if args.output else input_path
+    base_dir = input_path.parent
+
+    try:
+        metadata = load_metadata(input_path)
+    except MkmetaError as exc:
+        _die(str(exc))
+
+    if args.check:
+        if retain is not None:
+            _die("--retain and -r are not valid with --check")
+        try:
+            mismatches = find_check_mismatches(metadata, base_dir=base_dir)
+        except MkmetaError as exc:
+            _die(str(exc))
+        if mismatches:
+            for path in mismatches:
+                print(path, file=sys.stderr)
+            _die(f"{len(mismatches)} member_manifest digest mismatch(es)", code=1)
+        _info("All member_manifest digests match.", quiet=args.quiet)
+        return
+
+    try:
+        digests = compute_manifest_digests(metadata, base_dir=base_dir)
+    except MkmetaError as exc:
+        _die(str(exc))
+
+    apply_digests_to_metadata(metadata, digests)
+
+    try:
+        write_metadata_file(metadata, output_path, retain=retain, quiet=args.quiet)
+    except MkmetaError as exc:
+        _die(str(exc))
+
+    _info(f"Wrote updated metadata to {output_path}", quiet=args.quiet)
+
+
+if __name__ == "__main__":
+    main()

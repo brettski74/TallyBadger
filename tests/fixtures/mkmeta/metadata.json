@@ -1,0 +1,16 @@
+{
+  "export_type": "complete",
+  "format_version": "1.0.0",
+  "schema_version": "001",
+  "exported_at": "2026-01-01T00:00:00Z",
+  "currency_assumption": "single_currency_numeric_18_2",
+  "member_manifest": [
+    {
+      "path": "accounts.json",
+      "sha256": "deadbeef"
+    },
+    {
+      "path": "attachments/blob.bin"
+    }
+  ]
+}
