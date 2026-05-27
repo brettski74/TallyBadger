@@ -304,6 +304,14 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     try:
+        mismatches = find_check_mismatches(metadata, base_dir=base_dir)
+    except MkmetaError as exc:
+        _die(str(exc))
+    if not mismatches:
+        _info("All member_manifest digests already up to date.", quiet=args.quiet)
+        return
+
+    try:
         digests = compute_manifest_digests(metadata, base_dir=base_dir)
     except MkmetaError as exc:
         _die(str(exc))

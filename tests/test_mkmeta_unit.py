@@ -157,6 +157,26 @@ def test_mkmeta_prune_backups_keeps_newest_by_filename_timestamp(tmp_path: Path)
     assert remaining == names[2:]
 
 
+def test_mkmeta_main_write_skips_when_digests_already_current(tmp_path: Path) -> None:
+    work = tmp_path / "snap"
+    work.mkdir()
+    for rel in ("accounts.json", "attachments/blob.bin", "metadata.json"):
+        src = FIXTURE / rel
+        dest = work / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(src.read_bytes())
+
+    meta_path = work / "metadata.json"
+    mkmeta.main(["-i", str(meta_path), "-o", str(meta_path), "--quiet"])
+    before_mtime = meta_path.stat().st_mtime
+    backups_before = list(work.glob("metadata.json.*"))
+
+    mkmeta.main(["-i", str(meta_path), "-o", str(meta_path), "--quiet"])
+
+    assert meta_path.stat().st_mtime == before_mtime
+    assert list(work.glob("metadata.json.*")) == backups_before
+
+
 def test_mkmeta_main_write_updates_fixture(tmp_path: Path) -> None:
     work = tmp_path / "snap"
     work.mkdir()
