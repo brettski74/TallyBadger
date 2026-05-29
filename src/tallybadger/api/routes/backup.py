@@ -1,8 +1,6 @@
 """Backup export / restore API (#67, #68)."""
 
 from datetime import datetime
-from typing import Literal
-
 from fastapi import APIRouter, File, Form, HTTPException, Query, Response, UploadFile, status
 from psycopg import errors as pg_errors
 
@@ -13,6 +11,7 @@ from tallybadger.backup.errors import (
     SnapshotValidationError,
     UnsupportedFormatVersionError,
 )
+from tallybadger.backup.export_type import ExportTypeError, normalize_export_type
 from tallybadger.backup.restore_mode import RestoreModeError, resolve_restore_mode
 from tallybadger.backup.snapshot import export_snapshot, import_snapshot
 from tallybadger.db import get_connection
@@ -39,18 +38,26 @@ def _postgres_import_detail(exc: pg_errors.Error) -> str:
 
 @router.post("/export", response_class=Response)
 def backup_export(
-    export_type: Literal["complete", "configuration", "financial"] = Query(
+    export_type: str = Query(
         "complete",
-        description="Snapshot scope: complete, configuration (no GL/settlements), or financial only.",
+        description=(
+            "Snapshot scope: complete, configuration (no GL/settlements), financial only, "
+            "or full (alias for complete)."
+        ),
     ),
 ) -> Response:
+    try:
+        canonical_export_type = normalize_export_type(export_type)
+    except ExportTypeError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
     with get_connection() as conn:
-        data = export_snapshot(conn, export_type)
+        data = export_snapshot(conn, canonical_export_type)
     stem = {
         "complete": "tallybadger-complete",
         "configuration": "tallybadger-config",
         "financial": "tallybadger-financial",
-    }[export_type]
+    }[canonical_export_type]
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     filename = f"{stem}-{stamp}.zip"
     return Response(

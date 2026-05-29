@@ -34,7 +34,7 @@ tallybadger-migrate = "tallybadger.db_migrations:main"
 tbad = "tallybadger.tbad:main"
 
 [tool.setuptools]
-script-files = ["scripts/tbload"]
+script-files = ["scripts/tbload", "scripts/tbsave"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

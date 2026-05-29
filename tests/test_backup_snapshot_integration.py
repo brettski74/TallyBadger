@@ -778,6 +778,42 @@ def test_backup_export_query_and_import_restore_mode_form(
         core_config.get_settings.cache_clear()
 
 
+def test_backup_export_accepts_full_export_type_alias(
+    integration_db_url: str,
+    ledger_service: LedgerService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TALLYBADGER_DATABASE_URL", integration_db_url)
+    core_config.get_settings.cache_clear()
+    try:
+        _seed_minimal_ledger(ledger_service)
+        client = TestClient(app)
+        exp = client.post("/backup/export?export_type=full")
+        assert exp.status_code == 200
+        assert exp.headers["content-type"] == "application/zip"
+        zf = zipfile.ZipFile(io.BytesIO(exp.content))
+        meta = json.loads(zf.read("metadata.json").decode("utf-8"))
+        assert meta["export_type"] == "complete"
+        assert "tallybadger-complete-" in exp.headers.get("content-disposition", "")
+    finally:
+        core_config.get_settings.cache_clear()
+
+
+def test_backup_export_rejects_unknown_export_type(
+    integration_db_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TALLYBADGER_DATABASE_URL", integration_db_url)
+    core_config.get_settings.cache_clear()
+    try:
+        client = TestClient(app)
+        exp = client.post("/backup/export?export_type=fu")
+        assert exp.status_code == 400
+        assert "unrecognized export_type" in exp.json()["detail"]
+    finally:
+        core_config.get_settings.cache_clear()
+
+
 def test_configuration_export_has_only_configuration_members(
     integration_db_url: str,
     ledger_service: LedgerService,
