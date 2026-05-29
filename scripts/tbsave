@@ -1,0 +1,369 @@
+#!/usr/bin/env python3
+"""Export a TallyBadger snapshot ZIP via POST /backup/export (#215).
+
+Standalone: stdlib + curl only. Copy this file anywhere Python 3.11+ and curl exist.
+Does not import the TallyBadger application package.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+from datetime import datetime
+from pathlib import Path
+from typing import NoReturn
+from urllib.parse import quote, urljoin
+
+EXPORT_SCOPES: tuple[str, ...] = ("complete", "configuration", "financial", "full")
+FILENAME_STEMS: dict[str, str] = {
+    "complete": "tallybadger-complete",
+    "configuration": "tallybadger-config",
+    "financial": "tallybadger-financial",
+    "full": "tallybadger-full",
+}
+
+
+class TbsaveError(Exception):
+    """User-facing tbsave failure."""
+
+
+def _die(message: str, *, code: int = 1) -> NoReturn:
+    print(message, file=sys.stderr)
+    raise SystemExit(code)
+
+
+def _info(message: str, *, quiet: bool) -> None:
+    if not quiet:
+        print(message, file=sys.stderr)
+
+
+def _warn(message: str, *, quiet: bool) -> None:
+    if not quiet:
+        print(f"warning: {message}", file=sys.stderr)
+
+
+def build_base_url(*, base_url: str | None, host: str, port: int) -> str:
+    if base_url:
+        return base_url.rstrip("/")
+    env = os.environ.get("TALLYBADGER_API_BASE_URL", "").strip()
+    if env:
+        return env.rstrip("/")
+    return f"http://{host}:{port}"
+
+
+def run_curl(args: list[str]) -> subprocess.CompletedProcess[bytes]:
+    return subprocess.run(  # noqa: S603
+        ["curl", *args],
+        capture_output=True,
+        check=False,
+    )
+
+
+def check_curl() -> None:
+    if shutil.which("curl") is None:
+        _die("tbsave requires curl on PATH")
+
+
+def resolve_export_scope(user_input: str) -> str:
+    """Return export scope for API query, logging, and default filenames."""
+    raw = user_input.strip()
+    if not raw:
+        raise TbsaveError("export scope must not be empty")
+
+    lowered = raw.lower()
+    matches: set[str] = set()
+    if "complete".startswith(lowered):
+        matches.add("complete")
+    if "full".startswith(lowered):
+        matches.add("full")
+    if "configuration".startswith(lowered):
+        matches.add("configuration")
+    if "financial".startswith(lowered):
+        matches.add("financial")
+
+    if not matches:
+        raise TbsaveError(
+            f"unrecognized export scope {user_input!r}; "
+            f"expected one of {list(EXPORT_SCOPES)} (prefixes allowed)"
+        )
+    if len(matches) > 1:
+        labels = sorted(matches)
+        raise TbsaveError(f"ambiguous export scope {user_input!r}; matches {labels}")
+    return next(iter(matches))
+
+
+def default_zip_filename(scope: str) -> str:
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    stem = FILENAME_STEMS[scope]
+    return f"{stem}-{stamp}.zip"
+
+
+def preflight_health(base_url: str) -> None:
+    url = urljoin(base_url + "/", "health")
+    proc = run_curl(["-fsS", url])
+    if proc.returncode != 0:
+        err = proc.stderr.decode("utf-8", errors="replace").strip()
+        _die(f"API health check failed for {url}: {err or proc.returncode}")
+
+
+def extract_api_error_detail(body_text: str) -> str | None:
+    if not body_text.strip():
+        return None
+    try:
+        payload = json.loads(body_text)
+    except json.JSONDecodeError:
+        return body_text.strip()
+    if not isinstance(payload, dict):
+        return body_text.strip()
+    detail = payload.get("detail")
+    if isinstance(detail, str):
+        return detail
+    if detail is not None:
+        return json.dumps(detail, ensure_ascii=False)
+    return body_text.strip()
+
+
+def format_export_http_error(status_code: int, body_text: str) -> str:
+    lines = [f"Export failed (HTTP {status_code})."]
+    detail = extract_api_error_detail(body_text)
+    if detail:
+        lines.append(f"Server: {detail}")
+    elif body_text.strip():
+        lines.append(f"Server response: {body_text.strip()}")
+    return "\n".join(lines)
+
+
+def _export_url(base_url: str, export_type: str) -> str:
+    return urljoin(
+        base_url + "/",
+        f"backup/export?export_type={quote(export_type, safe='')}",
+    )
+
+
+def _parse_curl_export_result(
+  proc: subprocess.CompletedProcess[bytes],
+  *,
+  body_path: Path,
+) -> bytes:
+    status_text = proc.stdout.decode("ascii", errors="replace").strip()
+    try:
+        status_code = int(status_text)
+    except ValueError as exc:
+        raise TbsaveError(f"invalid HTTP status from curl: {status_text!r}") from exc
+
+    body = body_path.read_bytes()
+    if proc.returncode != 0 and status_code == 0:
+        err = proc.stderr.decode("utf-8", errors="replace").strip()
+        _die(f"Export request failed: {err or proc.returncode}")
+
+    if status_code < 200 or status_code >= 300:
+        body_text = body.decode("utf-8", errors="replace")
+        _die(format_export_http_error(status_code, body_text))
+
+    if not body:
+        raise TbsaveError("API returned an empty snapshot")
+    return body
+
+
+def export_snapshot_bytes(base_url: str, *, export_type: str) -> bytes:
+    url = _export_url(base_url, export_type)
+    with tempfile.NamedTemporaryFile(suffix=".zip") as tmp:
+        proc = run_curl(
+            [
+                "-sS",
+                "-X",
+                "POST",
+                "-o",
+                tmp.name,
+                "-w",
+                "%{http_code}",
+                url,
+            ]
+        )
+        return _parse_curl_export_result(proc, body_path=Path(tmp.name))
+
+
+def export_snapshot_to_file(base_url: str, *, export_type: str, output_path: Path) -> None:
+    url = _export_url(base_url, export_type)
+    proc = run_curl(
+        [
+            "-sS",
+            "-X",
+            "POST",
+            "-o",
+            str(output_path),
+            "-w",
+            "%{http_code}",
+            url,
+        ]
+    )
+    _parse_curl_export_result(proc, body_path=output_path)
+
+
+def confirm_overwrite(path: Path) -> bool:
+    if not sys.stdin.isatty():
+        raise TbsaveError(
+            f"output file {path} already exists; use --force to overwrite without a prompt"
+        )
+    try:
+        answer = input(f"Overwrite existing file {path}? [y/N] ").strip().lower()
+    except EOFError:
+        return False
+    return answer in {"y", "yes"}
+
+
+def resolve_output_target(
+    output: str | None,
+    *,
+    scope: str,
+    force: bool,
+    quiet: bool,
+) -> Path | None:
+    """Return a file path to write, or None for stdout."""
+    if output is None:
+        return None
+
+    path = Path(output)
+    if path.exists():
+        if path.is_dir():
+            return path / default_zip_filename(scope)
+        if path.is_file():
+            if not force and not confirm_overwrite(path):
+                _die("export cancelled")
+            _warn(f"overwriting existing file {path}", quiet=quiet)
+            return path
+        raise TbsaveError(
+            f"output path {output!r} exists but is neither a regular file nor a directory"
+        )
+
+    parent = path.parent
+    if not parent.exists():
+        raise TbsaveError(f"parent directory does not exist: {parent}")
+    if not parent.is_dir():
+        raise TbsaveError(f"parent path is not a directory: {parent}")
+    if not os.access(parent, os.W_OK):
+        raise TbsaveError(f"parent directory is not writable: {parent}")
+    return path
+
+
+def validate_output_writable(path: Path) -> None:
+    parent = path.parent
+    if path.exists():
+        if not path.is_file():
+            raise TbsaveError(f"output path is not a regular file: {path}")
+        if not os.access(path, os.W_OK):
+            raise TbsaveError(f"output file is not writable: {path}")
+        return
+    if not parent.exists():
+        raise TbsaveError(f"parent directory does not exist: {parent}")
+    if not os.access(parent, os.W_OK):
+        raise TbsaveError(f"parent directory is not writable: {parent}")
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="tbsave",
+        description="Export a TallyBadger backup via POST /backup/export (curl transport).",
+        add_help=False,
+    )
+    parser.add_argument("--help", action="help", help="Show this help message and exit")
+    parser.add_argument(
+        "-s",
+        "--scope",
+        default="complete",
+        help=(
+            "Export scope: complete, configuration, financial, or full "
+            "(prefixes allowed; default: complete)"
+        ),
+    )
+    parser.add_argument(
+        "-o",
+        "--output",
+        metavar="PATH",
+        help="Output file or directory (default: write ZIP to stdout)",
+    )
+    parser.add_argument(
+        "-f",
+        "--force",
+        action="store_true",
+        help="Overwrite an existing output file without prompting",
+    )
+    parser.add_argument(
+        "-b",
+        "--base-url",
+        help="API base URL (overrides host/port and TALLYBADGER_API_BASE_URL)",
+    )
+    parser.add_argument(
+        "-h",
+        "--host",
+        default="127.0.0.1",
+        help="API host when base URL not set (default: 127.0.0.1)",
+    )
+    parser.add_argument(
+        "-p",
+        "--port",
+        type=int,
+        default=8080,
+        help="API port when base URL not set (default: 8080)",
+    )
+    parser.add_argument(
+        "-q",
+        "--quiet",
+        action="store_true",
+        help="Suppress progress messages and warnings (for scripting)",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> None:
+    check_curl()
+    args = parse_args(argv)
+    try:
+        scope = resolve_export_scope(args.scope)
+    except TbsaveError as exc:
+        _die(str(exc))
+
+    base_url = build_base_url(base_url=args.base_url, host=args.host, port=args.port)
+    _info(f"Export scope {scope!r} (export_type={scope!r}).", quiet=args.quiet)
+    _info(f"Connecting to {base_url}.", quiet=args.quiet)
+
+    try:
+        output_path = resolve_output_target(
+            args.output,
+            scope=scope,
+            force=args.force,
+            quiet=args.quiet,
+        )
+    except TbsaveError as exc:
+        _die(str(exc))
+
+    if output_path is not None:
+        try:
+            validate_output_writable(output_path)
+        except TbsaveError as exc:
+            _die(str(exc))
+        _info(f"Writing snapshot to {output_path}.", quiet=args.quiet)
+
+    preflight_health(base_url)
+
+    if output_path is None:
+        try:
+            data = export_snapshot_bytes(base_url, export_type=scope)
+        except TbsaveError as exc:
+            _die(str(exc))
+        sys.stdout.buffer.write(data)
+        sys.stdout.buffer.flush()
+        _info("Export finished successfully.", quiet=args.quiet)
+        return
+
+    export_snapshot_to_file(base_url, export_type=scope, output_path=output_path)
+    _info("Export finished successfully.", quiet=args.quiet)
+
+
+if __name__ == "__main__":
+    main()
