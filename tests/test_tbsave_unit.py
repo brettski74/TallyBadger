@@ -28,20 +28,20 @@ tbsave = _load_tbsave()
 
 
 @pytest.mark.parametrize(
-    ("raw", "query_value", "canonical"),
+    ("raw", "scope"),
     [
-        ("complete", "complete", "complete"),
-        ("full", "full", "complete"),
-        ("fu", "full", "complete"),
-        ("ful", "full", "complete"),
-        ("conf", "configuration", "configuration"),
-        ("configuration", "configuration", "configuration"),
-        ("fi", "financial", "financial"),
-        ("financial", "financial", "financial"),
+        ("complete", "complete"),
+        ("full", "full"),
+        ("fu", "full"),
+        ("ful", "full"),
+        ("conf", "configuration"),
+        ("configuration", "configuration"),
+        ("fi", "financial"),
+        ("financial", "financial"),
     ],
 )
-def test_tbsave_resolve_export_scope_accepts(raw: str, query_value: str, canonical: str) -> None:
-    assert tbsave.resolve_export_scope(raw) == (query_value, canonical)
+def test_tbsave_resolve_export_scope_accepts(raw: str, scope: str) -> None:
+    assert tbsave.resolve_export_scope(raw) == scope
 
 
 @pytest.mark.parametrize("raw", ["f", "c", "g", ""])
@@ -65,6 +65,7 @@ def test_tbsave_default_zip_filename_pattern(monkeypatch: pytest.MonkeyPatch) ->
 
     monkeypatch.setattr(tbsave, "datetime", FixedDatetime)
     assert tbsave.default_zip_filename("complete") == "tallybadger-complete-20260527-143045.zip"
+    assert tbsave.default_zip_filename("full") == "tallybadger-full-20260527-143045.zip"
     assert tbsave.default_zip_filename("configuration") == "tallybadger-config-20260527-143045.zip"
     assert tbsave.default_zip_filename("financial") == "tallybadger-financial-20260527-143045.zip"
 
@@ -74,7 +75,7 @@ def test_tbsave_resolve_output_target_directory(tmp_path: Path) -> None:
     out_dir.mkdir()
     target = tbsave.resolve_output_target(
         str(out_dir),
-        canonical_scope="configuration",
+        scope="configuration",
         force=False,
         quiet=True,
     )
@@ -88,7 +89,7 @@ def test_tbsave_resolve_output_target_rejects_missing_parent(tmp_path: Path) -> 
     with pytest.raises(tbsave.TbsaveError, match="parent directory does not exist"):
         tbsave.resolve_output_target(
             str(tmp_path / "missing" / "snap.zip"),
-            canonical_scope="complete",
+            scope="complete",
             force=False,
             quiet=True,
         )
@@ -103,7 +104,7 @@ def test_tbsave_resolve_output_target_rejects_non_file_non_dir(tmp_path: Path) -
     with pytest.raises(tbsave.TbsaveError, match="neither a regular file nor a directory"):
         tbsave.resolve_output_target(
             str(fifo),
-            canonical_scope="complete",
+            scope="complete",
             force=False,
             quiet=True,
         )
@@ -125,7 +126,7 @@ def test_tbsave_resolve_output_target_force_skips_prompt(
     monkeypatch.setattr("sys.stdin.isatty", lambda: False)
     target = tbsave.resolve_output_target(
         str(path),
-        canonical_scope="complete",
+        scope="complete",
         force=True,
         quiet=True,
     )
@@ -142,7 +143,7 @@ def test_tbsave_resolve_output_target_tty_decline_cancels(
     with pytest.raises(SystemExit):
         tbsave.resolve_output_target(
             str(path),
-            canonical_scope="complete",
+            scope="complete",
             force=False,
             quiet=True,
         )
@@ -159,12 +160,25 @@ def test_tbsave_warn_on_overwrite_unless_quiet(
     monkeypatch.setattr("builtins.input", lambda _prompt: "y")
     tbsave.resolve_output_target(
         str(path),
-        canonical_scope="complete",
+        scope="complete",
         force=False,
         quiet=False,
     )
     captured = capsys.readouterr()
     assert "warning: overwriting" in captured.err
+
+
+def test_tbsave_resolve_output_target_directory_uses_full_stem(tmp_path: Path) -> None:
+    out_dir = tmp_path / "exports"
+    out_dir.mkdir()
+    target = tbsave.resolve_output_target(
+        str(out_dir),
+        scope="full",
+        force=False,
+        quiet=True,
+    )
+    assert target is not None
+    assert target.name.startswith("tallybadger-full-")
 
 
 def test_tbsave_info_quiet_suppresses_output(capsys: pytest.CaptureFixture[str]) -> None:

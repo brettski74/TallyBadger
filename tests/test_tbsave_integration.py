@@ -232,6 +232,34 @@ def test_tbsave_full_scope_uses_api_alias(
     assert meta["export_type"] == "complete"
 
 
+def test_tbsave_full_scope_directory_uses_full_filename_stem(
+    ledger_service: LedgerService,
+    tbsave_api_base_url: str,
+    tmp_path: Path,
+) -> None:
+    _seed_minimal_ledger(ledger_service)
+    out_dir = tmp_path / "exports"
+    out_dir.mkdir()
+    proc = subprocess.run(  # noqa: S603
+        [
+            sys.executable,
+            str(TBSAVE_PATH),
+            "-s",
+            "fu",
+            "-o",
+            str(out_dir),
+            "--base-url",
+            tbsave_api_base_url,
+            "-q",
+        ],
+        capture_output=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr.decode("utf-8", errors="replace")
+    zips = list(out_dir.glob("tallybadger-full-*.zip"))
+    assert len(zips) == 1
+
+
 def test_tbsave_directory_output_uses_default_filename(
     ledger_service: LedgerService,
     tbsave_api_base_url: str,
