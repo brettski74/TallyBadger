@@ -32,7 +32,8 @@ tbsave = _load_tbsave()
     [
         ("complete", "complete", "complete"),
         ("full", "full", "complete"),
-        ("fu", "complete", "complete"),
+        ("fu", "full", "complete"),
+        ("ful", "full", "complete"),
         ("conf", "configuration", "configuration"),
         ("configuration", "configuration", "configuration"),
         ("fi", "financial", "financial"),

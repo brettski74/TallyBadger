@@ -101,6 +101,10 @@ def resolve_export_scope(user_input: str) -> tuple[str, str]:
             labels.append("financial")
         raise TbsaveError(f"ambiguous export scope {user_input!r}; matches {labels}")
     canonical = next(iter(matches))
+    if canonical == "complete" and "full".startswith(lowered) and not "complete".startswith(
+        lowered
+    ):
+        return ("full", canonical)
     return (canonical, canonical)
 
 
