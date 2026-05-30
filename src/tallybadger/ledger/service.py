@@ -22,6 +22,7 @@ from tallybadger.ledger.balance_sheet_report import (
     natural_balance_sheet_total_for_account_type,
 )
 from tallybadger.ledger.schedule import DateIncrement, generate_schedule, roll_forward_weekend, safe_day
+from tallybadger.ledger.journal_settlement_preview import build_journal_entry_settlement_preview
 from tallybadger.ledger.models import (
     AccountCreate,
     AccountOut,
@@ -65,6 +66,7 @@ from tallybadger.ledger.models import (
     JournalEntryOut,
     JournalEntryListItem,
     JournalEntryReviewMessageOut,
+    JournalEntrySettlementPreviewOut,
     JournalEntryWrite,
     JournalLineIn,
     JournalLineOut,
@@ -2856,6 +2858,52 @@ class LedgerService:
                     return self.get_entry(entry_id, conn=conn)
         except errors.ForeignKeyViolation as exc:
             raise LedgerValidationError("journal line references unknown account") from exc
+
+    def preview_journal_entry_settlement(
+        self,
+        payload: JournalEntryWrite,
+    ) -> JournalEntrySettlementPreviewOut | None:
+        """Read-only settlement offer for a draft journal entry (#221)."""
+        self._validate_summary(payload.summary)
+        self._validate_lines(payload.lines)
+
+        party_ids = sorted({line.party_id for line in payload.lines if line.party_id is not None})
+        if len(party_ids) != 1:
+            return None
+        party_id = party_ids[0]
+
+        accounts = self.list_accounts()
+        accounts_by_id = {account.id: account for account in accounts}
+        settings = self.get_ledger_settings()
+
+        with self._connection_factory() as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute("SELECT name FROM parties WHERE id = %s", (party_id,))
+                party_row = cur.fetchone()
+                if party_row is None:
+                    return None
+                party_name = str(party_row["name"])
+
+        def list_obligations(
+            pid: int,
+            target_account_id: int,
+            obligation_type: Literal["receivable", "payable"],
+        ) -> list[AccrualObligationOut]:
+            return self.list_obligations_for_import_settlement(
+                party_id=pid,
+                target_account_id=target_account_id,
+                obligation_type=obligation_type,
+            )
+
+        return build_journal_entry_settlement_preview(
+            payload,
+            party_id=party_id,
+            party_name=party_name,
+            accounts_by_id=accounts_by_id,
+            accounts_receivable_account_id=settings.accounts_receivable_account_id,
+            accounts_payable_account_id=settings.accounts_payable_account_id,
+            list_obligations=list_obligations,
+        )
 
     def create_entries_batch(self, payloads: list[JournalEntryWrite]) -> list[JournalEntryOut]:
         if not payloads:

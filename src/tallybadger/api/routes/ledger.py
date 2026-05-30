@@ -33,6 +33,7 @@ from tallybadger.ledger.models import (
     JournalEntryAttachmentOut,
     JournalEntryListItem,
     JournalEntryOut,
+    JournalEntrySettlementPreviewOut,
     JournalEntryWrite,
     SettlementOut,
     SettlementWrite,
@@ -399,6 +400,20 @@ def list_journal_entries(
         )
     except DateRangeMathError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except LedgerValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post(
+    "/journal-entries/settlement-preview",
+    response_model=JournalEntrySettlementPreviewOut | None,
+)
+def preview_journal_entry_settlement(
+    payload: JournalEntryWrite,
+    service: LedgerService = Depends(get_ledger_service),
+) -> JournalEntrySettlementPreviewOut | None:
+    try:
+        return service.preview_journal_entry_settlement(payload)
     except LedgerValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 

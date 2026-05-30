@@ -43,6 +43,7 @@ from tallybadger.ledger.service import (
     LedgerService,
     LedgerValidationError,
 )
+from tallybadger.ledger.settlement_utils import fifo_allocate as _fifo_allocate
 
 router = APIRouter(prefix="", tags=["import-csv"])
 
@@ -479,24 +480,6 @@ def _check_auto_settlement_preconditions(
         pl_account_id=account_ids[pl_name],
         cash_account_id=account_ids[cash_name],
     )
-
-
-def _fifo_allocate(
-    obligations: list[AccrualObligationOut],
-    total: Decimal,
-) -> tuple[list[tuple[int, Decimal]], Decimal]:
-    remaining = total
-    allocations: list[tuple[int, Decimal]] = []
-    for obligation in obligations:
-        if remaining <= Decimal("0"):
-            break
-        open_amt = obligation.open_amount
-        if open_amt <= Decimal("0"):
-            continue
-        alloc = min(open_amt, remaining)
-        allocations.append((obligation.id, alloc))
-        remaining -= alloc
-    return allocations, remaining
 
 
 def _format_line_amount(amount: Decimal) -> str:

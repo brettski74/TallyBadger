@@ -723,6 +723,23 @@ class SettlementOut(BaseModel):
     unapplied_amount: Decimal
 
 
+class SettlementPreviewAllocationOut(BaseModel):
+    obligation_id: int
+    accrual_date: date | None
+    open_amount: Decimal
+    applied_amount: Decimal
+    settlement_type: SettlementType
+
+
+class JournalEntrySettlementPreviewOut(BaseModel):
+    party_id: int
+    party_name: str
+    lines: list[JournalLineIn]
+    allocations: list[SettlementPreviewAllocationOut]
+    receipt_cash_amount: Decimal | None = None
+    payment_cash_amount: Decimal | None = None
+
+
 class ObligationStatusUpdate(BaseModel):
     status: ObligationStatus
     force_override: bool = False
