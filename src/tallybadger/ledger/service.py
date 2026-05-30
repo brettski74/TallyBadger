@@ -1593,14 +1593,17 @@ class LedgerService:
         )
 
     def validate_import_entry_settlements(self, payload: JournalEntryWrite) -> None:
-        """Validate ``line[]`` obligation settlement metadata before batch posting (#151)."""
-        settlement_lines = self._import_settlement_lines(payload)
-        if not settlement_lines:
+        """Validate journal lines with ``obligation_id`` before batch posting (#151)."""
+        self.validate_journal_entry_settlements(payload)
+
+    def validate_journal_entry_settlements(self, payload: JournalEntryWrite) -> None:
+        """Validate journal lines with ``obligation_id`` (import or manual create)."""
+        if not self._settlement_lines_from_payload(payload):
             return
         with self._connection_factory() as conn:
             with conn.cursor(row_factory=dict_row) as cur:
                 settings = self._fetch_settings_row(cur)
-                self._validate_import_entry_settlement_lines(cur, payload, settings)
+                self._validate_journal_entry_settlement_lines(cur, payload, settings)
 
     def list_entries(
         self,
@@ -2843,7 +2846,13 @@ class LedgerService:
             with self._connection_factory() as conn:
                 with conn.transaction():
                     with conn.cursor(row_factory=dict_row) as cur:
-                        entry_id = self._insert_journal_entry_as_new(cur, payload, import_batch_id=None)
+                        settings = self._fetch_settings_row(cur)
+                        entry_id = self._insert_journal_entry_with_line_settlements(
+                            cur,
+                            payload,
+                            import_batch_id=None,
+                            settings=settings,
+                        )
                     return self.get_entry(entry_id, conn=conn)
         except errors.ForeignKeyViolation as exc:
             raise LedgerValidationError("journal line references unknown account") from exc
@@ -2860,8 +2869,14 @@ class LedgerService:
             with self._connection_factory() as conn:
                 with conn.transaction():
                     with conn.cursor(row_factory=dict_row) as cur:
+                        settings = self._fetch_settings_row(cur)
                         for payload in payloads:
-                            entry_id = self._insert_journal_entry_as_new(cur, payload, import_batch_id=None)
+                            entry_id = self._insert_journal_entry_with_line_settlements(
+                                cur,
+                                payload,
+                                import_batch_id=None,
+                                settings=settings,
+                            )
                             created_ids.append(entry_id)
                     return [self.get_entry(entry_id, conn=conn) for entry_id in created_ids]
         except errors.ForeignKeyViolation as exc:
@@ -3788,7 +3803,7 @@ class LedgerService:
                 raise LedgerValidationError("all obligations must belong to the selected party")
             if row["status"] in {"settled", "reconciled"}:
                 raise LedgerValidationError(
-                    LedgerService._already_settled_obligation_message(row),
+                    LedgerService._already_settled_obligation_message(cur, row),
                 )
             if row["source_entry_id"] is None:
                 row["source_entry_date"] = None
@@ -3806,9 +3821,26 @@ class LedgerService:
         return ordered
 
     @staticmethod
-    def _already_settled_obligation_message(row: dict) -> str:
+    def _account_name_label(cur, account_id: int) -> str:
+        cur.execute("SELECT name FROM accounts WHERE id = %s", (account_id,))
+        row = cur.fetchone()
+        if row:
+            return f"account '{row['name']}' (id {account_id})"
+        return f"account id {account_id}"
+
+    @staticmethod
+    def _party_name_label(cur, party_id: int) -> str:
+        cur.execute("SELECT name FROM parties WHERE id = %s", (party_id,))
+        row = cur.fetchone()
+        if row:
+            return f"party '{row['name']}' (id {party_id})"
+        return f"party id {party_id}"
+
+    @staticmethod
+    def _already_settled_obligation_message(cur, row: dict) -> str:
+        party_label = LedgerService._party_name_label(cur, int(row["party_id"]))
         return (
-            f"cannot settle obligation {row['id']}: already {row['status']} "
+            f"cannot settle obligation {row['id']} for {party_label}: already {row['status']} "
             "(settled/reconciled obligations cannot be settled again)"
         )
 
@@ -3959,19 +3991,19 @@ class LedgerService:
                 raise LedgerValidationError("allocation amount cannot exceed obligation open amount")
 
     @staticmethod
-    def _import_settlement_lines(payload: JournalEntryWrite) -> list[JournalLineIn]:
+    def _settlement_lines_from_payload(payload: JournalEntryWrite) -> list[JournalLineIn]:
         return [line for line in payload.lines if line.obligation_id is not None]
 
     @staticmethod
-    def _import_allocation_by_id(payload: JournalEntryWrite) -> dict[int, Decimal]:
+    def _allocation_by_id_from_settlement_lines(payload: JournalEntryWrite) -> dict[int, Decimal]:
         allocation_by_id: dict[int, Decimal] = {}
-        for line in LedgerService._import_settlement_lines(payload):
+        for line in LedgerService._settlement_lines_from_payload(payload):
             assert line.obligation_id is not None
             alloc = abs(line.amount)
             if alloc <= Decimal("0"):
                 raise LedgerValidationError("obligation settlement amount must be non-zero")
             if line.obligation_id in allocation_by_id:
-                raise LedgerValidationError("duplicate obligation-id on import entry lines")
+                raise LedgerValidationError("duplicate obligation-id on journal entry lines")
             allocation_by_id[line.obligation_id] = alloc
         return allocation_by_id
 
@@ -3988,14 +4020,15 @@ class LedgerService:
             (obligation_ids,),
         )
         rows = cur.fetchall()
-        if len(rows) != len(obligation_ids):
-            raise LedgerValidationError("one or more obligations do not exist")
         by_id = {row["id"]: row for row in rows}
+        if len(by_id) != len(obligation_ids):
+            missing = next(oid for oid in obligation_ids if oid not in by_id)
+            raise LedgerValidationError(f"obligation id {missing} does not exist")
         ordered = [by_id[oid] for oid in obligation_ids]
         for row in ordered:
             if row["status"] in {"settled", "reconciled"}:
                 raise LedgerValidationError(
-                    self._already_settled_obligation_message(row),
+                    LedgerService._already_settled_obligation_message(cur, row),
                 )
             if row["source_entry_id"] is None:
                 row["source_entry_date"] = None
@@ -4012,21 +4045,27 @@ class LedgerService:
             )
         return ordered
 
-    def _validate_import_entry_settlement_lines(
+    def _validate_journal_entry_settlement_lines(
         self,
         cur,
         payload: JournalEntryWrite,
         settings: dict,
     ) -> None:
-        allocation_by_id = self._import_allocation_by_id(payload)
+        allocation_by_id = self._allocation_by_id_from_settlement_lines(payload)
         obligations = self._load_obligations_by_ids_for_settlement(cur, list(allocation_by_id.keys()))
         settlement_type = self._settlement_type_from_obligations(obligations)
         self._validate_obligation_types_for_settlement(settlement_type, obligations)
         open_by_id = {row["id"]: Decimal(row["open_amount"]) for row in obligations}
         for oid, alloc in allocation_by_id.items():
             if alloc > open_by_id[oid]:
-                raise LedgerValidationError("allocation amount cannot exceed obligation open amount")
-        self._validate_import_settlement_line_accounts(
+                ob_row = next(r for r in obligations if r["id"] == oid)
+                ob_party = self._party_name_label(cur, int(ob_row["party_id"]))
+                raise LedgerValidationError(
+                    f"allocation {alloc} for obligation {oid} ({ob_party}) "
+                    f"exceeds open amount {open_by_id[oid]}"
+                )
+        self._validate_settlement_line_accounts(
+            cur,
             payload,
             obligations,
             allocation_by_id,
@@ -4043,7 +4082,8 @@ class LedgerService:
                 raise LedgerValidationError("configure unearned revenue account for early receipts")
 
     @staticmethod
-    def _validate_import_settlement_line_accounts(
+    def _validate_settlement_line_accounts(
+        cur,
         payload: JournalEntryWrite,
         obligations: list[dict],
         allocation_by_id: dict[int, Decimal],
@@ -4055,53 +4095,73 @@ class LedgerService:
             bridge_id = settings.get("accounts_receivable_account_id")
             if bridge_id is None:
                 raise LedgerValidationError("configure accounts receivable account in ledger settings first")
-            for line in LedgerService._import_settlement_lines(payload):
+            bridge_label = LedgerService._account_name_label(cur, int(bridge_id))
+            for line in LedgerService._settlement_lines_from_payload(payload):
                 assert line.obligation_id is not None
                 ob = ob_by_id[line.obligation_id]
+                ob_party = LedgerService._party_name_label(cur, int(ob["party_id"]))
                 if line.account_id != int(bridge_id):
+                    line_account = LedgerService._account_name_label(cur, line.account_id)
                     raise LedgerValidationError(
-                        "receipt settlement lines with obligation-id must use the accounts receivable account"
+                        f"receipt settlement for obligation {line.obligation_id} ({ob_party}) "
+                        f"must use {bridge_label}, not {line_account}"
                     )
                 if line.amount >= Decimal("0"):
                     raise LedgerValidationError(
-                        "receipt obligation settlement amount must be negative on accounts receivable"
+                        f"receipt settlement for obligation {line.obligation_id} ({ob_party}) "
+                        f"on {bridge_label} must be negative, got {line.amount}"
                     )
                 if line.party_id is not None and line.party_id != int(ob["party_id"]):
-                    raise LedgerValidationError("obligation line party does not match obligation party")
+                    line_party = LedgerService._party_name_label(cur, line.party_id)
+                    raise LedgerValidationError(
+                        f"obligation {line.obligation_id} line party {line_party} "
+                        f"does not match obligation party {ob_party}"
+                    )
                 if abs(line.amount) != allocation_by_id[line.obligation_id]:
                     raise LedgerValidationError(
-                        "obligation line amount magnitude must equal applied settlement amount"
+                        f"obligation {line.obligation_id} ({ob_party}) line amount {abs(line.amount)} "
+                        f"must equal settlement amount {allocation_by_id[line.obligation_id]}"
                     )
         else:
             bridge_id = settings.get("accounts_payable_account_id")
             if bridge_id is None:
                 raise LedgerValidationError("configure accounts payable account in ledger settings first")
-            for line in LedgerService._import_settlement_lines(payload):
+            bridge_label = LedgerService._account_name_label(cur, int(bridge_id))
+            for line in LedgerService._settlement_lines_from_payload(payload):
                 assert line.obligation_id is not None
                 ob = ob_by_id[line.obligation_id]
+                ob_party = LedgerService._party_name_label(cur, int(ob["party_id"]))
                 if line.account_id != int(bridge_id):
+                    line_account = LedgerService._account_name_label(cur, line.account_id)
                     raise LedgerValidationError(
-                        "payment settlement lines with obligation-id must use the accounts payable account"
+                        f"payment settlement for obligation {line.obligation_id} ({ob_party}) "
+                        f"must use {bridge_label}, not {line_account}"
                     )
                 if line.amount <= Decimal("0"):
                     raise LedgerValidationError(
-                        "payment obligation settlement amount must be positive on accounts payable"
+                        f"payment settlement for obligation {line.obligation_id} ({ob_party}) "
+                        f"on {bridge_label} must be positive, got {line.amount}"
                     )
                 if line.party_id is not None and line.party_id != int(ob["party_id"]):
-                    raise LedgerValidationError("obligation line party does not match obligation party")
+                    line_party = LedgerService._party_name_label(cur, line.party_id)
+                    raise LedgerValidationError(
+                        f"obligation {line.obligation_id} line party {line_party} "
+                        f"does not match obligation party {ob_party}"
+                    )
                 if abs(line.amount) != allocation_by_id[line.obligation_id]:
                     raise LedgerValidationError(
-                        "obligation line amount magnitude must equal applied settlement amount"
+                        f"obligation {line.obligation_id} ({ob_party}) line amount {abs(line.amount)} "
+                        f"must equal settlement amount {allocation_by_id[line.obligation_id]}"
                     )
 
     @staticmethod
-    def _import_eligible_for_same_day_collapse(
+    def _eligible_for_same_day_receipt_collapse(
         payload: JournalEntryWrite,
         obligations: list[dict],
         allocation_by_id: dict[int, Decimal],
         settings: dict,
     ) -> bool:
-        settlement_lines = LedgerService._import_settlement_lines(payload)
+        settlement_lines = LedgerService._settlement_lines_from_payload(payload)
         if len(settlement_lines) != 1:
             return False
         if len(payload.lines) != 2:
@@ -4142,27 +4202,34 @@ class LedgerService:
             return False
         return True
 
-    def _insert_import_batch_entry(
+    def _insert_journal_entry_with_line_settlements(
         self,
         cur,
         payload: JournalEntryWrite,
         *,
-        batch_id: int,
+        import_batch_id: int | None,
         settings: dict,
     ) -> int:
-        settlement_lines = self._import_settlement_lines(payload)
+        """Insert a journal entry, applying obligation settlements from ``obligation_id`` lines (#151 / #220)."""
+        settlement_lines = self._settlement_lines_from_payload(payload)
         if not settlement_lines:
-            return self._insert_journal_entry_as_new(cur, payload, import_batch_id=batch_id)
+            return self._insert_journal_entry_as_new(cur, payload, import_batch_id=import_batch_id)
 
-        allocation_by_id = self._import_allocation_by_id(payload)
+        allocation_by_id = self._allocation_by_id_from_settlement_lines(payload)
         obligations = self._load_obligations_by_ids_for_settlement(cur, list(allocation_by_id.keys()))
         settlement_type = self._settlement_type_from_obligations(obligations)
         self._validate_obligation_types_for_settlement(settlement_type, obligations)
         open_by_id = {row["id"]: Decimal(row["open_amount"]) for row in obligations}
         for oid, alloc in allocation_by_id.items():
             if alloc > open_by_id[oid]:
-                raise LedgerValidationError("allocation amount cannot exceed obligation open amount")
-        self._validate_import_settlement_line_accounts(
+                ob_row = next(r for r in obligations if r["id"] == oid)
+                ob_party = self._party_name_label(cur, int(ob_row["party_id"]))
+                raise LedgerValidationError(
+                    f"allocation {alloc} for obligation {oid} ({ob_party}) "
+                    f"exceeds open amount {open_by_id[oid]}"
+                )
+        self._validate_settlement_line_accounts(
+            cur,
             payload,
             obligations,
             allocation_by_id,
@@ -4170,7 +4237,7 @@ class LedgerService:
             settings,
         )
 
-        collapse_same_day = self._import_eligible_for_same_day_collapse(
+        collapse_same_day = self._eligible_for_same_day_receipt_collapse(
             payload,
             obligations,
             allocation_by_id,
@@ -4192,16 +4259,19 @@ class LedgerService:
                 int(ar_id),
             )
             entry_id = int(obligation["source_entry_id"])
-            cur.execute(
-                """
-                UPDATE journal_entries
-                SET import_batch_id = %s, updated_at = NOW()
-                WHERE id = %s
-                """,
-                (batch_id, entry_id),
-            )
+            if import_batch_id is not None:
+                cur.execute(
+                    """
+                    UPDATE journal_entries
+                    SET import_batch_id = %s, updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (import_batch_id, entry_id),
+                )
         else:
-            entry_id = self._insert_journal_entry_as_new(cur, payload, import_batch_id=batch_id)
+            entry_id = self._insert_journal_entry_as_new(
+                cur, payload, import_batch_id=import_batch_id
+            )
             if settlement_type == "receipt":
                 _, early_allocated = self._split_receipt_allocations(
                     payload.entry_date,
@@ -4228,6 +4298,21 @@ class LedgerService:
         )
         self._assert_entry_balanced(cur, entry_id)
         return entry_id
+
+    def _insert_import_batch_entry(
+        self,
+        cur,
+        payload: JournalEntryWrite,
+        *,
+        batch_id: int,
+        settings: dict,
+    ) -> int:
+        return self._insert_journal_entry_with_line_settlements(
+            cur,
+            payload,
+            import_batch_id=batch_id,
+            settings=settings,
+        )
 
     @staticmethod
     def _insert_settlement_allocations_and_update_obligations(

@@ -69,6 +69,11 @@ def test_create_entry_runs_inside_transaction() -> None:
     service, conn, cur = _build_service_with_mocks()
     cur.fetchall.return_value = [{"id": 1}, {"id": 2}]
     cur.fetchone.side_effect = [
+        {
+            "accounts_receivable_account_id": None,
+            "accounts_payable_account_id": None,
+            "unearned_revenue_account_id": None,
+        },
         {"id": 42},
         {"is_active": True},
         {"is_active": True},
