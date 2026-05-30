@@ -170,6 +170,104 @@ def _manual_settlement_payload(
     }
 
 
+def _setup_rent_accrual_with_unearned(api_client: TestClient) -> tuple[int, int, int, int, int, int]:
+    for payload in (
+        {"name": "Cash", "type": "asset", "is_active": True},
+        {"name": "Rent Revenue", "type": "revenue", "is_active": True},
+        {"name": "Accounts Receivable", "type": "asset", "is_active": True},
+        {"name": "Unearned Revenue", "type": "liability", "is_active": True},
+    ):
+        assert api_client.post("/accounts", json=payload).status_code == 201
+
+    accounts = api_client.get("/accounts").json()
+    by_name = {a["name"]: a["id"] for a in accounts}
+    cash_id = by_name["Cash"]
+    ar_id = by_name["Accounts Receivable"]
+    rent_id = by_name["Rent Revenue"]
+    ur_id = by_name["Unearned Revenue"]
+
+    pr = api_client.post(
+        "/parties",
+        json={"name": "Early Payer", "role": "customer", "is_active": True},
+    )
+    assert pr.status_code == 201, pr.text
+    party_id = pr.json()["id"]
+
+    assert (
+        api_client.patch(
+            "/ledger-settings",
+            json={
+                "accounts_receivable_account_id": ar_id,
+                "unearned_revenue_account_id": ur_id,
+            },
+        ).status_code
+        == 200
+    )
+
+    plan = api_client.post(
+        "/accrual-plans",
+        json={
+            "name": "July rent",
+            "direction": "revenue",
+            "party_id": party_id,
+            "target_account_id": rent_id,
+            "bridge_account_id": ar_id,
+            "frequency": "monthly_day",
+            "start_date": "2026-07-01",
+            "end_date": "2026-07-31",
+            "amount": "1500.00",
+            "summary_template": "{plan}",
+            "day_of_month": 1,
+        },
+    )
+    assert plan.status_code == 201, plan.text
+
+    obligations = api_client.get(f"/obligations/{party_id}").json()
+    assert len(obligations) == 1
+    obligation_id = obligations[0]["id"]
+    accrual_entry_id = obligations[0]["source_entry_id"]
+    return party_id, cash_id, ar_id, ur_id, obligation_id, accrual_entry_id
+
+
+def test_manual_create_early_receipt_uses_unearned_settlement_line(
+    api_client: TestClient,
+    integration_db_url: str,
+) -> None:
+    party_id, cash_id, ar_id, ur_id, obligation_id, accrual_entry_id = _setup_rent_accrual_with_unearned(
+        api_client
+    )
+
+    r = api_client.post(
+        "/journal-entries",
+        json={
+            "entry_date": date(2026, 6, 26).isoformat(),
+            "summary": "Early June rent",
+            "lines": [
+                {"account_id": cash_id, "party_id": party_id, "amount": "1500.00"},
+                {
+                    "account_id": ur_id,
+                    "party_id": party_id,
+                    "amount": "-1500.00",
+                    "obligation_id": obligation_id,
+                },
+            ],
+        },
+    )
+    assert r.status_code == 201, r.text
+    receipt_entry_id = r.json()["id"]
+    assert receipt_entry_id != accrual_entry_id
+
+    receipt = api_client.get(f"/journal-entries/{receipt_entry_id}").json()
+    bridge_lines = [line for line in receipt["lines"] if line["account_id"] == ur_id]
+    assert len(bridge_lines) == 1
+    assert Decimal(bridge_lines[0]["amount"]) == Decimal("-1500.00")
+
+    accrual = api_client.get(f"/journal-entries/{accrual_entry_id}").json()
+    accrual_account_ids = {line["account_id"] for line in accrual["lines"]}
+    assert ar_id not in accrual_account_ids
+    assert ur_id in accrual_account_ids
+
+
 def test_manual_create_settlement_single_obligation(
     api_client: TestClient,
     integration_db_url: str,

@@ -23,6 +23,7 @@ from tallybadger.ledger.balance_sheet_report import (
 )
 from tallybadger.ledger.schedule import DateIncrement, generate_schedule, roll_forward_weekend, safe_day
 from tallybadger.ledger.journal_settlement_preview import build_journal_entry_settlement_preview
+from tallybadger.ledger.settlement_utils import receipt_bridge_account_id
 from tallybadger.ledger.models import (
     AccountCreate,
     AccountOut,
@@ -2902,6 +2903,7 @@ class LedgerService:
             accounts_by_id=accounts_by_id,
             accounts_receivable_account_id=settings.accounts_receivable_account_id,
             accounts_payable_account_id=settings.accounts_payable_account_id,
+            unearned_revenue_account_id=settings.unearned_revenue_account_id,
             list_obligations=list_obligations,
         )
 
@@ -4140,14 +4142,23 @@ class LedgerService:
     ) -> None:
         ob_by_id = {int(row["id"]): row for row in obligations}
         if settlement_type == "receipt":
-            bridge_id = settings.get("accounts_receivable_account_id")
-            if bridge_id is None:
+            ar_id = settings.get("accounts_receivable_account_id")
+            ur_id = settings.get("unearned_revenue_account_id")
+            if ar_id is None:
                 raise LedgerValidationError("configure accounts receivable account in ledger settings first")
-            bridge_label = LedgerService._account_name_label(cur, int(bridge_id))
             for line in LedgerService._settlement_lines_from_payload(payload):
                 assert line.obligation_id is not None
                 ob = ob_by_id[line.obligation_id]
                 ob_party = LedgerService._party_name_label(cur, int(ob["party_id"]))
+                bridge_id = receipt_bridge_account_id(
+                    payload.entry_date,
+                    ob.get("source_entry_date"),
+                    accounts_receivable_account_id=ar_id,
+                    unearned_revenue_account_id=ur_id,
+                )
+                if bridge_id is None:
+                    raise LedgerValidationError("configure unearned revenue account for early receipts")
+                bridge_label = LedgerService._account_name_label(cur, int(bridge_id))
                 if line.account_id != int(bridge_id):
                     line_account = LedgerService._account_name_label(cur, line.account_id)
                     raise LedgerValidationError(
