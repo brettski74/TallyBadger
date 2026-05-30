@@ -48,6 +48,24 @@ export interface JournalLineIn {
   account_id: number;
   party_id?: number | null;
   amount: string;
+  obligation_id?: number | null;
+}
+
+export interface SettlementPreviewAllocationOut {
+  obligation_id: number;
+  accrual_date: string | null;
+  open_amount: string;
+  applied_amount: string;
+  settlement_type: "receipt" | "payment";
+}
+
+export interface JournalEntrySettlementPreviewOut {
+  party_id: number;
+  party_name: string;
+  lines: JournalLineIn[];
+  allocations: SettlementPreviewAllocationOut[];
+  receipt_cash_amount: string | null;
+  payment_cash_amount: string | null;
 }
 
 export interface JournalEntryWrite {
@@ -138,6 +156,24 @@ export async function getJournalEntry(entryId: number): Promise<JournalEntryOut>
     throw new Error(await readApiErrorMessage(response));
   }
   return response.json();
+}
+
+export async function previewJournalEntrySettlement(
+  payload: JournalEntryWrite,
+): Promise<JournalEntrySettlementPreviewOut | null> {
+  const response = await fetch(`${getApiBase()}/journal-entries/settlement-preview`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error(await readApiErrorMessage(response));
+  }
+  const data: unknown = await response.json();
+  if (data == null) {
+    return null;
+  }
+  return data as JournalEntrySettlementPreviewOut;
 }
 
 export async function createJournalEntry(payload: JournalEntryWrite): Promise<JournalEntryOut> {

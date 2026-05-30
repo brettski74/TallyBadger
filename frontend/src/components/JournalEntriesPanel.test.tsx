@@ -1036,4 +1036,276 @@ describe("JournalEntriesPanel", () => {
       expect(body.definition.needs_review).toBe(true);
     });
   });
+
+  describe("create settlement confirmation (#222)", () => {
+    const arAccount: Account = {
+      id: 3,
+      name: "Accounts Receivable",
+      type: "asset",
+      is_active: true,
+      created_at: "2026-04-01T00:00:00Z",
+      updated_at: "2026-04-01T00:00:00Z",
+    };
+    const panelAccounts = [...accounts, arAccount];
+
+    const createdEntry = {
+      id: 99,
+      entry_date: "2026-04-20",
+      summary: "Rent receipt",
+      description: null,
+      requires_review: false,
+      cheque_id: null,
+      created_at: "2026-04-01T00:00:00Z",
+      updated_at: "2026-04-01T00:00:00Z",
+      lines: [],
+      review_messages: [],
+    };
+
+    const previewOffer = {
+      party_id: 1,
+      party_name: "Acme Yard Maintenance",
+      lines: [
+        { account_id: 1, party_id: 1, amount: "100.00" },
+        { account_id: 3, party_id: 1, amount: "-100.00", obligation_id: 55 },
+        { account_id: 2, party_id: 1, amount: "-100.00" },
+      ],
+      allocations: [
+        {
+          obligation_id: 55,
+          accrual_date: "2026-01-01",
+          open_amount: "100.00",
+          applied_amount: "100.00",
+          settlement_type: "receipt",
+        },
+      ],
+      receipt_cash_amount: "100.00",
+      payment_cash_amount: null,
+    };
+
+    function defaultListFetch(url: string): Response | undefined {
+      if (url.includes("/cheques")) {
+        return new Response(JSON.stringify({ cheques: [] }), { status: 200 });
+      }
+      if (url.includes("/accrual-plans")) {
+        return new Response(JSON.stringify({ plans: [] }), { status: 200 });
+      }
+      if (url.includes("/journal-entry-filter-presets")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      if (url.includes("/journal-entries") && !url.includes("settlement-preview")) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      const dateRange = maybeDateRangeResolveResponse(url);
+      if (dateRange) {
+        return dateRange;
+      }
+      return undefined;
+    }
+
+    async function openNewEntryForm(user: ReturnType<typeof userEvent.setup>) {
+      await user.click(await screen.findByLabelText(/Add Journal Entry/));
+      await screen.findByRole("heading", { name: "New journal entry" });
+    }
+
+    async function fillAndPostBalancedEntry(user: ReturnType<typeof userEvent.setup>) {
+      await user.type(screen.getByLabelText("Entry summary"), "Rent receipt");
+      const accountSelects = screen
+        .getAllByRole("combobox")
+        .filter((el) => String(el.getAttribute("aria-label")).startsWith("Account for line"));
+      await user.selectOptions(accountSelects[0]!, "1");
+      await user.selectOptions(accountSelects[1]!, "2");
+      const partySelects = screen
+        .getAllByRole("combobox")
+        .filter((el) => String(el.getAttribute("aria-label")).startsWith("Party for line"));
+      await user.selectOptions(partySelects[0]!, "1");
+      const amountInputs = screen.getAllByPlaceholderText("100.00 or -100.00");
+      await user.clear(amountInputs[0]!);
+      await user.type(amountInputs[0]!, "100.00");
+      await user.clear(amountInputs[1]!);
+      await user.type(amountInputs[1]!, "-100.00");
+      await user.click(screen.getByRole("button", { name: /Post entry/ }));
+    }
+
+    it("posts immediately when settlement preview returns no offer", async () => {
+      const fetchMock = vi.spyOn(global, "fetch").mockImplementation(async (input, init) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (url.includes("/journal-entries/settlement-preview") && method === "POST") {
+          return new Response("null", { status: 200 });
+        }
+        if (url.includes("/journal-entries") && method === "POST") {
+          return new Response(JSON.stringify(createdEntry), { status: 201 });
+        }
+        const fallback = defaultListFetch(url);
+        if (fallback) {
+          return fallback;
+        }
+        return new Response("not mocked", { status: 500 });
+      });
+
+      render(
+        <JournalEntriesPanel
+          accounts={panelAccounts}
+          parties={parties}
+          accountsLoading={false}
+          accountsError={null}
+        />,
+      );
+
+      const user = userEvent.setup();
+      await openNewEntryForm(user);
+      await fillAndPostBalancedEntry(user);
+
+      await waitFor(() => {
+        expect(screen.queryByRole("heading", { name: "New journal entry" })).not.toBeInTheDocument();
+      });
+      expect(screen.queryByRole("dialog", { name: "Confirm obligation settlement" })).toBeNull();
+
+      const previewCalls = fetchMock.mock.calls.filter(([u, i]) => {
+        return String(u).includes("settlement-preview") && (i?.method ?? "GET") === "POST";
+      });
+      expect(previewCalls).toHaveLength(1);
+      const createCalls = fetchMock.mock.calls.filter(([u, i]) => {
+        const s = String(u);
+        return s.includes("/journal-entries") && !s.includes("settlement-preview") && (i?.method ?? "GET") === "POST";
+      });
+      expect(createCalls).toHaveLength(1);
+      const body = JSON.parse(String(createCalls[0]![1]!.body));
+      expect(body.lines.every((l: { obligation_id?: number }) => l.obligation_id == null)).toBe(true);
+    });
+
+    it("shows confirmation dialog on offer and posts proposed lines on accept", async () => {
+      const fetchMock = vi.spyOn(global, "fetch").mockImplementation(async (input, init) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (url.includes("/journal-entries/settlement-preview") && method === "POST") {
+          return new Response(JSON.stringify(previewOffer), { status: 200 });
+        }
+        if (url.includes("/journal-entries") && method === "POST") {
+          return new Response(JSON.stringify(createdEntry), { status: 201 });
+        }
+        const fallback = defaultListFetch(url);
+        if (fallback) {
+          return fallback;
+        }
+        return new Response("not mocked", { status: 500 });
+      });
+
+      render(
+        <JournalEntriesPanel
+          accounts={panelAccounts}
+          parties={parties}
+          accountsLoading={false}
+          accountsError={null}
+        />,
+      );
+
+      const user = userEvent.setup();
+      await openNewEntryForm(user);
+      await fillAndPostBalancedEntry(user);
+
+      const dialog = await screen.findByRole("dialog", { name: "Confirm obligation settlement" });
+      expect(within(dialog).getByRole("heading", { name: "Settle open obligations?" })).toBeInTheDocument();
+      expect(within(dialog).getByRole("table", { name: "Settlement allocations" })).toBeInTheDocument();
+      expect(within(dialog).getByRole("table", { name: "Proposed journal lines" })).toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: /Accept — post with settlement/ }));
+
+      await waitFor(() => {
+        expect(screen.queryByRole("dialog", { name: "Confirm obligation settlement" })).toBeNull();
+      });
+
+      const createCalls = fetchMock.mock.calls.filter(([u, i]) => {
+        const s = String(u);
+        return s.includes("/journal-entries") && !s.includes("settlement-preview") && (i?.method ?? "GET") === "POST";
+      });
+      expect(createCalls).toHaveLength(1);
+      const body = JSON.parse(String(createCalls[0]![1]!.body));
+      expect(body.lines.some((l: { obligation_id?: number }) => l.obligation_id === 55)).toBe(true);
+    });
+
+    it("posts original draft on decline", async () => {
+      const fetchMock = vi.spyOn(global, "fetch").mockImplementation(async (input, init) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (url.includes("/journal-entries/settlement-preview") && method === "POST") {
+          return new Response(JSON.stringify(previewOffer), { status: 200 });
+        }
+        if (url.includes("/journal-entries") && method === "POST") {
+          return new Response(JSON.stringify(createdEntry), { status: 201 });
+        }
+        const fallback = defaultListFetch(url);
+        if (fallback) {
+          return fallback;
+        }
+        return new Response("not mocked", { status: 500 });
+      });
+
+      render(
+        <JournalEntriesPanel
+          accounts={panelAccounts}
+          parties={parties}
+          accountsLoading={false}
+          accountsError={null}
+        />,
+      );
+
+      const user = userEvent.setup();
+      await openNewEntryForm(user);
+      await fillAndPostBalancedEntry(user);
+
+      await screen.findByRole("dialog", { name: "Confirm obligation settlement" });
+      await user.click(screen.getByRole("button", { name: /Decline — post without settlement/ }));
+
+      await waitFor(() => {
+        expect(screen.queryByRole("dialog", { name: "Confirm obligation settlement" })).toBeNull();
+      });
+
+      const createCalls = fetchMock.mock.calls.filter(([u, i]) => {
+        const s = String(u);
+        return s.includes("/journal-entries") && !s.includes("settlement-preview") && (i?.method ?? "GET") === "POST";
+      });
+      expect(createCalls).toHaveLength(1);
+      const body = JSON.parse(String(createCalls[0]![1]!.body));
+      expect(body.lines).toHaveLength(2);
+      expect(body.lines.every((l: { obligation_id?: number }) => l.obligation_id == null)).toBe(true);
+    });
+
+    it("does not show dialog when preview is empty (e.g. multi-party)", async () => {
+      const fetchMock = vi.spyOn(global, "fetch").mockImplementation(async (input, init) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (url.includes("/journal-entries/settlement-preview") && method === "POST") {
+          return new Response("null", { status: 200 });
+        }
+        if (url.includes("/journal-entries") && method === "POST") {
+          return new Response(JSON.stringify(createdEntry), { status: 201 });
+        }
+        const fallback = defaultListFetch(url);
+        if (fallback) {
+          return fallback;
+        }
+        return new Response("not mocked", { status: 500 });
+      });
+
+      render(
+        <JournalEntriesPanel
+          accounts={panelAccounts}
+          parties={parties}
+          accountsLoading={false}
+          accountsError={null}
+        />,
+      );
+
+      const user = userEvent.setup();
+      await openNewEntryForm(user);
+      await fillAndPostBalancedEntry(user);
+
+      await waitFor(() => {
+        expect(screen.queryByRole("heading", { name: "New journal entry" })).not.toBeInTheDocument();
+      });
+      expect(screen.queryByRole("dialog", { name: "Confirm obligation settlement" })).toBeNull();
+      expect(fetchMock.mock.calls.filter(([u]) => String(u).includes("settlement-preview"))).toHaveLength(1);
+    });
+  });
 });
