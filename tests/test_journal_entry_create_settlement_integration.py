@@ -415,3 +415,145 @@ def test_manual_create_rejects_wrong_bridge_account(
     assert "obligation" in detail
     assert "pamela tenant" in detail
     assert "accounts receivable" in detail
+
+
+def _setup_repair_accrual_with_prepaid(api_client: TestClient) -> tuple[int, int, int, int, int, int, int]:
+    for payload in (
+        {"name": "Cash", "type": "asset", "is_active": True},
+        {"name": "Repairs Expense", "type": "expense", "is_active": True},
+        {"name": "Accounts Payable", "type": "liability", "is_active": True},
+        {"name": "Prepaid Expenses", "type": "asset", "is_active": True},
+    ):
+        assert api_client.post("/accounts", json=payload).status_code == 201
+
+    accounts = api_client.get("/accounts").json()
+    by_name = {a["name"]: a["id"] for a in accounts}
+    cash_id = by_name["Cash"]
+    ap_id = by_name["Accounts Payable"]
+    expense_id = by_name["Repairs Expense"]
+    prepaid_id = by_name["Prepaid Expenses"]
+
+    pr = api_client.post(
+        "/parties",
+        json={"name": "Early Vendor", "role": "vendor", "is_active": True},
+    )
+    assert pr.status_code == 201, pr.text
+    party_id = pr.json()["id"]
+
+    assert (
+        api_client.patch(
+            "/ledger-settings",
+            json={
+                "accounts_payable_account_id": ap_id,
+                "prepaid_expenses_account_id": prepaid_id,
+            },
+        ).status_code
+        == 200
+    )
+
+    plan = api_client.post(
+        "/accrual-plans",
+        json={
+            "name": "August repair",
+            "direction": "expense",
+            "party_id": party_id,
+            "target_account_id": expense_id,
+            "bridge_account_id": ap_id,
+            "frequency": "monthly_day",
+            "start_date": "2026-08-01",
+            "end_date": "2026-08-31",
+            "amount": "800.00",
+            "summary_template": "{plan}",
+            "day_of_month": 1,
+        },
+    )
+    assert plan.status_code == 201, plan.text
+
+    obligations = api_client.get(f"/obligations/{party_id}").json()
+    assert len(obligations) == 1
+    obligation_id = obligations[0]["id"]
+    accrual_entry_id = obligations[0]["source_entry_id"]
+    return party_id, cash_id, ap_id, prepaid_id, obligation_id, accrual_entry_id, expense_id
+
+
+def _manual_payment_settlement_payload(
+    *,
+    entry_date: date,
+    cash_id: int,
+    bridge_id: int,
+    party_id: int,
+    obligation_id: int,
+    amount: Decimal,
+    summary: str = "Vendor payment",
+) -> dict:
+    return {
+        "entry_date": entry_date.isoformat(),
+        "summary": summary,
+        "lines": [
+            {"account_id": cash_id, "party_id": party_id, "amount": str(-amount)},
+            {
+                "account_id": bridge_id,
+                "party_id": party_id,
+                "amount": str(amount),
+                "obligation_id": obligation_id,
+            },
+        ],
+    }
+
+
+def test_manual_create_early_payment_uses_prepaid_settlement_line(
+    api_client: TestClient,
+    integration_db_url: str,
+) -> None:
+    party_id, cash_id, ap_id, prepaid_id, obligation_id, accrual_entry_id, _ = (
+        _setup_repair_accrual_with_prepaid(api_client)
+    )
+
+    r = api_client.post(
+        "/journal-entries",
+        json=_manual_payment_settlement_payload(
+            entry_date=date(2026, 7, 26),
+            cash_id=cash_id,
+            bridge_id=prepaid_id,
+            party_id=party_id,
+            obligation_id=obligation_id,
+            amount=Decimal("800.00"),
+        ),
+    )
+    assert r.status_code == 201, r.text
+    payment_entry_id = r.json()["id"]
+    assert payment_entry_id != accrual_entry_id
+
+    payment = api_client.get(f"/journal-entries/{payment_entry_id}").json()
+    bridge_lines = [line for line in payment["lines"] if line["account_id"] == prepaid_id]
+    assert len(bridge_lines) == 1
+    assert Decimal(bridge_lines[0]["amount"]) == Decimal("800.00")
+
+    accrual = api_client.get(f"/journal-entries/{accrual_entry_id}").json()
+    accrual_account_ids = {line["account_id"] for line in accrual["lines"]}
+    assert ap_id not in accrual_account_ids
+    assert prepaid_id in accrual_account_ids
+
+
+def test_manual_same_day_full_payment_collapses_into_accrual(
+    api_client: TestClient,
+    integration_db_url: str,
+) -> None:
+    party_id, cash_id, ap_id, _, obligation_id, accrual_entry_id, _ = _setup_repair_accrual_with_prepaid(
+        api_client
+    )
+
+    r = api_client.post(
+        "/journal-entries",
+        json=_manual_payment_settlement_payload(
+            entry_date=date(2026, 8, 1),
+            cash_id=cash_id,
+            bridge_id=ap_id,
+            party_id=party_id,
+            obligation_id=obligation_id,
+            amount=Decimal("800.00"),
+        ),
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["id"] == accrual_entry_id
+    assert _count_rows(integration_db_url, "journal_entries") == 1

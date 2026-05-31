@@ -23,7 +23,7 @@ from tallybadger.ledger.balance_sheet_report import (
 )
 from tallybadger.ledger.schedule import DateIncrement, generate_schedule, roll_forward_weekend, safe_day
 from tallybadger.ledger.journal_settlement_preview import build_journal_entry_settlement_preview
-from tallybadger.ledger.settlement_utils import receipt_bridge_account_id
+from tallybadger.ledger.settlement_utils import payment_bridge_account_id, receipt_bridge_account_id
 from tallybadger.ledger.models import (
     AccountCreate,
     AccountOut,
@@ -1496,8 +1496,6 @@ class LedgerService:
         allocated_total = sum((item.amount for item in payload.allocations), Decimal("0"))
         if allocated_total > payload.amount:
             raise LedgerValidationError("allocated amount cannot exceed settlement amount")
-        if payload.settlement_type == "payment" and allocated_total != payload.amount:
-            raise LedgerValidationError("payment settlement amount must equal allocated amount")
 
         with self._connection_factory() as conn:
             with conn.transaction():
@@ -1525,18 +1523,28 @@ class LedgerService:
                         )
                         if (early_allocated > 0 or payload.amount > allocated_total) and settings["unearned_revenue_account_id"] is None:
                             raise LedgerValidationError("configure unearned revenue account for early/over receipts")
-
-                    collapse_same_day = (
-                        payload.settlement_type == "receipt"
-                        and self._receipt_allocations_all_same_accrual_day(
-                            obligations, allocation_by_id, payload.event_date
+                    else:
+                        due_allocated, early_allocated = self._split_payment_allocations(
+                            payload.event_date,
+                            obligations,
+                            allocation_by_id,
                         )
+                        if (early_allocated > 0 or payload.amount > allocated_total) and settings["prepaid_expenses_account_id"] is None:
+                            raise LedgerValidationError("configure prepaid expenses account for early/over payments")
+
+                    collapse_same_day = self._allocations_all_same_accrual_day(
+                        obligations, allocation_by_id, payload.event_date
                     )
 
                     touched_entry_ids: set[int] = set()
                     if collapse_same_day:
                         primary_entry_id: int | None = None
-                        ar_id = settings["accounts_receivable_account_id"]
+                        if payload.settlement_type == "receipt":
+                            bridge_id = settings["accounts_receivable_account_id"]
+                            settle_fn = self._same_day_settle_receivable_obligation
+                        else:
+                            bridge_id = settings["accounts_payable_account_id"]
+                            settle_fn = self._same_day_settle_payable_obligation
                         for obligation in obligations:
                             alloc_amt = allocation_by_id[obligation["id"]]
                             if alloc_amt <= Decimal("0"):
@@ -1545,26 +1553,38 @@ class LedgerService:
                             touched_entry_ids.add(accrual_eid)
                             if primary_entry_id is None:
                                 primary_entry_id = accrual_eid
-                            self._same_day_settle_receivable_obligation(
+                            settle_fn(
                                 cur,
                                 obligation,
                                 alloc_amt,
                                 payload.cash_account_id,
-                                ar_id,
+                                bridge_id,
                             )
                         assert primary_entry_id is not None
                         unapplied = payload.amount - allocated_total
                         if unapplied > Decimal("0"):
-                            ur_id = settings["unearned_revenue_account_id"]
-                            self._assert_account_active(cur, ur_id)
-                            self._append_cash_and_unearned_lines(
-                                cur,
-                                primary_entry_id,
-                                payload.party_id,
-                                payload.cash_account_id,
-                                ur_id,
-                                unapplied,
-                            )
+                            if payload.settlement_type == "receipt":
+                                role_id = settings["unearned_revenue_account_id"]
+                                self._assert_account_active(cur, role_id)
+                                self._append_cash_and_unearned_lines(
+                                    cur,
+                                    primary_entry_id,
+                                    payload.party_id,
+                                    payload.cash_account_id,
+                                    role_id,
+                                    unapplied,
+                                )
+                            else:
+                                role_id = settings["prepaid_expenses_account_id"]
+                                self._assert_account_active(cur, role_id)
+                                self._append_cash_and_prepaid_lines(
+                                    cur,
+                                    primary_entry_id,
+                                    payload.party_id,
+                                    payload.cash_account_id,
+                                    role_id,
+                                    unapplied,
+                                )
                         for eid in touched_entry_ids:
                             cur.execute(
                                 "UPDATE journal_entries SET updated_at = NOW() WHERE id = %s",
@@ -1604,7 +1624,7 @@ class LedgerService:
                         obligations,
                         allocation_by_id,
                     )
-                    self._apply_early_receipt_reclassifications(
+                    self._apply_early_settlement_reclassifications(
                         cur,
                         settlement_type=payload.settlement_type,
                         collapse_same_day=collapse_same_day,
@@ -2931,6 +2951,7 @@ class LedgerService:
             accounts_receivable_account_id=settings.accounts_receivable_account_id,
             accounts_payable_account_id=settings.accounts_payable_account_id,
             unearned_revenue_account_id=settings.unearned_revenue_account_id,
+            prepaid_expenses_account_id=settings.prepaid_expenses_account_id,
             list_obligations=list_obligations,
         )
 
@@ -3236,7 +3257,7 @@ class LedgerService:
             )
             return
 
-        collapse = self._receipt_allocations_all_same_accrual_day(obligations, allocation_by_id, event_date)
+        collapse = self._allocations_all_same_accrual_day(obligations, allocation_by_id, event_date)
 
         if collapse:
             unapplied = cash_amount - allocated_total
@@ -4125,10 +4146,10 @@ class LedgerService:
         return f"Settlement {accrual_summary}"
 
     @staticmethod
-    def _receipt_allocations_all_same_accrual_day(
+    def _allocations_all_same_accrual_day(
         obligations, allocation_by_id: dict[int, Decimal], event_date: date
     ) -> bool:
-        """True when every positively allocated receipt obligation is tied to an accrual dated event_date."""
+        """True when every positively allocated obligation is tied to an accrual dated event_date."""
         saw_allocation = False
         for row in obligations:
             if allocation_by_id[row["id"]] <= Decimal("0"):
@@ -4198,6 +4219,62 @@ class LedgerService:
         )
 
     @staticmethod
+    def _same_day_settle_payable_obligation(
+        cur,
+        obligation: dict,
+        allocation_amount: Decimal,
+        cash_account_id: int,
+        ap_account_id: int,
+    ) -> None:
+        """Move allocated amount from A/P to cash on the accrual entry (same calendar day as settlement)."""
+        source_line_id = obligation["source_line_id"]
+        cur.execute(
+            """
+            SELECT entry_id, party_id, account_id, amount
+            FROM journal_lines
+            WHERE id = %s
+            FOR UPDATE
+            """,
+            (source_line_id,),
+        )
+        line = cur.fetchone()
+        if not line:
+            raise LedgerValidationError("obligation source line not found for same-day settlement")
+        if line["account_id"] != ap_account_id:
+            raise LedgerValidationError(
+                "same-day payment settlement expects the obligation bridge on accounts payable"
+            )
+        current = Decimal(line["amount"])
+        sign = Decimal("1") if current >= Decimal("0") else Decimal("-1")
+        allocated_signed = sign * allocation_amount
+        remaining_signed = current - allocated_signed
+        if remaining_signed == Decimal("0"):
+            cur.execute(
+                """
+                UPDATE journal_lines
+                SET account_id = %s
+                WHERE id = %s
+                """,
+                (cash_account_id, source_line_id),
+            )
+            return
+        cur.execute(
+            """
+            UPDATE journal_lines
+            SET amount = %s
+            WHERE id = %s
+            """,
+            (remaining_signed, source_line_id),
+        )
+        cur.execute(
+            """
+            INSERT INTO journal_lines (entry_id, account_id, party_id, amount)
+            VALUES (%s, %s, %s, %s)
+            """,
+            (line["entry_id"], cash_account_id, line["party_id"], allocated_signed),
+        )
+
+    @staticmethod
     def _append_cash_and_unearned_lines(
         cur,
         entry_id: int,
@@ -4222,6 +4299,30 @@ class LedgerService:
         )
 
     @staticmethod
+    def _append_cash_and_prepaid_lines(
+        cur,
+        entry_id: int,
+        party_id: int,
+        cash_account_id: int,
+        prepaid_account_id: int,
+        unapplied: Decimal,
+    ) -> None:
+        cur.execute(
+            """
+            INSERT INTO journal_lines (entry_id, account_id, party_id, amount)
+            VALUES (%s, %s, %s, %s)
+            """,
+            (entry_id, cash_account_id, party_id, -unapplied),
+        )
+        cur.execute(
+            """
+            INSERT INTO journal_lines (entry_id, account_id, party_id, amount)
+            VALUES (%s, %s, %s, %s)
+            """,
+            (entry_id, prepaid_account_id, party_id, unapplied),
+        )
+
+    @staticmethod
     def _validate_obligation_types_for_settlement(settlement_type: str, obligations) -> None:
         expected = "receivable" if settlement_type == "receipt" else "payable"
         for row in obligations:
@@ -4230,6 +4331,19 @@ class LedgerService:
 
     @staticmethod
     def _split_receipt_allocations(event_date: date, obligations, allocation_by_id) -> tuple[Decimal, Decimal]:
+        due = Decimal("0")
+        early = Decimal("0")
+        for row in obligations:
+            amount = allocation_by_id[row["id"]]
+            source_date = row.get("source_entry_date")
+            if source_date is not None and source_date > event_date:
+                early += amount
+            else:
+                due += amount
+        return due, early
+
+    @staticmethod
+    def _split_payment_allocations(event_date: date, obligations, allocation_by_id) -> tuple[Decimal, Decimal]:
         due = Decimal("0")
         early = Decimal("0")
         for row in obligations:
@@ -4338,6 +4452,14 @@ class LedgerService:
             )
             if early_allocated > Decimal("0") and settings["unearned_revenue_account_id"] is None:
                 raise LedgerValidationError("configure unearned revenue account for early receipts")
+        else:
+            _, early_allocated = self._split_payment_allocations(
+                payload.entry_date,
+                obligations,
+                allocation_by_id,
+            )
+            if early_allocated > Decimal("0") and settings["prepaid_expenses_account_id"] is None:
+                raise LedgerValidationError("configure prepaid expenses account for early payments")
 
     @staticmethod
     def _validate_settlement_line_accounts(
@@ -4390,14 +4512,23 @@ class LedgerService:
                         f"must equal settlement amount {allocation_by_id[line.obligation_id]}"
                     )
         else:
-            bridge_id = settings.get("accounts_payable_account_id")
-            if bridge_id is None:
+            ap_id = settings.get("accounts_payable_account_id")
+            prepaid_id = settings.get("prepaid_expenses_account_id")
+            if ap_id is None:
                 raise LedgerValidationError("configure accounts payable account in ledger settings first")
-            bridge_label = LedgerService._account_name_label(cur, int(bridge_id))
             for line in LedgerService._settlement_lines_from_payload(payload):
                 assert line.obligation_id is not None
                 ob = ob_by_id[line.obligation_id]
                 ob_party = LedgerService._party_name_label(cur, int(ob["party_id"]))
+                bridge_id = payment_bridge_account_id(
+                    payload.entry_date,
+                    ob.get("source_entry_date"),
+                    accounts_payable_account_id=ap_id,
+                    prepaid_expenses_account_id=prepaid_id,
+                )
+                if bridge_id is None:
+                    raise LedgerValidationError("configure prepaid expenses account for early payments")
+                bridge_label = LedgerService._account_name_label(cur, int(bridge_id))
                 if line.account_id != int(bridge_id):
                     line_account = LedgerService._account_name_label(cur, line.account_id)
                     raise LedgerValidationError(
@@ -4469,6 +4600,54 @@ class LedgerService:
             return False
         return True
 
+    @staticmethod
+    def _eligible_for_same_day_payment_collapse(
+        payload: JournalEntryWrite,
+        obligations: list[dict],
+        allocation_by_id: dict[int, Decimal],
+        settings: dict,
+    ) -> bool:
+        settlement_lines = LedgerService._settlement_lines_from_payload(payload)
+        if len(settlement_lines) != 1:
+            return False
+        if len(payload.lines) != 2:
+            return False
+        if LedgerService._settlement_type_from_obligations(obligations) != "payment":
+            return False
+        obligation = obligations[0]
+        oid = int(obligation["id"])
+        alloc_amt = allocation_by_id[oid]
+        if alloc_amt != Decimal(obligation["open_amount"]):
+            return False
+        if obligation.get("source_entry_id") is None or obligation.get("source_line_id") is None:
+            return False
+        if obligation.get("source_entry_date") != payload.entry_date:
+            return False
+        ap_id = settings.get("accounts_payable_account_id")
+        if ap_id is None:
+            return False
+        bridge_line = settlement_lines[0]
+        if bridge_line.account_id != int(ap_id):
+            return False
+        if bridge_line.amount <= Decimal("0"):
+            return False
+        party_id = int(obligation["party_id"])
+        cash_lines = [
+            line
+            for line in payload.lines
+            if line.obligation_id is None and line.amount < Decimal("0")
+        ]
+        if len(cash_lines) != 1:
+            return False
+        cash_line = cash_lines[0]
+        if cash_line.amount != -alloc_amt:
+            return False
+        if cash_line.party_id is not None and cash_line.party_id != party_id:
+            return False
+        if bridge_line.party_id is not None and bridge_line.party_id != party_id:
+            return False
+        return True
+
     def _insert_journal_entry_with_line_settlements(
         self,
         cur,
@@ -4510,21 +4689,41 @@ class LedgerService:
             allocation_by_id,
             settings,
         )
+        if not collapse_same_day:
+            collapse_same_day = self._eligible_for_same_day_payment_collapse(
+                payload,
+                obligations,
+                allocation_by_id,
+                settings,
+            )
 
         if collapse_same_day:
             obligation = obligations[0]
             alloc_amt = allocation_by_id[int(obligation["id"])]
-            ar_id = settings["accounts_receivable_account_id"]
-            cash_line = next(
-                line for line in payload.lines if line.obligation_id is None and line.amount > Decimal("0")
-            )
-            self._same_day_settle_receivable_obligation(
-                cur,
-                obligation,
-                alloc_amt,
-                cash_line.account_id,
-                int(ar_id),
-            )
+            if settlement_type == "receipt":
+                bridge_id = settings["accounts_receivable_account_id"]
+                cash_line = next(
+                    line for line in payload.lines if line.obligation_id is None and line.amount > Decimal("0")
+                )
+                self._same_day_settle_receivable_obligation(
+                    cur,
+                    obligation,
+                    alloc_amt,
+                    cash_line.account_id,
+                    int(bridge_id),
+                )
+            else:
+                bridge_id = settings["accounts_payable_account_id"]
+                cash_line = next(
+                    line for line in payload.lines if line.obligation_id is None and line.amount < Decimal("0")
+                )
+                self._same_day_settle_payable_obligation(
+                    cur,
+                    obligation,
+                    alloc_amt,
+                    cash_line.account_id,
+                    int(bridge_id),
+                )
             entry_id = int(obligation["source_entry_id"])
             if import_batch_id is not None:
                 cur.execute(
@@ -4547,6 +4746,14 @@ class LedgerService:
                 )
                 if early_allocated > Decimal("0") and settings["unearned_revenue_account_id"] is None:
                     raise LedgerValidationError("configure unearned revenue account for early receipts")
+            elif settlement_type == "payment":
+                _, early_allocated = self._split_payment_allocations(
+                    payload.entry_date,
+                    obligations,
+                    allocation_by_id,
+                )
+                if early_allocated > Decimal("0") and settings["prepaid_expenses_account_id"] is None:
+                    raise LedgerValidationError("configure prepaid expenses account for early payments")
 
         self._insert_settlement_allocations_and_update_obligations(
             cur,
@@ -4554,7 +4761,7 @@ class LedgerService:
             obligations,
             allocation_by_id,
         )
-        self._apply_early_receipt_reclassifications(
+        self._apply_early_settlement_reclassifications(
             cur,
             settlement_type=settlement_type,
             collapse_same_day=collapse_same_day,
@@ -4616,7 +4823,7 @@ class LedgerService:
         return allocation_ids
 
     @staticmethod
-    def _apply_early_receipt_reclassifications(
+    def _apply_early_settlement_reclassifications(
         cur,
         *,
         settlement_type: str,
@@ -4626,7 +4833,30 @@ class LedgerService:
         allocation_by_id: dict[int, Decimal],
         settings: dict,
     ) -> None:
-        if collapse_same_day or settlement_type != "receipt":
+        if collapse_same_day:
+            return
+        if settlement_type == "receipt":
+            for obligation in obligations:
+                alloc_amt = allocation_by_id[obligation["id"]]
+                if (
+                    obligation.get("source_entry_date") is not None
+                    and obligation["source_entry_date"] > event_date
+                    and alloc_amt > Decimal("0")
+                ):
+                    if obligation.get("source_line_id") is None:
+                        raise LedgerValidationError(
+                            "future receivable obligation is missing source line for unearned reclassification"
+                        )
+                    LedgerService._reclassify_receivable_line_to_unearned(
+                        cur,
+                        obligation_id=obligation["id"],
+                        source_line_id=obligation["source_line_id"],
+                        ar_account_id=settings["accounts_receivable_account_id"],
+                        unearned_account_id=settings["unearned_revenue_account_id"],
+                        allocation_amount=alloc_amt,
+                    )
+            return
+        if settlement_type != "payment":
             return
         for obligation in obligations:
             alloc_amt = allocation_by_id[obligation["id"]]
@@ -4637,14 +4867,14 @@ class LedgerService:
             ):
                 if obligation.get("source_line_id") is None:
                     raise LedgerValidationError(
-                        "future receivable obligation is missing source line for unearned reclassification"
+                        "future payable obligation is missing source line for prepaid reclassification"
                     )
-                LedgerService._reclassify_receivable_line_to_unearned(
+                LedgerService._reclassify_payable_line_to_prepaid(
                     cur,
                     obligation_id=obligation["id"],
                     source_line_id=obligation["source_line_id"],
-                    ar_account_id=settings["accounts_receivable_account_id"],
-                    unearned_account_id=settings["unearned_revenue_account_id"],
+                    ap_account_id=settings["accounts_payable_account_id"],
+                    prepaid_account_id=settings["prepaid_expenses_account_id"],
                     allocation_amount=alloc_amt,
                 )
 
@@ -4671,10 +4901,14 @@ class LedgerService:
                 lines.append((ur_account_id, payload.party_id, -ur_total))
         else:
             ap_account_id = settings["accounts_payable_account_id"]
-            lines = [
-                (ap_account_id, payload.party_id, allocated_total),
-                (payload.cash_account_id, payload.party_id, -payload.amount),
-            ]
+            prepaid_account_id = settings["prepaid_expenses_account_id"]
+            unapplied = payload.amount - allocated_total
+            lines = [(payload.cash_account_id, payload.party_id, -payload.amount)]
+            if due_allocated > Decimal("0"):
+                lines.append((ap_account_id, payload.party_id, due_allocated))
+            prepaid_total = early_allocated + unapplied
+            if prepaid_total > Decimal("0"):
+                lines.append((prepaid_account_id, payload.party_id, prepaid_total))
         for account_id, party_id, amount in lines:
             self._assert_account_active(cur, account_id)
             cur.execute(
@@ -4749,6 +4983,71 @@ class LedgerService:
             WHERE id = %s
             """,
             (new_ar_line_id, obligation_id),
+        )
+
+    @staticmethod
+    def _reclassify_payable_line_to_prepaid(
+        cur,
+        obligation_id: int,
+        source_line_id: int,
+        ap_account_id: int,
+        prepaid_account_id: int,
+        allocation_amount: Decimal,
+    ) -> None:
+        cur.execute(
+            """
+            SELECT entry_id, party_id, amount
+            FROM journal_lines
+            WHERE id = %s
+            FOR UPDATE
+            """,
+            (source_line_id,),
+        )
+        source_line = cur.fetchone()
+        if not source_line:
+            raise LedgerValidationError("obligation source line not found for early payment reclassification")
+        current_amount = Decimal(source_line["amount"])
+        moved_amount = allocation_amount
+        remaining_amount = current_amount + allocation_amount
+        if remaining_amount == Decimal("0"):
+            cur.execute(
+                """
+                UPDATE journal_lines
+                SET account_id = %s, amount = %s
+                WHERE id = %s
+                """,
+                (prepaid_account_id, -current_amount, source_line_id),
+            )
+            return
+        cur.execute(
+            """
+            UPDATE journal_lines
+            SET account_id = %s, amount = %s
+            WHERE id = %s
+            """,
+            (prepaid_account_id, moved_amount, source_line_id),
+        )
+        cur.execute(
+            """
+            INSERT INTO journal_lines (entry_id, account_id, party_id, amount)
+            VALUES (%s, %s, %s, %s)
+            RETURNING id
+            """,
+            (
+                source_line["entry_id"],
+                ap_account_id,
+                source_line["party_id"],
+                remaining_amount,
+            ),
+        )
+        new_ap_line_id = cur.fetchone()["id"]
+        cur.execute(
+            """
+            UPDATE accrual_obligations
+            SET source_line_id = %s, updated_at = NOW()
+            WHERE id = %s
+            """,
+            (new_ap_line_id, obligation_id),
         )
 
     def _build_frequency_dates(self, payload: AccrualPlanCreate) -> list[date]:

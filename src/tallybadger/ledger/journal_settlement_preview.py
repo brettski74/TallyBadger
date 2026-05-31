@@ -17,7 +17,7 @@ from tallybadger.ledger.models import (
     SettlementPreviewAllocationOut,
     SettlementType,
 )
-from tallybadger.ledger.settlement_utils import fifo_allocate, receipt_bridge_account_id
+from tallybadger.ledger.settlement_utils import fifo_allocate, payment_bridge_account_id, receipt_bridge_account_id
 
 _CASH_SIDE_ACCOUNT_TYPES = frozenset({"asset", "liability"})
 
@@ -122,6 +122,8 @@ def _proposal_lines_for_path(
     bridge_account_id: int | None,
     accounts_receivable_account_id: int | None,
     unearned_revenue_account_id: int | None,
+    accounts_payable_account_id: int | None,
+    prepaid_expenses_account_id: int | None,
     obligations: list[AccrualObligationOut],
     original_lines: list[JournalLineIn],
 ) -> tuple[list[JournalLineIn], list[SettlementPreviewAllocationOut]] | None:
@@ -154,11 +156,17 @@ def _proposal_lines_for_path(
                 ),
             )
         else:
-            if bridge_account_id is None:
+            payment_bridge_id = payment_bridge_account_id(
+                entry_date,
+                obligation.source_entry_date,
+                accounts_payable_account_id=accounts_payable_account_id,
+                prepaid_expenses_account_id=prepaid_expenses_account_id,
+            )
+            if payment_bridge_id is None:
                 return None
             proposal_lines.append(
                 JournalLineIn(
-                    account_id=bridge_account_id,
+                    account_id=payment_bridge_id,
                     party_id=party_id,
                     amount=applied,
                     obligation_id=obligation_id,
@@ -208,6 +216,7 @@ def build_journal_entry_settlement_preview(
     accounts_receivable_account_id: int | None,
     accounts_payable_account_id: int | None,
     unearned_revenue_account_id: int | None,
+    prepaid_expenses_account_id: int | None,
     list_obligations: Callable[
         [int, int, Literal["receivable", "payable"]],
         list[AccrualObligationOut],
@@ -259,23 +268,27 @@ def build_journal_entry_settlement_preview(
     receipt_cash_amount: Decimal | None = None
     payment_cash_amount: Decimal | None = None
 
-    path_specs: list[tuple[_PathMatch, int | None, Literal["receivable", "payable"]]] = []
+    path_specs: list[tuple[_PathMatch, Literal["receivable", "payable"]]] = []
     if receipt_path is not None:
-        path_specs.append((receipt_path, accounts_receivable_account_id, "receivable"))
+        path_specs.append((receipt_path, "receivable"))
     if payment_path is not None:
-        path_specs.append((payment_path, accounts_payable_account_id, "payable"))
+        path_specs.append((payment_path, "payable"))
 
-    for path, bridge_id, obligation_type in path_specs:
-        if bridge_id is None:
+    for path, obligation_type in path_specs:
+        if obligation_type == "receivable" and accounts_receivable_account_id is None:
+            return None
+        if obligation_type == "payable" and accounts_payable_account_id is None:
             return None
         obligations = list_obligations(party_id, path.pl_account_id, obligation_type)
         proposal = _proposal_lines_for_path(
             path,
             entry_date=payload.entry_date,
             party_id=party_id,
-            bridge_account_id=bridge_id,
+            bridge_account_id=None,
             accounts_receivable_account_id=accounts_receivable_account_id,
             unearned_revenue_account_id=unearned_revenue_account_id,
+            accounts_payable_account_id=accounts_payable_account_id,
+            prepaid_expenses_account_id=prepaid_expenses_account_id,
             obligations=obligations,
             original_lines=payload.lines,
         )

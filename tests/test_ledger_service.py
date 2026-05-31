@@ -324,7 +324,7 @@ def test_settlement_journal_summary_uses_earliest_allocated_accrual() -> None:
 
 def test_receipt_collapses_only_when_all_allocations_match_accrual_day() -> None:
     allocation = {1: Decimal("1.00"), 2: Decimal("1.00")}
-    same = LedgerService._receipt_allocations_all_same_accrual_day(
+    same = LedgerService._allocations_all_same_accrual_day(
         [
             {"id": 1, "source_entry_id": 10, "source_line_id": 100, "source_entry_date": date(2026, 7, 1)},
             {"id": 2, "source_entry_id": 20, "source_line_id": 200, "source_entry_date": date(2026, 7, 1)},
@@ -334,7 +334,7 @@ def test_receipt_collapses_only_when_all_allocations_match_accrual_day() -> None
     )
     assert same is True
 
-    mixed = LedgerService._receipt_allocations_all_same_accrual_day(
+    mixed = LedgerService._allocations_all_same_accrual_day(
         [
             {"id": 1, "source_entry_id": 10, "source_line_id": 100, "source_entry_date": date(2026, 7, 1)},
             {"id": 2, "source_entry_id": 20, "source_line_id": 200, "source_entry_date": date(2026, 6, 1)},
@@ -344,7 +344,7 @@ def test_receipt_collapses_only_when_all_allocations_match_accrual_day() -> None
     )
     assert mixed is False
 
-    zero_skipped = LedgerService._receipt_allocations_all_same_accrual_day(
+    zero_skipped = LedgerService._allocations_all_same_accrual_day(
         [
             {"id": 1, "source_entry_id": 10, "source_line_id": 100, "source_entry_date": date(2026, 7, 2)},
             {"id": 2, "source_entry_id": 20, "source_line_id": 200, "source_entry_date": date(2026, 7, 1)},
