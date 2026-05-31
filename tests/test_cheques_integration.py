@@ -629,6 +629,10 @@ def test_ledger_settings_patch_validates_new_cheque_defaults(
         json={"default_cheque_credit_account_id": expense.id},
     )
     assert bad_credit.status_code == 422, bad_credit.text
+    credit_errors = bad_credit.json()["detail"]["errors"]
+    assert len(credit_errors) == 1
+    assert "Default cheque credit account" in credit_errors[0]
+    assert "Rent" in credit_errors[0]
 
     # Suspense is rejected for debit default.
     bad_debit = api_client.patch(
@@ -636,6 +640,9 @@ def test_ledger_settings_patch_validates_new_cheque_defaults(
         json={"default_cheque_debit_account_id": suspense.id},
     )
     assert bad_debit.status_code == 422, bad_debit.text
+    debit_errors = bad_debit.json()["detail"]["errors"]
+    assert len(debit_errors) == 1
+    assert "Default cheque debit account" in debit_errors[0]
 
     # Non-suspense (e.g. expense) is allowed for debit default.
     ok_debit = api_client.patch(

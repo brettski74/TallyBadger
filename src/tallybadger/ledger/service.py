@@ -81,6 +81,14 @@ class LedgerValidationError(LedgerError):
     """Raised when business invariants are violated."""
 
 
+class LedgerSettingsValidationError(LedgerValidationError):
+    """Raised when PATCH /ledger-settings account fields fail validation."""
+
+    def __init__(self, errors: list[str]) -> None:
+        self.errors = errors
+        super().__init__("; ".join(errors))
+
+
 def _coerce_new_review_messages(payload: JournalEntryWrite) -> list[str]:
     out: list[str] = []
     for item in payload.review_messages:
@@ -3886,7 +3894,7 @@ class LedgerService:
                 )
 
         if errors:
-            raise LedgerValidationError("; ".join(errors))
+            raise LedgerSettingsValidationError(errors)
 
     @staticmethod
     def _fetch_settings_row(cur):

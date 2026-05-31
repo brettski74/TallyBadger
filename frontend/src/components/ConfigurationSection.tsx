@@ -8,7 +8,7 @@ import {
   exportBackup,
   importBackup,
 } from "../api/backup";
-import { getLedgerSettings, updateLedgerSettings } from "../api/settlements";
+import { getLedgerSettings, LedgerSettingsValidationError, updateLedgerSettings } from "../api/settlements";
 import { accountsForSettingPicker } from "../journal/accountSelect";
 import {
   discardActionTooltip,
@@ -35,7 +35,7 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
   const [unallocDrBaseline, setUnallocDrBaseline] = useState("");
   const [unallocCrId, setUnallocCrId] = useState("");
   const [unallocCrBaseline, setUnallocCrBaseline] = useState("");
-  const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [settingsErrors, setSettingsErrors] = useState<string[]>([]);
   const [savedMessage, setSavedMessage] = useState<string | null>(null);
   const [backupError, setBackupError] = useState<string | null>(null);
   const [backupMessage, setBackupMessage] = useState<string | null>(null);
@@ -54,7 +54,7 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
     setPrepaidId(prepaidBaseline);
     setUnallocDrId(unallocDrBaseline);
     setUnallocCrId(unallocCrBaseline);
-    setSettingsError(null);
+    setSettingsErrors([]);
     setSavedMessage(null);
   }
 
@@ -107,7 +107,9 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
         setUnallocCrId(ucr);
         setUnallocCrBaseline(ucr);
       } catch (err) {
-        setSettingsError(err instanceof Error ? err.message : "Failed to load ledger settings");
+        setSettingsErrors([
+          err instanceof Error ? err.message : "Failed to load ledger settings",
+        ]);
       }
     }
     void loadSettings();
@@ -115,7 +117,7 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
 
   async function handleSaveSettings(event: FormEvent) {
     event.preventDefault();
-    setSettingsError(null);
+    setSettingsErrors([]);
     setSavedMessage(null);
     try {
       const settings = await updateLedgerSettings({
@@ -152,7 +154,13 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
       setUnallocCrBaseline(ucr);
       setSavedMessage("Settings saved.");
     } catch (err) {
-      setSettingsError(err instanceof Error ? err.message : "Failed to update settings");
+      if (err instanceof LedgerSettingsValidationError) {
+        setSettingsErrors(err.errors);
+        return;
+      }
+      setSettingsErrors([
+        err instanceof Error ? err.message : "Failed to update settings",
+      ]);
     }
   }
 
@@ -269,11 +277,11 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
             Discard
           </button>
         </div>
-        {settingsError && (
-          <p className="error" role="alert">
-            {settingsError}
+        {settingsErrors.map((message, index) => (
+          <p key={`settings-error-${index}`} className="error-text" role="alert">
+            {message}
           </p>
-        )}
+        ))}
         {savedMessage && (
           <p className="muted" role="status">
             {savedMessage}

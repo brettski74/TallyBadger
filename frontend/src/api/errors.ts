@@ -12,6 +12,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+/** Structured 422 bodies with `detail.errors` as string messages (e.g. ledger settings). */
+export function parseDetailErrorsArray(data: unknown): string[] | null {
+  if (!isRecord(data)) {
+    return null;
+  }
+  const detail = data.detail;
+  if (!isRecord(detail) || !Array.isArray(detail.errors)) {
+    return null;
+  }
+  const items = detail.errors.filter((item): item is string => typeof item === "string" && item.length > 0);
+  return items.length > 0 ? items : null;
+}
+
 const VALIDATION_FIELD_LABELS: Record<string, string> = {
   party_id: "Party",
   target_account_id: "Target account",
@@ -60,6 +73,10 @@ function formatValidationItem(item: Record<string, unknown>): string | null {
 export function messageFromErrorBody(data: unknown): string | null {
   if (!isRecord(data)) {
     return null;
+  }
+  const structuredErrors = parseDetailErrorsArray(data);
+  if (structuredErrors) {
+    return structuredErrors.join("; ");
   }
   const detail = data.detail;
   if (typeof detail === "string") {

@@ -150,6 +150,45 @@ describe("ConfigurationSection", () => {
     );
   }
 
+  it("shows each ledger settings validation error in its own error-text box", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(ledgerSettingsResponse())
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            detail: {
+              message: "Ledger settings validation failed",
+              errors: [
+                'Accounts payable: account "Cash" (asset) must be a liability account',
+                'Prepaid expenses: account "A/P" (liability) must be an asset account',
+              ],
+            },
+          }),
+          { status: 422 },
+        ),
+      );
+
+    render(<ConfigurationSection accounts={accounts} />);
+    const user = userEvent.setup();
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Accounts receivable")).toBeInTheDocument();
+    });
+
+    await user.selectOptions(screen.getByLabelText("Accounts payable"), "3");
+    await user.selectOptions(screen.getByLabelText("Prepaid expenses"), "5");
+    await user.click(screen.getByRole("button", { name: /Save configuration/i }));
+
+    await waitFor(() => {
+      expect(screen.getAllByRole("alert")).toHaveLength(2);
+    });
+    const alerts = screen.getAllByRole("alert");
+    expect(alerts[0]).toHaveClass("error-text");
+    expect(alerts[0]).toHaveTextContent("Accounts payable");
+    expect(alerts[1]).toHaveClass("error-text");
+    expect(alerts[1]).toHaveTextContent("Prepaid expenses");
+  });
+
   it("restore success without deprecation shows only generic success", async () => {
     vi.spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(ledgerSettingsResponse())

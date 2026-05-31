@@ -33,6 +33,7 @@ from tallybadger.ledger.service import (
     LedgerConflictError,
     LedgerNotFoundError,
     LedgerService,
+    LedgerSettingsValidationError,
     LedgerValidationError,
 )
 
@@ -1370,7 +1371,7 @@ def test_ledger_settings_type_errors_name_setting_account_and_collect_all(
     revenue = ledger_service.create_account(AccountCreate(name="Rent Income", type="revenue"))
     expense = ledger_service.create_account(AccountCreate(name="Office Supplies", type="expense"))
 
-    with pytest.raises(LedgerValidationError) as exc:
+    with pytest.raises(LedgerSettingsValidationError) as exc:
         ledger_service.update_ledger_settings(
             LedgerSettingsUpdate(
                 accounts_payable_account_id=asset.id,
@@ -1379,6 +1380,7 @@ def test_ledger_settings_type_errors_name_setting_account_and_collect_all(
             ),
         )
     msg = str(exc.value)
+    assert len(exc.value.errors) == 3
     assert "Accounts payable" in msg
     assert "Operating Cash" in msg
     assert "a liability account" in msg
