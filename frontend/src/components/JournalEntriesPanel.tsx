@@ -17,10 +17,12 @@ import {
   createJournalEntry,
   getJournalEntry,
   listJournalEntries,
+  previewJournalEntrySettlement,
   updateJournalEntry,
   type ChequeAssociation,
   type JournalEntryListItem,
   type JournalEntryReviewMessage,
+  type JournalEntrySettlementPreviewOut,
   type JournalEntryWrite,
 } from "../api/journalEntries";
 import { listImportBatches, type ImportBatchListItem } from "../api/importBatches";
@@ -45,6 +47,7 @@ import {
 import { isMacLikeUserAgent } from "../lib/platformKeyboard";
 import { JournalEntryAttachmentsDialog } from "./JournalEntryAttachmentsDialog";
 import { JournalEntryForm, type LineDraft } from "./JournalEntryForm";
+import { JournalSettlementConfirmDialog } from "./JournalSettlementConfirmDialog";
 import { JournalEntryDateRangeFilter } from "./JournalEntryDateRangeFilter";
 import { JournalFilterMultiDropdown } from "./JournalFilterMultiDropdown";
 import { TableRowIconButton } from "./TableRowIconButton";
@@ -277,6 +280,13 @@ export function JournalEntriesPanel({
   const [formInitialChequeId, setFormInitialChequeId] = useState<number | null>(null);
   const [attachmentsEntryId, setAttachmentsEntryId] = useState<number | null>(null);
   const [formResetKey, setFormResetKey] = useState(0);
+  const [settlementDialogOpen, setSettlementDialogOpen] = useState(false);
+  const [settlementPending, setSettlementPending] = useState<{
+    preview: JournalEntrySettlementPreviewOut;
+    originalPayload: JournalEntryWrite;
+  } | null>(null);
+  const [settlementSaving, setSettlementSaving] = useState(false);
+  const [settlementSaveError, setSettlementSaveError] = useState<string | null>(null);
   const isMac = useMemo(() => isMacLikeUserAgent(), []);
 
   const listParams = useMemo(
@@ -542,14 +552,66 @@ export function JournalEntriesPanel({
     }
   }
 
-  async function handleSubmit(payload: JournalEntryWrite) {
-    if (editingId == null) {
-      await createJournalEntry(payload);
-    } else {
-      await updateJournalEntry(editingId, payload);
-    }
+  function clearSettlementDialog() {
+    setSettlementDialogOpen(false);
+    setSettlementPending(null);
+    setSettlementSaveError(null);
+    setSettlementSaving(false);
+  }
+
+  async function finishCreate(payload: JournalEntryWrite) {
+    await createJournalEntry(payload);
+    clearSettlementDialog();
     setView("list");
     await refreshList();
+  }
+
+  async function handleSubmit(payload: JournalEntryWrite) {
+    if (editingId == null) {
+      const preview = await previewJournalEntrySettlement(payload);
+      if (preview != null) {
+        setSettlementPending({ preview, originalPayload: payload });
+        setSettlementSaveError(null);
+        setSettlementDialogOpen(true);
+        return;
+      }
+      await finishCreate(payload);
+      return;
+    }
+    await updateJournalEntry(editingId, payload);
+    setView("list");
+    await refreshList();
+  }
+
+  async function handleSettlementAccept() {
+    if (settlementPending == null) {
+      return;
+    }
+    setSettlementSaving(true);
+    setSettlementSaveError(null);
+    try {
+      await finishCreate({
+        ...settlementPending.originalPayload,
+        lines: settlementPending.preview.lines,
+      });
+    } catch (err) {
+      setSettlementSaveError(err instanceof Error ? err.message : "Post failed");
+      setSettlementSaving(false);
+    }
+  }
+
+  async function handleSettlementDecline() {
+    if (settlementPending == null) {
+      return;
+    }
+    setSettlementSaving(true);
+    setSettlementSaveError(null);
+    try {
+      await finishCreate(settlementPending.originalPayload);
+    } catch (err) {
+      setSettlementSaveError(err instanceof Error ? err.message : "Post failed");
+      setSettlementSaving(false);
+    }
   }
 
   async function reloadReviewMessagesForEditor() {
@@ -561,6 +623,7 @@ export function JournalEntriesPanel({
   }
 
   function handleCancelForm() {
+    clearSettlementDialog();
     setView("list");
     setEditingId(null);
     setFormSummary("");
@@ -693,6 +756,17 @@ export function JournalEntriesPanel({
     return (
       <>
         {attachmentsDialog}
+        <JournalSettlementConfirmDialog
+          open={settlementDialogOpen && settlementPending != null}
+          preview={settlementPending?.preview ?? null}
+          accounts={accounts}
+          parties={parties}
+          saving={settlementSaving}
+          error={settlementSaveError}
+          onAccept={() => void handleSettlementAccept()}
+          onDecline={() => void handleSettlementDecline()}
+          onCancel={clearSettlementDialog}
+        />
         <section className="card journal-card-wide">
           <JournalEntryForm
             key={`${editingId ?? "new"}-${formResetKey}`}

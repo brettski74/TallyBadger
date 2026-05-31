@@ -1,0 +1,5 @@
+---
+alwaysApply: true
+---
+
+Keep commands as short and concise as possible. Avoid stringing together numerous commands with the && operator unless it cannot be avoided so that review and approval of commands remains simple.
