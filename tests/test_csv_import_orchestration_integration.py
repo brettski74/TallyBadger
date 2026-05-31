@@ -558,7 +558,13 @@ def test_ledger_settings_rejects_non_suspense_unallocated_account(
         json={"unallocated_debits_account_id": cash_id},
     )
     assert r2.status_code == 422, r2.text
-    assert "suspense" in r2.json()["detail"].lower()
+    detail = r2.json()["detail"]
+    if isinstance(detail, dict):
+        message = " ".join(detail.get("errors", []))
+    else:
+        message = str(detail)
+    assert "suspense" in message.lower()
+    assert "Unallocated debits" in message
 
 
 def test_get_import_batches_lists_loaded_batches(
