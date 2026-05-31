@@ -34,12 +34,17 @@ function formatProposedLine(
   line: JournalLineIn,
   accounts: Account[],
   parties: Party[],
+  obligationSummaryById: Map<number, string | null>,
 ): { account: string; party: string; amount: string; obligation: string } {
+  const obligationSummary =
+    line.obligation_id != null
+      ? (obligationSummaryById.get(line.obligation_id) ?? null)
+      : null;
   return {
     account: accountName(accounts, line.account_id),
     party: partyName(parties, line.party_id),
     amount: line.amount,
-    obligation: line.obligation_id != null ? String(line.obligation_id) : "—",
+    obligation: obligationSummary ?? "—",
   };
 }
 
@@ -68,9 +73,22 @@ export function JournalSettlementConfirmDialog({
     }
   }, [open]);
 
+  const obligationSummaryById = useMemo(() => {
+    const map = new Map<number, string | null>();
+    if (preview) {
+      for (const allocation of preview.allocations) {
+        map.set(allocation.obligation_id, allocation.source_entry_summary);
+      }
+    }
+    return map;
+  }, [preview]);
+
   const proposedRows = useMemo(
-    () => (preview ? preview.lines.map((line) => formatProposedLine(line, accounts, parties)) : []),
-    [preview, accounts, parties],
+    () =>
+      preview
+        ? preview.lines.map((line) => formatProposedLine(line, accounts, parties, obligationSummaryById))
+        : [],
+    [preview, accounts, parties, obligationSummaryById],
   );
 
   if (preview == null) {
@@ -108,7 +126,7 @@ export function JournalSettlementConfirmDialog({
           <tbody>
             {preview.allocations.map((row) => (
               <tr key={row.obligation_id}>
-                <td>{row.obligation_id}</td>
+                <td>{row.source_entry_summary ?? "—"}</td>
                 <td>{row.accrual_date ?? "—"}</td>
                 <td>{row.open_amount}</td>
                 <td>{row.applied_amount}</td>

@@ -54,6 +54,7 @@ export interface JournalLineIn {
 export interface SettlementPreviewAllocationOut {
   obligation_id: number;
   accrual_date: string | null;
+  source_entry_summary: string | null;
   open_amount: string;
   applied_amount: string;
   settlement_type: "receipt" | "payment";
