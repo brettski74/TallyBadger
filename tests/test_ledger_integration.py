@@ -1341,6 +1341,52 @@ def test_update_ledger_settings_validate_on_change_for_system_defaults(
         ledger_service.update_ledger_settings(LedgerSettingsUpdate(accounts_receivable_account_id=ar2.id))
 
 
+def test_ledger_settings_prepaid_expenses_account_asset_only(
+    ledger_service: LedgerService,
+) -> None:
+    prepaid = ledger_service.create_account(AccountCreate(name="Vendor Prepaid", type="asset"))
+    liability = ledger_service.create_account(AccountCreate(name="Accrued", type="liability"))
+
+    out = ledger_service.update_ledger_settings(
+        LedgerSettingsUpdate(prepaid_expenses_account_id=prepaid.id),
+    )
+    assert out.prepaid_expenses_account_id == prepaid.id
+
+    with pytest.raises(LedgerValidationError, match="asset"):
+        ledger_service.update_ledger_settings(
+            LedgerSettingsUpdate(prepaid_expenses_account_id=liability.id),
+        )
+
+
+def test_update_ledger_settings_validate_on_change_for_prepaid_expenses(
+    ledger_service: LedgerService,
+) -> None:
+    prepaid = ledger_service.create_account(AccountCreate(name="Vendor Prepaid", type="asset"))
+    prepaid2 = ledger_service.create_account(AccountCreate(name="Vendor Prepaid 2", type="asset"))
+    ledger_service.update_ledger_settings(LedgerSettingsUpdate(prepaid_expenses_account_id=prepaid.id))
+    ledger_service.update_account(prepaid.id, AccountUpdate(is_active=False))
+
+    out = ledger_service.update_ledger_settings(
+        LedgerSettingsUpdate(max_attachment_upload_bytes=4096),
+    )
+    assert out.prepaid_expenses_account_id == prepaid.id
+
+    ledger_service.update_account(prepaid2.id, AccountUpdate(is_active=False))
+    with pytest.raises(LedgerValidationError, match="deactivated"):
+        ledger_service.update_ledger_settings(
+            LedgerSettingsUpdate(prepaid_expenses_account_id=prepaid2.id),
+        )
+
+
+def test_account_type_change_blocked_by_prepaid_expenses_setting(
+    ledger_service: LedgerService,
+) -> None:
+    prepaid = ledger_service.create_account(AccountCreate(name="Vendor Prepaid", type="asset"))
+    ledger_service.update_ledger_settings(LedgerSettingsUpdate(prepaid_expenses_account_id=prepaid.id))
+    with pytest.raises(LedgerConflictError, match="ledger settings"):
+        ledger_service.update_account(prepaid.id, AccountUpdate(type="liability"))
+
+
 def test_update_party_does_not_revalidate_inactive_default_accounts_unless_changed(
     ledger_service: LedgerService,
 ) -> None:

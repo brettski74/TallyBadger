@@ -5,6 +5,7 @@ export interface LedgerSettings {
   accounts_receivable_account_id: number | null;
   accounts_payable_account_id: number | null;
   unearned_revenue_account_id: number | null;
+  prepaid_expenses_account_id: number | null;
   unallocated_debits_account_id: number | null;
   unallocated_credits_account_id: number | null;
   /** Last credit (cheque/bank register) account saved; pre-fills the next new cheque when still eligible (#105). */

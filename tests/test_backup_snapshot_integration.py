@@ -1218,6 +1218,93 @@ def test_cheque_default_accounts_round_trip_through_complete_snapshot(
     assert row["default_cheque_debit_account_id"] == rent.id
 
 
+def test_prepaid_expenses_account_id_survives_complete_snapshot_round_trip(
+    ledger_service: LedgerService,
+    integration_db_url: str,
+) -> None:
+    """#229: prepaid expenses role account survives complete export/import."""
+    prepaid = ledger_service.create_account(AccountCreate(name="Vendor Prepaid", type="asset"))
+
+    with connect(integration_db_url) as conn:
+        with conn.transaction():
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE ledger_settings
+                    SET prepaid_expenses_account_id = %s
+                    WHERE id = 1
+                    """,
+                    (prepaid.id,),
+                )
+
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        archive = export_complete_snapshot(conn)
+
+    _truncate_all_data(integration_db_url)
+
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        import_complete_snapshot(conn, archive)
+
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT prepaid_expenses_account_id
+                FROM ledger_settings
+                WHERE id = 1
+                """,
+            )
+            row = cur.fetchone()
+    assert row is not None
+    assert row["prepaid_expenses_account_id"] == prepaid.id
+
+
+def test_snapshot_rejects_prepaid_expenses_pointing_at_missing_account(
+    ledger_service: LedgerService,
+    integration_db_url: str,
+) -> None:
+    """#229: snapshot FK validator catches dangling prepaid_expenses_account_id."""
+    prepaid = ledger_service.create_account(AccountCreate(name="Vendor Prepaid", type="asset"))
+    with connect(integration_db_url) as conn:
+        with conn.transaction():
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE ledger_settings
+                    SET prepaid_expenses_account_id = %s
+                    WHERE id = 1
+                    """,
+                    (prepaid.id,),
+                )
+
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        archive = export_snapshot(conn, "configuration")
+
+    zin = zipfile.ZipFile(io.BytesIO(archive))
+    try:
+        names = [n for n in zin.namelist() if not n.endswith("/")]
+        table_members: dict[str, bytes] = {n: zin.read(n) for n in names if n != "metadata.json"}
+        metadata = json.loads(zin.read("metadata.json").decode("utf-8"))
+    finally:
+        zin.close()
+    accounts_rows = json.loads(table_members["accounts.json"].decode("utf-8"))
+    accounts_rows = [r for r in accounts_rows if int(r["id"]) != prepaid.id]
+    table_members["accounts.json"] = json.dumps(
+        accounts_rows,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    tampered = _rezip_table_members_with_metadata(table_members, metadata)
+
+    _truncate_all_data(integration_db_url)
+    with connect(integration_db_url, row_factory=dict_row) as conn, pytest.raises(
+        SnapshotValidationError,
+        match="prepaid_expenses_account_id",
+    ):
+        import_snapshot(conn, tampered)
+
+
 def test_snapshot_rejects_cheque_default_pointing_at_missing_account(
     ledger_service: LedgerService,
     integration_db_url: str,

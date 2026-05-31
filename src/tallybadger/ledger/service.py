@@ -734,6 +734,7 @@ class LedgerService:
                 accounts_receivable_account_id = %s
                 OR accounts_payable_account_id = %s
                 OR unearned_revenue_account_id = %s
+                OR prepaid_expenses_account_id = %s
                 OR unallocated_debits_account_id = %s
                 OR unallocated_credits_account_id = %s
                 OR default_cheque_credit_account_id = %s
@@ -741,7 +742,7 @@ class LedgerService:
               )
             LIMIT 1
             """,
-            (account_id,) * 7,
+            (account_id,) * 8,
         )
         if cur.fetchone():
             raise LedgerConflictError(
@@ -1253,7 +1254,7 @@ class LedgerService:
                 cur.execute(
                     """
                     SELECT accounts_receivable_account_id, accounts_payable_account_id,
-                           unearned_revenue_account_id,
+                           unearned_revenue_account_id, prepaid_expenses_account_id,
                            unallocated_debits_account_id, unallocated_credits_account_id,
                            default_cheque_credit_account_id, default_cheque_debit_account_id,
                            max_attachment_upload_bytes, max_cheque_series_count,
@@ -1274,7 +1275,7 @@ class LedgerService:
                     cur.execute(
                         """
                         SELECT accounts_receivable_account_id, accounts_payable_account_id,
-                               unearned_revenue_account_id,
+                               unearned_revenue_account_id, prepaid_expenses_account_id,
                                unallocated_debits_account_id, unallocated_credits_account_id,
                                default_cheque_credit_account_id, default_cheque_debit_account_id
                         FROM ledger_settings
@@ -1304,6 +1305,12 @@ class LedgerService:
                             "unearned_revenue_account_id",
                         ):
                             self._assert_account_active(cur, payload.unearned_revenue_account_id)
+                    if payload.prepaid_expenses_account_id is not None:
+                        self._assert_account_type(cur, payload.prepaid_expenses_account_id, "asset")
+                        if payload.prepaid_expenses_account_id != existing.get(
+                            "prepaid_expenses_account_id",
+                        ):
+                            self._assert_account_active(cur, payload.prepaid_expenses_account_id)
                     if payload.unallocated_debits_account_id is not None:
                         self._assert_account_type(cur, payload.unallocated_debits_account_id, "suspense")
                         if payload.unallocated_debits_account_id != existing.get(
@@ -1329,6 +1336,7 @@ class LedgerService:
                         SET accounts_receivable_account_id = COALESCE(%s, accounts_receivable_account_id),
                             accounts_payable_account_id = COALESCE(%s, accounts_payable_account_id),
                             unearned_revenue_account_id = COALESCE(%s, unearned_revenue_account_id),
+                            prepaid_expenses_account_id = COALESCE(%s, prepaid_expenses_account_id),
                             unallocated_debits_account_id = COALESCE(
                                 %s, unallocated_debits_account_id
                             ),
@@ -1347,7 +1355,7 @@ class LedgerService:
                             updated_at = NOW()
                         WHERE id = 1
                         RETURNING accounts_receivable_account_id, accounts_payable_account_id,
-                                  unearned_revenue_account_id,
+                                  unearned_revenue_account_id, prepaid_expenses_account_id,
                                   unallocated_debits_account_id, unallocated_credits_account_id,
                                   default_cheque_credit_account_id,
                                   default_cheque_debit_account_id,
@@ -1359,6 +1367,7 @@ class LedgerService:
                             payload.accounts_receivable_account_id,
                             payload.accounts_payable_account_id,
                             payload.unearned_revenue_account_id,
+                            payload.prepaid_expenses_account_id,
                             payload.unallocated_debits_account_id,
                             payload.unallocated_credits_account_id,
                             payload.default_cheque_credit_account_id,
@@ -3821,7 +3830,8 @@ class LedgerService:
     def _fetch_settings_row(cur):
         cur.execute(
             """
-            SELECT accounts_receivable_account_id, accounts_payable_account_id, unearned_revenue_account_id
+            SELECT accounts_receivable_account_id, accounts_payable_account_id,
+                   unearned_revenue_account_id, prepaid_expenses_account_id
             FROM ledger_settings
             WHERE id = 1
             """
