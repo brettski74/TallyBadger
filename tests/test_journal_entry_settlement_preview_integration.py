@@ -375,6 +375,7 @@ def test_preview_receipt_full_match(api_client: TestClient) -> None:
     assert len(preview["allocations"]) == 1
     allocation = preview["allocations"][0]
     assert allocation["obligation_id"] == ctx["obligation_id"]
+    assert allocation["source_entry_summary"] == "July rent"
     assert allocation["settlement_type"] == "receipt"
     assert Decimal(allocation["applied_amount"]) == Decimal("1500.00")
 
@@ -403,6 +404,7 @@ def test_preview_payment_full_match(api_client: TestClient) -> None:
     assert Decimal(preview["payment_cash_amount"]) == Decimal("800.00")
     assert preview["receipt_cash_amount"] is None
     assert preview["allocations"][0]["settlement_type"] == "payment"
+    assert preview["allocations"][0]["source_entry_summary"] == "Repair bill"
     bridge_lines = [line for line in preview["lines"] if line.get("obligation_id") is not None]
     assert len(bridge_lines) == 1
     assert bridge_lines[0]["account_id"] == ctx["ap_id"]

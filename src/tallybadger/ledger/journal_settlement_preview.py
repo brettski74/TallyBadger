@@ -168,6 +168,7 @@ def _proposal_lines_for_path(
             SettlementPreviewAllocationOut(
                 obligation_id=obligation_id,
                 accrual_date=obligation.source_entry_date,
+                source_entry_summary=obligation.source_entry_summary,
                 open_amount=obligation.open_amount,
                 applied_amount=applied,
                 settlement_type=path.settlement_type,

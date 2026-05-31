@@ -1073,6 +1073,7 @@ describe("JournalEntriesPanel", () => {
         {
           obligation_id: 55,
           accrual_date: "2026-01-01",
+          source_entry_summary: "January rent accrual",
           open_amount: "100.00",
           applied_amount: "100.00",
           settlement_type: "receipt",
@@ -1208,6 +1209,8 @@ describe("JournalEntriesPanel", () => {
       expect(within(dialog).getByRole("heading", { name: "Settle open obligations?" })).toBeInTheDocument();
       expect(within(dialog).getByRole("table", { name: "Settlement allocations" })).toBeInTheDocument();
       expect(within(dialog).getByRole("table", { name: "Proposed journal lines" })).toBeInTheDocument();
+      expect(within(dialog).getAllByText("January rent accrual")).toHaveLength(2);
+      expect(within(dialog).queryByText("55")).toBeNull();
 
       await user.click(screen.getByRole("button", { name: /Accept — post with settlement/ }));
 

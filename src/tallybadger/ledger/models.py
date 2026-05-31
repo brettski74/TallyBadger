@@ -726,6 +726,7 @@ class SettlementOut(BaseModel):
 class SettlementPreviewAllocationOut(BaseModel):
     obligation_id: int
     accrual_date: date | None
+    source_entry_summary: str | None = None
     open_amount: Decimal
     applied_amount: Decimal
     settlement_type: SettlementType
