@@ -81,6 +81,14 @@ class LedgerValidationError(LedgerError):
     """Raised when business invariants are violated."""
 
 
+class LedgerSettingsValidationError(LedgerValidationError):
+    """Raised when PATCH /ledger-settings account fields fail validation."""
+
+    def __init__(self, errors: list[str]) -> None:
+        self.errors = errors
+        super().__init__("; ".join(errors))
+
+
 def _coerce_new_review_messages(payload: JournalEntryWrite) -> list[str]:
     out: list[str] = []
     for item in payload.review_messages:
@@ -118,6 +126,15 @@ def read_upload_file_limited(file_obj: object, max_bytes: int) -> bytes:
 
 JOURNAL_LIST_SPLIT_LABEL = "-- Split --"
 JOURNAL_LIST_NO_PARTY_LABEL = "—"
+
+_LEDGER_SETTLEMENT_ROLE_FIELDS: tuple[tuple[str, str], ...] = (
+    ("accounts_receivable_account_id", "Accounts receivable"),
+    ("accounts_payable_account_id", "Accounts payable"),
+    ("unearned_revenue_account_id", "Unearned revenue"),
+    ("prepaid_expenses_account_id", "Prepaid expenses"),
+    ("unallocated_debits_account_id", "Unallocated debits (default debit side)"),
+    ("unallocated_credits_account_id", "Unallocated credits (default credit side)"),
+)
 
 # Per-entry list amount (debits when positive lines exist; else credit magnitude).
 JOURNAL_ENTRY_LIST_AMOUNT_EXPR = (
@@ -734,6 +751,7 @@ class LedgerService:
                 accounts_receivable_account_id = %s
                 OR accounts_payable_account_id = %s
                 OR unearned_revenue_account_id = %s
+                OR prepaid_expenses_account_id = %s
                 OR unallocated_debits_account_id = %s
                 OR unallocated_credits_account_id = %s
                 OR default_cheque_credit_account_id = %s
@@ -741,7 +759,7 @@ class LedgerService:
               )
             LIMIT 1
             """,
-            (account_id,) * 7,
+            (account_id,) * 8,
         )
         if cur.fetchone():
             raise LedgerConflictError(
@@ -799,6 +817,42 @@ class LedgerService:
                 "(the till remembers every coin).",
             )
 
+    @staticmethod
+    def _settlement_roles_for_account(cur, account_id: int) -> list[str]:
+        cur.execute(
+            """
+            SELECT accounts_receivable_account_id, accounts_payable_account_id,
+                   unearned_revenue_account_id, prepaid_expenses_account_id,
+                   unallocated_debits_account_id, unallocated_credits_account_id
+            FROM ledger_settings
+            WHERE id = 1
+            """,
+        )
+        row = cur.fetchone()
+        if not row:
+            return []
+        return [
+            label
+            for field, label in _LEDGER_SETTLEMENT_ROLE_FIELDS
+            if row.get(field) == account_id
+        ]
+
+    @staticmethod
+    def _assert_account_deactivation_allowed(cur, account_id: int, account_name: str) -> None:
+        roles = LedgerService._settlement_roles_for_account(cur, account_id)
+        if not roles:
+            return
+        if len(roles) == 1:
+            raise LedgerConflictError(
+                f'Cannot deactivate account "{account_name}" ({account_id}): '
+                f'it is configured as Settlement role "{roles[0]}".'
+            )
+        role_list = ", ".join(f'"{role}"' for role in roles)
+        raise LedgerConflictError(
+            f'Cannot deactivate account "{account_name}" ({account_id}): '
+            f"it is configured as settlement roles {role_list}."
+        )
+
     def update_account(self, account_id: int, payload: AccountUpdate) -> AccountOut:
         if payload.name is None and payload.is_active is None and payload.type is None:
             raise LedgerValidationError("at least one account field must be updated")
@@ -837,6 +891,13 @@ class LedgerService:
 
                         if type_changing:
                             self._assert_account_type_change_allowed(cur, account_id)
+
+                        if active_changing and not new_active:
+                            self._assert_account_deactivation_allowed(
+                                cur,
+                                account_id,
+                                current_name,
+                            )
 
                         updates: list[str] = []
                         params: list[object] = []
@@ -1253,7 +1314,7 @@ class LedgerService:
                 cur.execute(
                     """
                     SELECT accounts_receivable_account_id, accounts_payable_account_id,
-                           unearned_revenue_account_id,
+                           unearned_revenue_account_id, prepaid_expenses_account_id,
                            unallocated_debits_account_id, unallocated_credits_account_id,
                            default_cheque_credit_account_id, default_cheque_debit_account_id,
                            max_attachment_upload_bytes, max_cheque_series_count,
@@ -1274,7 +1335,7 @@ class LedgerService:
                     cur.execute(
                         """
                         SELECT accounts_receivable_account_id, accounts_payable_account_id,
-                               unearned_revenue_account_id,
+                               unearned_revenue_account_id, prepaid_expenses_account_id,
                                unallocated_debits_account_id, unallocated_credits_account_id,
                                default_cheque_credit_account_id, default_cheque_debit_account_id
                         FROM ledger_settings
@@ -1286,49 +1347,14 @@ class LedgerService:
                     if not existing:
                         raise LedgerValidationError("ledger settings row is missing")
 
-                    if payload.accounts_receivable_account_id is not None:
-                        self._assert_account_type(cur, payload.accounts_receivable_account_id, "asset")
-                        if payload.accounts_receivable_account_id != existing.get(
-                            "accounts_receivable_account_id",
-                        ):
-                            self._assert_account_active(cur, payload.accounts_receivable_account_id)
-                    if payload.accounts_payable_account_id is not None:
-                        self._assert_account_type(cur, payload.accounts_payable_account_id, "liability")
-                        if payload.accounts_payable_account_id != existing.get(
-                            "accounts_payable_account_id",
-                        ):
-                            self._assert_account_active(cur, payload.accounts_payable_account_id)
-                    if payload.unearned_revenue_account_id is not None:
-                        self._assert_account_type(cur, payload.unearned_revenue_account_id, "liability")
-                        if payload.unearned_revenue_account_id != existing.get(
-                            "unearned_revenue_account_id",
-                        ):
-                            self._assert_account_active(cur, payload.unearned_revenue_account_id)
-                    if payload.unallocated_debits_account_id is not None:
-                        self._assert_account_type(cur, payload.unallocated_debits_account_id, "suspense")
-                        if payload.unallocated_debits_account_id != existing.get(
-                            "unallocated_debits_account_id",
-                        ):
-                            self._assert_account_active(cur, payload.unallocated_debits_account_id)
-                    if payload.unallocated_credits_account_id is not None:
-                        self._assert_account_type(cur, payload.unallocated_credits_account_id, "suspense")
-                        if payload.unallocated_credits_account_id != existing.get(
-                            "unallocated_credits_account_id",
-                        ):
-                            self._assert_account_active(cur, payload.unallocated_credits_account_id)
-
-                    new_cr = payload.default_cheque_credit_account_id
-                    new_dr = payload.default_cheque_debit_account_id
-                    if new_cr is not None and new_cr != existing.get("default_cheque_credit_account_id"):
-                        self._assert_cheque_credit_account(cur, new_cr)
-                    if new_dr is not None and new_dr != existing.get("default_cheque_debit_account_id"):
-                        self._assert_cheque_debit_account(cur, new_dr)
+                    self._validate_ledger_settings_accounts(cur, payload, existing)
                     cur.execute(
                         """
                         UPDATE ledger_settings
                         SET accounts_receivable_account_id = COALESCE(%s, accounts_receivable_account_id),
                             accounts_payable_account_id = COALESCE(%s, accounts_payable_account_id),
                             unearned_revenue_account_id = COALESCE(%s, unearned_revenue_account_id),
+                            prepaid_expenses_account_id = COALESCE(%s, prepaid_expenses_account_id),
                             unallocated_debits_account_id = COALESCE(
                                 %s, unallocated_debits_account_id
                             ),
@@ -1347,7 +1373,7 @@ class LedgerService:
                             updated_at = NOW()
                         WHERE id = 1
                         RETURNING accounts_receivable_account_id, accounts_payable_account_id,
-                                  unearned_revenue_account_id,
+                                  unearned_revenue_account_id, prepaid_expenses_account_id,
                                   unallocated_debits_account_id, unallocated_credits_account_id,
                                   default_cheque_credit_account_id,
                                   default_cheque_debit_account_id,
@@ -1359,6 +1385,7 @@ class LedgerService:
                             payload.accounts_receivable_account_id,
                             payload.accounts_payable_account_id,
                             payload.unearned_revenue_account_id,
+                            payload.prepaid_expenses_account_id,
                             payload.unallocated_debits_account_id,
                             payload.unallocated_credits_account_id,
                             payload.default_cheque_credit_account_id,
@@ -3809,19 +3836,200 @@ class LedgerService:
             )
 
     @staticmethod
-    def _assert_account_type(cur, account_id: int, expected_type: str) -> None:
-        cur.execute("SELECT type FROM accounts WHERE id = %s", (account_id,))
-        row = cur.fetchone()
-        if not row:
-            raise LedgerValidationError(f"account {account_id} not found")
-        if row["type"] != expected_type:
-            raise LedgerValidationError(f"account {account_id} must be type {expected_type}")
+    def _ledger_setting_account_type_article(expected_type: str) -> str:
+        indefinite = {
+            "asset": "an asset",
+            "liability": "a liability",
+            "suspense": "a suspense",
+            "equity": "an equity",
+            "revenue": "a revenue",
+            "expense": "an expense",
+        }
+        return indefinite[expected_type]
+
+    @staticmethod
+    def _ledger_setting_type_mismatch_message(
+        setting_kind: str,
+        setting_label: str,
+        expected_type: str,
+        account_name: str,
+        account_id: int,
+        actual_type: str,
+    ) -> str:
+        return (
+            f'{setting_kind} "{setting_label}" requires '
+            f"{LedgerService._ledger_setting_account_type_article(expected_type)} account. "
+            f'"{account_name}" ({account_id}) is '
+            f"{LedgerService._ledger_setting_account_type_article(actual_type)} account."
+        )
+
+    @staticmethod
+    def _ledger_setting_not_found_message(
+        setting_kind: str,
+        setting_label: str,
+        account_id: int,
+    ) -> str:
+        return f'{setting_kind} "{setting_label}": account id {account_id} was not found.'
+
+    @staticmethod
+    def _ledger_setting_inactive_message(
+        setting_kind: str,
+        setting_label: str,
+        account_name: str,
+        account_id: int,
+    ) -> str:
+        return (
+            f'{setting_kind} "{setting_label}" cannot use deactivated account '
+            f'"{account_name}" ({account_id}).'
+        )
+
+    @staticmethod
+    def _validate_ledger_settings_accounts(cur, payload, existing) -> None:
+        type_rules: list[tuple[str, str, str, str]] = [
+            ("accounts_receivable_account_id", "Accounts receivable", "asset", "Settlement role"),
+            ("accounts_payable_account_id", "Accounts payable", "liability", "Settlement role"),
+            ("unearned_revenue_account_id", "Unearned revenue", "liability", "Settlement role"),
+            ("prepaid_expenses_account_id", "Prepaid expenses", "asset", "Settlement role"),
+            (
+                "unallocated_debits_account_id",
+                "Unallocated debits (default debit side)",
+                "suspense",
+                "Settlement role",
+            ),
+            (
+                "unallocated_credits_account_id",
+                "Unallocated credits (default credit side)",
+                "suspense",
+                "Settlement role",
+            ),
+        ]
+
+        account_ids: set[int] = set()
+        type_checks: list[tuple[str, str, int, str]] = []
+        active_checks: list[tuple[str, str, int]] = []
+
+        for field, label, expected_type, setting_kind in type_rules:
+            account_id = getattr(payload, field)
+            if account_id is None:
+                continue
+            account_ids.add(account_id)
+            type_checks.append((setting_kind, label, account_id, expected_type))
+            if account_id != existing.get(field):
+                active_checks.append((setting_kind, label, account_id))
+
+        cheque_checks: list[tuple[str, int, str]] = []
+        new_cr = payload.default_cheque_credit_account_id
+        if new_cr is not None and new_cr != existing.get("default_cheque_credit_account_id"):
+            account_ids.add(new_cr)
+            cheque_checks.append(("Default cheque credit account", new_cr, "credit"))
+        new_dr = payload.default_cheque_debit_account_id
+        if new_dr is not None and new_dr != existing.get("default_cheque_debit_account_id"):
+            account_ids.add(new_dr)
+            cheque_checks.append(("Default cheque debit account", new_dr, "debit"))
+
+        if not account_ids:
+            return
+
+        cur.execute(
+            "SELECT id, name, type, is_active FROM accounts WHERE id = ANY(%s)",
+            (sorted(account_ids),),
+        )
+        accounts_by_id = {row["id"]: row for row in cur.fetchall()}
+
+        errors: list[str] = []
+        type_error_labels: set[str] = set()
+        ledger_setting_kind = "Ledger setting"
+
+        for setting_kind, label, account_id, expected_type in type_checks:
+            row = accounts_by_id.get(account_id)
+            if not row:
+                errors.append(
+                    LedgerService._ledger_setting_not_found_message(setting_kind, label, account_id)
+                )
+                continue
+            if row["type"] != expected_type:
+                type_error_labels.add(label)
+                errors.append(
+                    LedgerService._ledger_setting_type_mismatch_message(
+                        setting_kind,
+                        label,
+                        expected_type,
+                        row["name"],
+                        account_id,
+                        row["type"],
+                    )
+                )
+
+        for setting_kind, label, account_id in active_checks:
+            if label in type_error_labels:
+                continue
+            row = accounts_by_id.get(account_id)
+            if row and not row["is_active"]:
+                errors.append(
+                    LedgerService._ledger_setting_inactive_message(
+                        setting_kind,
+                        label,
+                        row["name"],
+                        account_id,
+                    )
+                )
+
+        for label, account_id, kind in cheque_checks:
+            row = accounts_by_id.get(account_id)
+            if not row:
+                errors.append(
+                    LedgerService._ledger_setting_not_found_message(
+                        ledger_setting_kind,
+                        label,
+                        account_id,
+                    )
+                )
+                continue
+            if kind == "credit":
+                if row["type"] != "asset":
+                    errors.append(
+                        LedgerService._ledger_setting_type_mismatch_message(
+                            ledger_setting_kind,
+                            label,
+                            "asset",
+                            row["name"],
+                            account_id,
+                            row["type"],
+                        )
+                    )
+                elif not row["is_active"]:
+                    errors.append(
+                        LedgerService._ledger_setting_inactive_message(
+                            ledger_setting_kind,
+                            label,
+                            row["name"],
+                            account_id,
+                        )
+                    )
+            elif row["type"] == "suspense":
+                errors.append(
+                    f'{ledger_setting_kind} "{label}" cannot use a suspense account. '
+                    f'"{row["name"]}" ({account_id}) is a suspense account.'
+                )
+            elif not row["is_active"]:
+                errors.append(
+                    LedgerService._ledger_setting_inactive_message(
+                        ledger_setting_kind,
+                        label,
+                        row["name"],
+                        account_id,
+                    )
+                )
+
+        if errors:
+            raise LedgerSettingsValidationError(errors)
 
     @staticmethod
     def _fetch_settings_row(cur):
         cur.execute(
             """
-            SELECT accounts_receivable_account_id, accounts_payable_account_id, unearned_revenue_account_id
+            SELECT accounts_receivable_account_id, accounts_payable_account_id,
+                   unearned_revenue_account_id, prepaid_expenses_account_id
             FROM ledger_settings
             WHERE id = 1
             """

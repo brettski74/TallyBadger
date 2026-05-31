@@ -1,10 +1,22 @@
 import { getApiBase } from "./baseUrl";
-import { readApiErrorMessage } from "./errors";
+import { messageFromErrorBody, parseDetailErrorsArray, readApiErrorMessage } from "./errors";
+
+export class LedgerSettingsValidationError extends Error {
+  readonly status = 422;
+  readonly errors: string[];
+
+  constructor(errors: string[]) {
+    super("Ledger settings validation failed");
+    this.name = "LedgerSettingsValidationError";
+    this.errors = errors;
+  }
+}
 
 export interface LedgerSettings {
   accounts_receivable_account_id: number | null;
   accounts_payable_account_id: number | null;
   unearned_revenue_account_id: number | null;
+  prepaid_expenses_account_id: number | null;
   unallocated_debits_account_id: number | null;
   unallocated_credits_account_id: number | null;
   /** Last credit (cheque/bank register) account saved; pre-fills the next new cheque when still eligible (#105). */
@@ -57,7 +69,23 @@ export async function updateLedgerSettings(payload: Partial<LedgerSettings>): Pr
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
-  if (!response.ok) throw new Error(await readApiErrorMessage(response));
+  if (!response.ok) {
+    let data: unknown;
+    try {
+      data = await response.json();
+    } catch {
+      data = null;
+    }
+    if (response.status === 422) {
+      const validationErrors = data != null ? parseDetailErrorsArray(data) : null;
+      if (validationErrors) {
+        throw new LedgerSettingsValidationError(validationErrors);
+      }
+    }
+    throw new Error(
+      (data != null ? messageFromErrorBody(data) : null) ?? `Request failed (${response.status})`,
+    );
+  }
   return response.json();
 }
 

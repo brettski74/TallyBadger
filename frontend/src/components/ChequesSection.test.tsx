@@ -51,6 +51,7 @@ interface RouteMocks {
     accounts_receivable_account_id: number | null;
     accounts_payable_account_id: number | null;
     unearned_revenue_account_id: number | null;
+    prepaid_expenses_account_id: number | null;
     unallocated_debits_account_id: number | null;
     unallocated_credits_account_id: number | null;
     default_cheque_credit_account_id: number | null;
@@ -66,6 +67,7 @@ function defaultSettings(overrides: RouteMocks["settings"] = {}) {
     accounts_receivable_account_id: null,
     accounts_payable_account_id: null,
     unearned_revenue_account_id: null,
+    prepaid_expenses_account_id: null,
     unallocated_debits_account_id: null,
     unallocated_credits_account_id: null,
     default_cheque_credit_account_id: null,

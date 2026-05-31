@@ -42,6 +42,7 @@ from tallybadger.ledger.service import (
     LedgerConflictError,
     LedgerNotFoundError,
     LedgerService,
+    LedgerSettingsValidationError,
     LedgerValidationError,
     read_upload_file_limited,
 )
@@ -295,6 +296,14 @@ def update_ledger_settings(
 ) -> LedgerSettingsOut:
     try:
         return service.update_ledger_settings(payload)
+    except LedgerSettingsValidationError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": "Ledger settings validation failed",
+                "errors": exc.errors,
+            },
+        ) from exc
     except LedgerValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 

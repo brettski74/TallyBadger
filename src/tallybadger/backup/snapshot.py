@@ -721,6 +721,7 @@ def _validate_configuration_fks(
         "accounts_receivable_account_id",
         "accounts_payable_account_id",
         "unearned_revenue_account_id",
+        "prepaid_expenses_account_id",
         "unallocated_debits_account_id",
         "unallocated_credits_account_id",
         "default_cheque_credit_account_id",

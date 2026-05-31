@@ -8,7 +8,7 @@ import {
   exportBackup,
   importBackup,
 } from "../api/backup";
-import { getLedgerSettings, updateLedgerSettings } from "../api/settlements";
+import { getLedgerSettings, LedgerSettingsValidationError, updateLedgerSettings } from "../api/settlements";
 import { accountsForSettingPicker } from "../journal/accountSelect";
 import {
   discardActionTooltip,
@@ -29,11 +29,13 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
   const [apBaseline, setApBaseline] = useState("");
   const [urId, setUrId] = useState("");
   const [urBaseline, setUrBaseline] = useState("");
+  const [prepaidId, setPrepaidId] = useState("");
+  const [prepaidBaseline, setPrepaidBaseline] = useState("");
   const [unallocDrId, setUnallocDrId] = useState("");
   const [unallocDrBaseline, setUnallocDrBaseline] = useState("");
   const [unallocCrId, setUnallocCrId] = useState("");
   const [unallocCrBaseline, setUnallocCrBaseline] = useState("");
-  const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [settingsErrors, setSettingsErrors] = useState<string[]>([]);
   const [savedMessage, setSavedMessage] = useState<string | null>(null);
   const [backupError, setBackupError] = useState<string | null>(null);
   const [backupMessage, setBackupMessage] = useState<string | null>(null);
@@ -49,9 +51,10 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
     setArId(arBaseline);
     setApId(apBaseline);
     setUrId(urBaseline);
+    setPrepaidId(prepaidBaseline);
     setUnallocDrId(unallocDrBaseline);
     setUnallocCrId(unallocCrBaseline);
-    setSettingsError(null);
+    setSettingsErrors([]);
     setSavedMessage(null);
   }
 
@@ -73,7 +76,7 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
     };
     document.addEventListener("keydown", onKeyDown, true);
     return () => document.removeEventListener("keydown", onKeyDown, true);
-  }, [arBaseline, apBaseline, urBaseline, unallocDrBaseline, unallocCrBaseline]);
+  }, [arBaseline, apBaseline, urBaseline, prepaidBaseline, unallocDrBaseline, unallocCrBaseline]);
 
   useEffect(() => {
     async function loadSettings() {
@@ -82,6 +85,9 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
         const ar = settings.accounts_receivable_account_id ? String(settings.accounts_receivable_account_id) : "";
         const ap = settings.accounts_payable_account_id ? String(settings.accounts_payable_account_id) : "";
         const ur = settings.unearned_revenue_account_id ? String(settings.unearned_revenue_account_id) : "";
+        const prepaid = settings.prepaid_expenses_account_id
+          ? String(settings.prepaid_expenses_account_id)
+          : "";
         const udr = settings.unallocated_debits_account_id
           ? String(settings.unallocated_debits_account_id)
           : "";
@@ -94,12 +100,16 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
         setApBaseline(ap);
         setUrId(ur);
         setUrBaseline(ur);
+        setPrepaidId(prepaid);
+        setPrepaidBaseline(prepaid);
         setUnallocDrId(udr);
         setUnallocDrBaseline(udr);
         setUnallocCrId(ucr);
         setUnallocCrBaseline(ucr);
       } catch (err) {
-        setSettingsError(err instanceof Error ? err.message : "Failed to load ledger settings");
+        setSettingsErrors([
+          err instanceof Error ? err.message : "Failed to load ledger settings",
+        ]);
       }
     }
     void loadSettings();
@@ -107,19 +117,23 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
 
   async function handleSaveSettings(event: FormEvent) {
     event.preventDefault();
-    setSettingsError(null);
+    setSettingsErrors([]);
     setSavedMessage(null);
     try {
       const settings = await updateLedgerSettings({
         accounts_receivable_account_id: arId ? Number(arId) : null,
         accounts_payable_account_id: apId ? Number(apId) : null,
         unearned_revenue_account_id: urId ? Number(urId) : null,
+        prepaid_expenses_account_id: prepaidId ? Number(prepaidId) : null,
         unallocated_debits_account_id: unallocDrId ? Number(unallocDrId) : null,
         unallocated_credits_account_id: unallocCrId ? Number(unallocCrId) : null,
       });
       const ar = settings.accounts_receivable_account_id ? String(settings.accounts_receivable_account_id) : "";
       const ap = settings.accounts_payable_account_id ? String(settings.accounts_payable_account_id) : "";
       const ur = settings.unearned_revenue_account_id ? String(settings.unearned_revenue_account_id) : "";
+      const prepaid = settings.prepaid_expenses_account_id
+        ? String(settings.prepaid_expenses_account_id)
+        : "";
       const udr = settings.unallocated_debits_account_id
         ? String(settings.unallocated_debits_account_id)
         : "";
@@ -132,13 +146,21 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
       setApBaseline(ap);
       setUrId(ur);
       setUrBaseline(ur);
+      setPrepaidId(prepaid);
+      setPrepaidBaseline(prepaid);
       setUnallocDrId(udr);
       setUnallocDrBaseline(udr);
       setUnallocCrId(ucr);
       setUnallocCrBaseline(ucr);
       setSavedMessage("Settings saved.");
     } catch (err) {
-      setSettingsError(err instanceof Error ? err.message : "Failed to update settings");
+      if (err instanceof LedgerSettingsValidationError) {
+        setSettingsErrors(err.errors);
+        return;
+      }
+      setSettingsErrors([
+        err instanceof Error ? err.message : "Failed to update settings",
+      ]);
     }
   }
 
@@ -150,7 +172,8 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
     <section className="card journal-card-wide">
       <h2>Configuration</h2>
       <p className="muted">
-        Settlement workflow accounts (A/R, A/P, unearned revenue) and CSV import suspense buckets. Unallocated
+        Settlement workflow accounts (A/R, A/P, unearned revenue, prepaid expenses) and CSV import suspense
+        buckets. Unallocated
         accounts must use the <strong>suspense</strong> type; configure those on the Accounts tab first.
       </p>
       <form ref={settingsFormRef} onSubmit={(e) => void handleSaveSettings(e)}>
@@ -184,6 +207,18 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
           <select value={urId} onChange={(e) => setUrId(e.target.value)}>
             <option value="">Select liability account</option>
             {accountsForSettingPicker(liabilityAccounts, urId, urBaseline).map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+                {!a.is_active ? " (inactive)" : ""}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Prepaid expenses
+          <select value={prepaidId} onChange={(e) => setPrepaidId(e.target.value)}>
+            <option value="">Select asset account</option>
+            {accountsForSettingPicker(assetAccounts, prepaidId, prepaidBaseline).map((a) => (
               <option key={a.id} value={a.id}>
                 {a.name}
                 {!a.is_active ? " (inactive)" : ""}
@@ -242,11 +277,11 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
             Discard
           </button>
         </div>
-        {settingsError && (
-          <p className="error" role="alert">
-            {settingsError}
+        {settingsErrors.map((message, index) => (
+          <p key={`settings-error-${index}`} className="error-text" role="alert">
+            {message}
           </p>
-        )}
+        ))}
         {savedMessage && (
           <p className="muted" role="status">
             {savedMessage}

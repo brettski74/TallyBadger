@@ -646,6 +646,7 @@ class LedgerSettingsUpdate(BaseModel):
     accounts_receivable_account_id: int | None = Field(default=None, gt=0)
     accounts_payable_account_id: int | None = Field(default=None, gt=0)
     unearned_revenue_account_id: int | None = Field(default=None, gt=0)
+    prepaid_expenses_account_id: int | None = Field(default=None, gt=0)
     unallocated_debits_account_id: int | None = Field(default=None, gt=0)
     unallocated_credits_account_id: int | None = Field(default=None, gt=0)
     default_cheque_credit_account_id: int | None = Field(default=None, gt=0)
@@ -662,6 +663,7 @@ class LedgerSettingsOut(BaseModel):
     accounts_receivable_account_id: int | None
     accounts_payable_account_id: int | None
     unearned_revenue_account_id: int | None
+    prepaid_expenses_account_id: int | None
     unallocated_debits_account_id: int | None
     unallocated_credits_account_id: int | None
     default_cheque_credit_account_id: int | None

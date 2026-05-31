@@ -16,13 +16,15 @@ const accounts: Account[] = [
   { id: 3, name: "A/P", type: "liability", is_active: true, created_at: "", updated_at: "" },
   { id: 13, name: "Old Payable", type: "liability", is_active: false, created_at: "", updated_at: "" },
   { id: 4, name: "Unearned", type: "liability", is_active: true, created_at: "", updated_at: "" },
+  { id: 5, name: "Prepaid", type: "asset", is_active: true, created_at: "", updated_at: "" },
+  { id: 15, name: "Legacy Prepaid", type: "asset", is_active: false, created_at: "", updated_at: "" },
   { id: 10, name: "Unallocated Debits", type: "suspense", is_active: true, created_at: "", updated_at: "" },
   { id: 11, name: "Unallocated Credits", type: "suspense", is_active: true, created_at: "", updated_at: "" },
   { id: 20, name: "Stale suspense", type: "suspense", is_active: false, created_at: "", updated_at: "" },
 ];
 
 describe("ConfigurationSection", () => {
-  it("loads ledger settings and saves all five account roles", async () => {
+  it("loads ledger settings and saves all six account roles", async () => {
     vi.spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(
         new Response(
@@ -30,6 +32,7 @@ describe("ConfigurationSection", () => {
             accounts_receivable_account_id: null,
             accounts_payable_account_id: null,
             unearned_revenue_account_id: null,
+            prepaid_expenses_account_id: null,
             unallocated_debits_account_id: null,
             unallocated_credits_account_id: null,
             updated_at: "2026-01-01T00:00:00Z",
@@ -43,6 +46,7 @@ describe("ConfigurationSection", () => {
             accounts_receivable_account_id: 2,
             accounts_payable_account_id: 3,
             unearned_revenue_account_id: 4,
+            prepaid_expenses_account_id: 5,
             unallocated_debits_account_id: 10,
             unallocated_credits_account_id: 11,
             updated_at: "2026-01-02T00:00:00Z",
@@ -61,6 +65,7 @@ describe("ConfigurationSection", () => {
     await user.selectOptions(screen.getByLabelText("Accounts receivable"), "2");
     await user.selectOptions(screen.getByLabelText("Accounts payable"), "3");
     await user.selectOptions(screen.getByLabelText("Unearned revenue"), "4");
+    await user.selectOptions(screen.getByLabelText("Prepaid expenses"), "5");
     await user.selectOptions(screen.getByLabelText("Unallocated debits (default debit side)"), "10");
     await user.selectOptions(screen.getByLabelText("Unallocated credits (default credit side)"), "11");
     await user.click(screen.getByRole("button", { name: /Save configuration/i }));
@@ -73,6 +78,7 @@ describe("ConfigurationSection", () => {
       accounts_receivable_account_id: 2,
       accounts_payable_account_id: 3,
       unearned_revenue_account_id: 4,
+      prepaid_expenses_account_id: 5,
       unallocated_debits_account_id: 10,
       unallocated_credits_account_id: 11,
     });
@@ -85,6 +91,7 @@ describe("ConfigurationSection", () => {
           accounts_receivable_account_id: 12,
           accounts_payable_account_id: 3,
           unearned_revenue_account_id: 4,
+          prepaid_expenses_account_id: 15,
           unallocated_debits_account_id: 20,
           unallocated_credits_account_id: 11,
           updated_at: "2026-01-01T00:00:00Z",
@@ -98,6 +105,14 @@ describe("ConfigurationSection", () => {
     await waitFor(() => {
       expect(screen.getByLabelText("Accounts receivable")).toHaveValue("12");
     });
+
+    expect(screen.getByLabelText("Prepaid expenses")).toHaveValue("15");
+    const prepaidOptions = Array.from(
+      screen.getByLabelText("Prepaid expenses").querySelectorAll("option"),
+    ).map((o) => o.textContent);
+    expect(prepaidOptions.some((t) => t?.includes("Legacy Prepaid") && t?.includes("inactive"))).toBe(
+      true,
+    );
 
     const arOptions = Array.from(
       screen.getByLabelText("Accounts receivable").querySelectorAll("option"),
@@ -126,6 +141,7 @@ describe("ConfigurationSection", () => {
         accounts_receivable_account_id: null,
         accounts_payable_account_id: null,
         unearned_revenue_account_id: null,
+        prepaid_expenses_account_id: null,
         unallocated_debits_account_id: null,
         unallocated_credits_account_id: null,
         updated_at: "2026-01-01T00:00:00Z",
@@ -133,6 +149,45 @@ describe("ConfigurationSection", () => {
       { status: 200 },
     );
   }
+
+  it("shows each ledger settings validation error in its own error-text box", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(ledgerSettingsResponse())
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            detail: {
+              message: "Ledger settings validation failed",
+              errors: [
+                'Settlement role "Accounts payable" requires a liability account. "Cash" (1) is an asset account.',
+                'Settlement role "Prepaid expenses" requires an asset account. "A/P" (3) is a liability account.',
+              ],
+            },
+          }),
+          { status: 422 },
+        ),
+      );
+
+    render(<ConfigurationSection accounts={accounts} />);
+    const user = userEvent.setup();
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Accounts receivable")).toBeInTheDocument();
+    });
+
+    await user.selectOptions(screen.getByLabelText("Accounts payable"), "3");
+    await user.selectOptions(screen.getByLabelText("Prepaid expenses"), "5");
+    await user.click(screen.getByRole("button", { name: /Save configuration/i }));
+
+    await waitFor(() => {
+      expect(screen.getAllByRole("alert")).toHaveLength(2);
+    });
+    const alerts = screen.getAllByRole("alert");
+    expect(alerts[0]).toHaveClass("error-text");
+    expect(alerts[0]).toHaveTextContent('Settlement role "Accounts payable"');
+    expect(alerts[1]).toHaveClass("error-text");
+    expect(alerts[1]).toHaveTextContent('Settlement role "Prepaid expenses"');
+  });
 
   it("restore success without deprecation shows only generic success", async () => {
     vi.spyOn(globalThis, "fetch")

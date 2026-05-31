@@ -207,6 +207,7 @@ describe("App", () => {
             accounts_receivable_account_id: null,
             accounts_payable_account_id: null,
             unearned_revenue_account_id: null,
+            prepaid_expenses_account_id: null,
             unallocated_debits_account_id: null,
             unallocated_credits_account_id: null,
             updated_at: "2026-04-01T00:00:00Z",

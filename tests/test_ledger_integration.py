@@ -33,6 +33,7 @@ from tallybadger.ledger.service import (
     LedgerConflictError,
     LedgerNotFoundError,
     LedgerService,
+    LedgerSettingsValidationError,
     LedgerValidationError,
 )
 
@@ -1327,8 +1328,11 @@ def test_update_ledger_settings_validate_on_change_for_system_defaults(
 ) -> None:
     ar = ledger_service.create_account(AccountCreate(name="Tenant AR", type="asset"))
     ar2 = ledger_service.create_account(AccountCreate(name="Tenant AR 2", type="asset"))
+    ar3 = ledger_service.create_account(AccountCreate(name="Tenant AR 3", type="asset"))
     ledger_service.update_ledger_settings(LedgerSettingsUpdate(accounts_receivable_account_id=ar.id))
-    ledger_service.update_account(ar.id, AccountUpdate(is_active=False))
+
+    with pytest.raises(LedgerConflictError, match='Settlement role "Accounts receivable"'):
+        ledger_service.update_account(ar.id, AccountUpdate(is_active=False))
 
     out = ledger_service.update_ledger_settings(
         LedgerSettingsUpdate(max_attachment_upload_bytes=2048),
@@ -1336,9 +1340,162 @@ def test_update_ledger_settings_validate_on_change_for_system_defaults(
     assert out.accounts_receivable_account_id == ar.id
     assert out.max_attachment_upload_bytes == 2048
 
+    ledger_service.update_ledger_settings(LedgerSettingsUpdate(accounts_receivable_account_id=ar2.id))
+    ledger_service.update_account(ar.id, AccountUpdate(is_active=False))
+
+    with pytest.raises(LedgerConflictError, match='Settlement role "Accounts receivable"'):
+        ledger_service.update_account(ar2.id, AccountUpdate(is_active=False))
+
+    ledger_service.update_ledger_settings(LedgerSettingsUpdate(accounts_receivable_account_id=ar3.id))
     ledger_service.update_account(ar2.id, AccountUpdate(is_active=False))
-    with pytest.raises(LedgerValidationError, match="deactivated"):
+    with pytest.raises(LedgerValidationError, match="cannot use deactivated account"):
         ledger_service.update_ledger_settings(LedgerSettingsUpdate(accounts_receivable_account_id=ar2.id))
+
+
+def test_ledger_settings_prepaid_expenses_account_asset_only(
+    ledger_service: LedgerService,
+) -> None:
+    prepaid = ledger_service.create_account(AccountCreate(name="Vendor Prepaid", type="asset"))
+    liability = ledger_service.create_account(AccountCreate(name="Accrued", type="liability"))
+
+    out = ledger_service.update_ledger_settings(
+        LedgerSettingsUpdate(prepaid_expenses_account_id=prepaid.id),
+    )
+    assert out.prepaid_expenses_account_id == prepaid.id
+
+    with pytest.raises(LedgerValidationError) as exc:
+        ledger_service.update_ledger_settings(
+            LedgerSettingsUpdate(prepaid_expenses_account_id=liability.id),
+        )
+    msg = str(exc.value)
+    assert msg == (
+        f'Settlement role "Prepaid expenses" requires an asset account. '
+        f'"Accrued" ({liability.id}) is a liability account.'
+    )
+
+
+def test_ledger_settings_type_errors_name_setting_account_and_collect_all(
+    ledger_service: LedgerService,
+) -> None:
+    asset = ledger_service.create_account(AccountCreate(name="Operating Cash", type="asset"))
+    revenue = ledger_service.create_account(AccountCreate(name="Rent Income", type="revenue"))
+    expense = ledger_service.create_account(AccountCreate(name="Office Supplies", type="expense"))
+
+    with pytest.raises(LedgerSettingsValidationError) as exc:
+        ledger_service.update_ledger_settings(
+            LedgerSettingsUpdate(
+                accounts_payable_account_id=asset.id,
+                unearned_revenue_account_id=revenue.id,
+                prepaid_expenses_account_id=expense.id,
+            ),
+        )
+    msg = str(exc.value)
+    assert len(exc.value.errors) == 3
+    assert exc.value.errors[0] == (
+        f'Settlement role "Accounts payable" requires a liability account. '
+        f'"Operating Cash" ({asset.id}) is an asset account.'
+    )
+    assert exc.value.errors[1] == (
+        f'Settlement role "Unearned revenue" requires a liability account. '
+        f'"Rent Income" ({revenue.id}) is a revenue account.'
+    )
+    assert exc.value.errors[2] == (
+        f'Settlement role "Prepaid expenses" requires an asset account. '
+        f'"Office Supplies" ({expense.id}) is an expense account.'
+    )
+    assert "Accounts payable" in msg
+
+
+def test_ledger_settings_inactive_error_names_setting_and_account(
+    ledger_service: LedgerService,
+) -> None:
+    prepaid = ledger_service.create_account(AccountCreate(name="Vendor Prepaid", type="asset"))
+    prepaid2 = ledger_service.create_account(AccountCreate(name="Vendor Prepaid 2", type="asset"))
+    ledger_service.update_ledger_settings(LedgerSettingsUpdate(prepaid_expenses_account_id=prepaid.id))
+    ledger_service.update_account(prepaid2.id, AccountUpdate(is_active=False))
+
+    with pytest.raises(LedgerValidationError) as exc:
+        ledger_service.update_ledger_settings(
+            LedgerSettingsUpdate(prepaid_expenses_account_id=prepaid2.id),
+        )
+    msg = str(exc.value)
+    assert msg == (
+        f'Settlement role "Prepaid expenses" cannot use deactivated account '
+        f'"Vendor Prepaid 2" ({prepaid2.id}).'
+    )
+
+
+def test_update_ledger_settings_validate_on_change_for_prepaid_expenses(
+    ledger_service: LedgerService,
+) -> None:
+    prepaid = ledger_service.create_account(AccountCreate(name="Vendor Prepaid", type="asset"))
+    prepaid2 = ledger_service.create_account(AccountCreate(name="Vendor Prepaid 2", type="asset"))
+    ledger_service.update_ledger_settings(LedgerSettingsUpdate(prepaid_expenses_account_id=prepaid.id))
+
+    with pytest.raises(LedgerConflictError, match='Settlement role "Prepaid expenses"'):
+        ledger_service.update_account(prepaid.id, AccountUpdate(is_active=False))
+
+    out = ledger_service.update_ledger_settings(
+        LedgerSettingsUpdate(max_attachment_upload_bytes=4096),
+    )
+    assert out.prepaid_expenses_account_id == prepaid.id
+
+    ledger_service.update_ledger_settings(LedgerSettingsUpdate(prepaid_expenses_account_id=prepaid2.id))
+    with pytest.raises(LedgerConflictError, match='Settlement role "Prepaid expenses"'):
+        ledger_service.update_account(prepaid2.id, AccountUpdate(is_active=False))
+
+    ledger_service.update_ledger_settings(LedgerSettingsUpdate(prepaid_expenses_account_id=prepaid.id))
+    ledger_service.update_account(prepaid2.id, AccountUpdate(is_active=False))
+    with pytest.raises(LedgerValidationError, match="cannot use deactivated account"):
+        ledger_service.update_ledger_settings(
+            LedgerSettingsUpdate(prepaid_expenses_account_id=prepaid2.id),
+        )
+
+
+def test_deactivate_account_blocked_for_configured_settlement_roles(
+    ledger_service: LedgerService,
+) -> None:
+    prepaid = ledger_service.create_account(AccountCreate(name="Vendor Prepaid", type="asset"))
+    suspense = ledger_service.create_account(AccountCreate(name="Import suspense", type="suspense"))
+    ledger_service.update_ledger_settings(
+        LedgerSettingsUpdate(
+            prepaid_expenses_account_id=prepaid.id,
+            unallocated_debits_account_id=suspense.id,
+        ),
+    )
+
+    with pytest.raises(LedgerConflictError) as exc:
+        ledger_service.update_account(prepaid.id, AccountUpdate(is_active=False))
+    assert str(exc.value) == (
+        f'Cannot deactivate account "Vendor Prepaid" ({prepaid.id}): '
+        f'it is configured as Settlement role "Prepaid expenses".'
+    )
+
+    with pytest.raises(LedgerConflictError) as exc:
+        ledger_service.update_account(suspense.id, AccountUpdate(is_active=False))
+    assert "Unallocated debits (default debit side)" in str(exc.value)
+
+    other_prepaid = ledger_service.create_account(AccountCreate(name="Other prepaid", type="asset"))
+    other_suspense = ledger_service.create_account(AccountCreate(name="Other suspense", type="suspense"))
+    ledger_service.update_ledger_settings(
+        LedgerSettingsUpdate(
+            prepaid_expenses_account_id=other_prepaid.id,
+            unallocated_debits_account_id=other_suspense.id,
+        ),
+    )
+    updated_prepaid = ledger_service.update_account(prepaid.id, AccountUpdate(is_active=False))
+    updated_suspense = ledger_service.update_account(suspense.id, AccountUpdate(is_active=False))
+    assert updated_prepaid.is_active is False
+    assert updated_suspense.is_active is False
+
+
+def test_account_type_change_blocked_by_prepaid_expenses_setting(
+    ledger_service: LedgerService,
+) -> None:
+    prepaid = ledger_service.create_account(AccountCreate(name="Vendor Prepaid", type="asset"))
+    ledger_service.update_ledger_settings(LedgerSettingsUpdate(prepaid_expenses_account_id=prepaid.id))
+    with pytest.raises(LedgerConflictError, match="ledger settings"):
+        ledger_service.update_account(prepaid.id, AccountUpdate(type="liability"))
 
 
 def test_update_party_does_not_revalidate_inactive_default_accounts_unless_changed(

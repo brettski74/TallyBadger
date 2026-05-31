@@ -19,6 +19,7 @@ Use this workflow when turning a **feature** GitHub issue into a single, agreed 
 4. **Discuss gaps** with the user; revise the draft until the user agrees the requirements are complete. Put the draft requirements in the issue body, not in the chat. Discussion points can go in the chat, but I want to see the draft requirements on the issue on github.
 5. **Update the issue body** on GitHub with the agreed text so the issue remains the **single source of truth** (for example `issue_write` with `method: update` and the new `body`).
 6. When the user agrees that the issue details are complete and not before, label the issue as READY and inform the user that this workflow is complete.
+7. Remove any temporary markdown files that were created to help create and track the issue body. They should not be committed to git and should no longer be required once this workflow is complete and the contents have been written to github and marked ready.
 
 ## Notes
 
@@ -28,4 +29,5 @@ Use this workflow when turning a **feature** GitHub issue into a single, agreed 
 - Build the detailed requirements on the issue description. It's easier for the user to read and review it there than in the chat.
 - Don't assume we're ready just because the user has given you some feedback. Wait for explicit agreement from the user that the ticket is ready or the refinement is complete or it's time to finish the workflow.
 - If the required work appears very large, suggest a proposed breakdown of the work into more manageable child tickets in the chat. **Do not create child tickets** unless and until the user agrees. As a guideline, a ticket should be considered too large if it appears likely to consume more than 150k of context during implementation, including automated test runs but not user driven UAT.
+- As you update the issue body in github, maintain a copy in a local markdown file and update it between successive updates during refinement. The local difference tracking features help the user understand what sections have been added/changed/removed in each iteration.
 
