@@ -28,4 +28,5 @@ Use this workflow when turning a **feature** GitHub issue into a single, agreed 
 - Build the detailed requirements on the issue description. It's easier for the user to read and review it there than in the chat.
 - Don't assume we're ready just because the user has given you some feedback. Wait for explicit agreement from the user that the ticket is ready or the refinement is complete or it's time to finish the workflow.
 - If the required work appears very large, suggest a proposed breakdown of the work into more manageable child tickets in the chat. **Do not create child tickets** unless and until the user agrees. As a guideline, a ticket should be considered too large if it appears likely to consume more than 150k of context during implementation, including automated test runs but not user driven UAT.
+- As you update the issue body in github, maintain a copy in a local markdown file and update it between successive updates during refinement. The local difference tracking features help the user understand what sections have been added/changed/removed in each iteration.
 

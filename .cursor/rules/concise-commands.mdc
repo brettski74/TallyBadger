@@ -2,4 +2,4 @@
 alwaysApply: true
 ---
 
-Keep commands as short and concise as possible. Avoid stringing together numerous commands with the && operator unless it cannot be avoided so that review and approval of commands remains simple.
+Keep commands as short and concise as possible. Avoid stringing together numerous commands with the && operator unless it cannot be avoided so that review and approval of commands remains simple. Using a single cd to change to an appropriate directory is fine if that's the only thing and is then followed by the actual command that needs to be run via &&. Avoid anything longer or different from this pattern unless there is no other way to do what's needed.
