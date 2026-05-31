@@ -127,6 +127,15 @@ def read_upload_file_limited(file_obj: object, max_bytes: int) -> bytes:
 JOURNAL_LIST_SPLIT_LABEL = "-- Split --"
 JOURNAL_LIST_NO_PARTY_LABEL = "—"
 
+_LEDGER_SETTLEMENT_ROLE_FIELDS: tuple[tuple[str, str], ...] = (
+    ("accounts_receivable_account_id", "Accounts receivable"),
+    ("accounts_payable_account_id", "Accounts payable"),
+    ("unearned_revenue_account_id", "Unearned revenue"),
+    ("prepaid_expenses_account_id", "Prepaid expenses"),
+    ("unallocated_debits_account_id", "Unallocated debits (default debit side)"),
+    ("unallocated_credits_account_id", "Unallocated credits (default credit side)"),
+)
+
 # Per-entry list amount (debits when positive lines exist; else credit magnitude).
 JOURNAL_ENTRY_LIST_AMOUNT_EXPR = (
     "(SELECT CASE "
@@ -808,6 +817,42 @@ class LedgerService:
                 "(the till remembers every coin).",
             )
 
+    @staticmethod
+    def _settlement_roles_for_account(cur, account_id: int) -> list[str]:
+        cur.execute(
+            """
+            SELECT accounts_receivable_account_id, accounts_payable_account_id,
+                   unearned_revenue_account_id, prepaid_expenses_account_id,
+                   unallocated_debits_account_id, unallocated_credits_account_id
+            FROM ledger_settings
+            WHERE id = 1
+            """,
+        )
+        row = cur.fetchone()
+        if not row:
+            return []
+        return [
+            label
+            for field, label in _LEDGER_SETTLEMENT_ROLE_FIELDS
+            if row.get(field) == account_id
+        ]
+
+    @staticmethod
+    def _assert_account_deactivation_allowed(cur, account_id: int, account_name: str) -> None:
+        roles = LedgerService._settlement_roles_for_account(cur, account_id)
+        if not roles:
+            return
+        if len(roles) == 1:
+            raise LedgerConflictError(
+                f'Cannot deactivate account "{account_name}" ({account_id}): '
+                f'it is configured as Settlement role "{roles[0]}".'
+            )
+        role_list = ", ".join(f'"{role}"' for role in roles)
+        raise LedgerConflictError(
+            f'Cannot deactivate account "{account_name}" ({account_id}): '
+            f"it is configured as settlement roles {role_list}."
+        )
+
     def update_account(self, account_id: int, payload: AccountUpdate) -> AccountOut:
         if payload.name is None and payload.is_active is None and payload.type is None:
             raise LedgerValidationError("at least one account field must be updated")
@@ -846,6 +891,13 @@ class LedgerService:
 
                         if type_changing:
                             self._assert_account_type_change_allowed(cur, account_id)
+
+                        if active_changing and not new_active:
+                            self._assert_account_deactivation_allowed(
+                                cur,
+                                account_id,
+                                current_name,
+                            )
 
                         updates: list[str] = []
                         params: list[object] = []
