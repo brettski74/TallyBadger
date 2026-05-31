@@ -19,6 +19,7 @@ Use this workflow when turning a **feature** GitHub issue into a single, agreed 
 4. **Discuss gaps** with the user; revise the draft until the user agrees the requirements are complete. Put the draft requirements in the issue body, not in the chat. Discussion points can go in the chat, but I want to see the draft requirements on the issue on github.
 5. **Update the issue body** on GitHub with the agreed text so the issue remains the **single source of truth** (for example `issue_write` with `method: update` and the new `body`).
 6. When the user agrees that the issue details are complete and not before, label the issue as READY and inform the user that this workflow is complete.
+7. Remove any temporary markdown files that were created to help create and track the issue body. They should not be committed to git and should no longer be required once this workflow is complete and the contents have been written to github and marked ready.
 
 ## Notes
 
