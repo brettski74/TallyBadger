@@ -631,8 +631,10 @@ def test_ledger_settings_patch_validates_new_cheque_defaults(
     assert bad_credit.status_code == 422, bad_credit.text
     credit_errors = bad_credit.json()["detail"]["errors"]
     assert len(credit_errors) == 1
-    assert "Default cheque credit account" in credit_errors[0]
-    assert "Rent" in credit_errors[0]
+    assert credit_errors[0] == (
+        f'Ledger setting "Default cheque credit account" requires an asset account. '
+        f'"Rent" ({expense.id}) is an expense account.'
+    )
 
     # Suspense is rejected for debit default.
     bad_debit = api_client.patch(
@@ -642,7 +644,10 @@ def test_ledger_settings_patch_validates_new_cheque_defaults(
     assert bad_debit.status_code == 422, bad_debit.text
     debit_errors = bad_debit.json()["detail"]["errors"]
     assert len(debit_errors) == 1
-    assert "Default cheque debit account" in debit_errors[0]
+    assert debit_errors[0] == (
+        f'Ledger setting "Default cheque debit account" cannot use a suspense account. '
+        f'"Unallocated Debits" ({suspense.id}) is a suspense account.'
+    )
 
     # Non-suspense (e.g. expense) is allowed for debit default.
     ok_debit = api_client.patch(

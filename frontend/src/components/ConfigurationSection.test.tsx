@@ -159,8 +159,8 @@ describe("ConfigurationSection", () => {
             detail: {
               message: "Ledger settings validation failed",
               errors: [
-                'Accounts payable: account "Cash" (asset) must be a liability account',
-                'Prepaid expenses: account "A/P" (liability) must be an asset account',
+                'Settlement role "Accounts payable" requires a liability account. "Cash" (1) is an asset account.',
+                'Settlement role "Prepaid expenses" requires an asset account. "A/P" (3) is a liability account.',
               ],
             },
           }),
@@ -184,9 +184,9 @@ describe("ConfigurationSection", () => {
     });
     const alerts = screen.getAllByRole("alert");
     expect(alerts[0]).toHaveClass("error-text");
-    expect(alerts[0]).toHaveTextContent("Accounts payable");
+    expect(alerts[0]).toHaveTextContent('Settlement role "Accounts payable"');
     expect(alerts[1]).toHaveClass("error-text");
-    expect(alerts[1]).toHaveTextContent("Prepaid expenses");
+    expect(alerts[1]).toHaveTextContent('Settlement role "Prepaid expenses"');
   });
 
   it("restore success without deprecation shows only generic success", async () => {

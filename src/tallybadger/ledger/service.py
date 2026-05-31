@@ -3784,45 +3784,86 @@ class LedgerService:
             )
 
     @staticmethod
-    def _ledger_setting_account_type_label(expected_type: str) -> str:
-        articles = {
+    def _ledger_setting_account_type_article(expected_type: str) -> str:
+        indefinite = {
             "asset": "an asset",
             "liability": "a liability",
             "suspense": "a suspense",
+            "equity": "an equity",
+            "revenue": "a revenue",
+            "expense": "an expense",
         }
-        return f"{articles[expected_type]} account"
+        return indefinite[expected_type]
+
+    @staticmethod
+    def _ledger_setting_type_mismatch_message(
+        setting_kind: str,
+        setting_label: str,
+        expected_type: str,
+        account_name: str,
+        account_id: int,
+        actual_type: str,
+    ) -> str:
+        return (
+            f'{setting_kind} "{setting_label}" requires '
+            f"{LedgerService._ledger_setting_account_type_article(expected_type)} account. "
+            f'"{account_name}" ({account_id}) is '
+            f"{LedgerService._ledger_setting_account_type_article(actual_type)} account."
+        )
+
+    @staticmethod
+    def _ledger_setting_not_found_message(
+        setting_kind: str,
+        setting_label: str,
+        account_id: int,
+    ) -> str:
+        return f'{setting_kind} "{setting_label}": account id {account_id} was not found.'
+
+    @staticmethod
+    def _ledger_setting_inactive_message(
+        setting_kind: str,
+        setting_label: str,
+        account_name: str,
+        account_id: int,
+    ) -> str:
+        return (
+            f'{setting_kind} "{setting_label}" cannot use deactivated account '
+            f'"{account_name}" ({account_id}).'
+        )
 
     @staticmethod
     def _validate_ledger_settings_accounts(cur, payload, existing) -> None:
-        type_rules: list[tuple[str, str, str]] = [
-            ("accounts_receivable_account_id", "Accounts receivable", "asset"),
-            ("accounts_payable_account_id", "Accounts payable", "liability"),
-            ("unearned_revenue_account_id", "Unearned revenue", "liability"),
-            ("prepaid_expenses_account_id", "Prepaid expenses", "asset"),
+        type_rules: list[tuple[str, str, str, str]] = [
+            ("accounts_receivable_account_id", "Accounts receivable", "asset", "Settlement role"),
+            ("accounts_payable_account_id", "Accounts payable", "liability", "Settlement role"),
+            ("unearned_revenue_account_id", "Unearned revenue", "liability", "Settlement role"),
+            ("prepaid_expenses_account_id", "Prepaid expenses", "asset", "Settlement role"),
             (
                 "unallocated_debits_account_id",
                 "Unallocated debits (default debit side)",
                 "suspense",
+                "Settlement role",
             ),
             (
                 "unallocated_credits_account_id",
                 "Unallocated credits (default credit side)",
                 "suspense",
+                "Settlement role",
             ),
         ]
 
         account_ids: set[int] = set()
-        type_checks: list[tuple[str, int, str]] = []
-        active_checks: list[tuple[str, int]] = []
+        type_checks: list[tuple[str, str, int, str]] = []
+        active_checks: list[tuple[str, str, int]] = []
 
-        for field, label, expected_type in type_rules:
+        for field, label, expected_type, setting_kind in type_rules:
             account_id = getattr(payload, field)
             if account_id is None:
                 continue
             account_ids.add(account_id)
-            type_checks.append((label, account_id, expected_type))
+            type_checks.append((setting_kind, label, account_id, expected_type))
             if account_id != existing.get(field):
-                active_checks.append((label, account_id))
+                active_checks.append((setting_kind, label, account_id))
 
         cheque_checks: list[tuple[str, int, str]] = []
         new_cr = payload.default_cheque_credit_account_id
@@ -3845,52 +3886,87 @@ class LedgerService:
 
         errors: list[str] = []
         type_error_labels: set[str] = set()
+        ledger_setting_kind = "Ledger setting"
 
-        for label, account_id, expected_type in type_checks:
+        for setting_kind, label, account_id, expected_type in type_checks:
             row = accounts_by_id.get(account_id)
             if not row:
-                errors.append(f"{label}: account id {account_id} not found")
+                errors.append(
+                    LedgerService._ledger_setting_not_found_message(setting_kind, label, account_id)
+                )
                 continue
             if row["type"] != expected_type:
                 type_error_labels.add(label)
                 errors.append(
-                    f'{label}: account "{row["name"]}" ({row["type"]}) must be '
-                    f"{LedgerService._ledger_setting_account_type_label(expected_type)}"
+                    LedgerService._ledger_setting_type_mismatch_message(
+                        setting_kind,
+                        label,
+                        expected_type,
+                        row["name"],
+                        account_id,
+                        row["type"],
+                    )
                 )
 
-        for label, account_id in active_checks:
+        for setting_kind, label, account_id in active_checks:
             if label in type_error_labels:
                 continue
             row = accounts_by_id.get(account_id)
             if row and not row["is_active"]:
                 errors.append(
-                    f'{label}: account "{row["name"]}" is deactivated; '
-                    "reactivate before selecting it"
+                    LedgerService._ledger_setting_inactive_message(
+                        setting_kind,
+                        label,
+                        row["name"],
+                        account_id,
+                    )
                 )
 
         for label, account_id, kind in cheque_checks:
             row = accounts_by_id.get(account_id)
             if not row:
-                errors.append(f"{label}: account id {account_id} not found")
+                errors.append(
+                    LedgerService._ledger_setting_not_found_message(
+                        ledger_setting_kind,
+                        label,
+                        account_id,
+                    )
+                )
                 continue
             if kind == "credit":
                 if row["type"] != "asset":
                     errors.append(
-                        f'{label}: account "{row["name"]}" ({row["type"]}) must be an asset account'
+                        LedgerService._ledger_setting_type_mismatch_message(
+                            ledger_setting_kind,
+                            label,
+                            "asset",
+                            row["name"],
+                            account_id,
+                            row["type"],
+                        )
                     )
                 elif not row["is_active"]:
                     errors.append(
-                        f'{label}: account "{row["name"]}" is deactivated; '
-                        "reactivate before selecting it"
+                        LedgerService._ledger_setting_inactive_message(
+                            ledger_setting_kind,
+                            label,
+                            row["name"],
+                            account_id,
+                        )
                     )
             elif row["type"] == "suspense":
                 errors.append(
-                    f'{label}: account "{row["name"]}" (suspense) must not be a suspense account'
+                    f'{ledger_setting_kind} "{label}" cannot use a suspense account. '
+                    f'"{row["name"]}" ({account_id}) is a suspense account.'
                 )
             elif not row["is_active"]:
                 errors.append(
-                    f'{label}: account "{row["name"]}" is deactivated; '
-                    "reactivate before selecting it"
+                    LedgerService._ledger_setting_inactive_message(
+                        ledger_setting_kind,
+                        label,
+                        row["name"],
+                        account_id,
+                    )
                 )
 
         if errors:

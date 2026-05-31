@@ -1358,10 +1358,10 @@ def test_ledger_settings_prepaid_expenses_account_asset_only(
             LedgerSettingsUpdate(prepaid_expenses_account_id=liability.id),
         )
     msg = str(exc.value)
-    assert "Prepaid expenses" in msg
-    assert 'account "Accrued"' in msg
-    assert "(liability)" in msg
-    assert "an asset account" in msg
+    assert msg == (
+        f'Settlement role "Prepaid expenses" requires an asset account. '
+        f'"Accrued" ({liability.id}) is a liability account.'
+    )
 
 
 def test_ledger_settings_type_errors_name_setting_account_and_collect_all(
@@ -1381,14 +1381,19 @@ def test_ledger_settings_type_errors_name_setting_account_and_collect_all(
         )
     msg = str(exc.value)
     assert len(exc.value.errors) == 3
+    assert exc.value.errors[0] == (
+        f'Settlement role "Accounts payable" requires a liability account. '
+        f'"Operating Cash" ({asset.id}) is an asset account.'
+    )
+    assert exc.value.errors[1] == (
+        f'Settlement role "Unearned revenue" requires a liability account. '
+        f'"Rent Income" ({revenue.id}) is a revenue account.'
+    )
+    assert exc.value.errors[2] == (
+        f'Settlement role "Prepaid expenses" requires an asset account. '
+        f'"Office Supplies" ({expense.id}) is an expense account.'
+    )
     assert "Accounts payable" in msg
-    assert "Operating Cash" in msg
-    assert "a liability account" in msg
-    assert "Unearned revenue" in msg
-    assert "Rent Income" in msg
-    assert "Prepaid expenses" in msg
-    assert "Office Supplies" in msg
-    assert msg.count("must be") == 3
 
 
 def test_ledger_settings_inactive_error_names_setting_and_account(
@@ -1404,9 +1409,10 @@ def test_ledger_settings_inactive_error_names_setting_and_account(
             LedgerSettingsUpdate(prepaid_expenses_account_id=prepaid2.id),
         )
     msg = str(exc.value)
-    assert "Prepaid expenses" in msg
-    assert 'account "Vendor Prepaid 2"' in msg
-    assert "deactivated" in msg
+    assert msg == (
+        f'Settlement role "Prepaid expenses" cannot use deactivated account '
+        f'"Vendor Prepaid 2" ({prepaid2.id}).'
+    )
 
 
 def test_update_ledger_settings_validate_on_change_for_prepaid_expenses(
