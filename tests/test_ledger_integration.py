@@ -1352,10 +1352,59 @@ def test_ledger_settings_prepaid_expenses_account_asset_only(
     )
     assert out.prepaid_expenses_account_id == prepaid.id
 
-    with pytest.raises(LedgerValidationError, match="asset"):
+    with pytest.raises(LedgerValidationError) as exc:
         ledger_service.update_ledger_settings(
             LedgerSettingsUpdate(prepaid_expenses_account_id=liability.id),
         )
+    msg = str(exc.value)
+    assert "Prepaid expenses" in msg
+    assert 'account "Accrued"' in msg
+    assert "(liability)" in msg
+    assert "an asset account" in msg
+
+
+def test_ledger_settings_type_errors_name_setting_account_and_collect_all(
+    ledger_service: LedgerService,
+) -> None:
+    asset = ledger_service.create_account(AccountCreate(name="Operating Cash", type="asset"))
+    revenue = ledger_service.create_account(AccountCreate(name="Rent Income", type="revenue"))
+    expense = ledger_service.create_account(AccountCreate(name="Office Supplies", type="expense"))
+
+    with pytest.raises(LedgerValidationError) as exc:
+        ledger_service.update_ledger_settings(
+            LedgerSettingsUpdate(
+                accounts_payable_account_id=asset.id,
+                unearned_revenue_account_id=revenue.id,
+                prepaid_expenses_account_id=expense.id,
+            ),
+        )
+    msg = str(exc.value)
+    assert "Accounts payable" in msg
+    assert "Operating Cash" in msg
+    assert "a liability account" in msg
+    assert "Unearned revenue" in msg
+    assert "Rent Income" in msg
+    assert "Prepaid expenses" in msg
+    assert "Office Supplies" in msg
+    assert msg.count("must be") == 3
+
+
+def test_ledger_settings_inactive_error_names_setting_and_account(
+    ledger_service: LedgerService,
+) -> None:
+    prepaid = ledger_service.create_account(AccountCreate(name="Vendor Prepaid", type="asset"))
+    prepaid2 = ledger_service.create_account(AccountCreate(name="Vendor Prepaid 2", type="asset"))
+    ledger_service.update_ledger_settings(LedgerSettingsUpdate(prepaid_expenses_account_id=prepaid.id))
+    ledger_service.update_account(prepaid2.id, AccountUpdate(is_active=False))
+
+    with pytest.raises(LedgerValidationError) as exc:
+        ledger_service.update_ledger_settings(
+            LedgerSettingsUpdate(prepaid_expenses_account_id=prepaid2.id),
+        )
+    msg = str(exc.value)
+    assert "Prepaid expenses" in msg
+    assert 'account "Vendor Prepaid 2"' in msg
+    assert "deactivated" in msg
 
 
 def test_update_ledger_settings_validate_on_change_for_prepaid_expenses(
