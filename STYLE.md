@@ -128,6 +128,7 @@ Norms for **filterable, sortable entity registers** in the SPA. The **cheque reg
 
 - Wrap the register in a **`section.card`**; use **`journal-card-wide`** when the table needs horizontal room.
 - Put the table inside a horizontal-scroll container when columns may overflow (`overflowX: auto` on a wrapper div).
+- **Vertical scroll (register list views):** the **app header and main nav**, register **toolbar**, **filter row(s)**, and table **column headers** (`<thead>`) remain visible in the viewport. **Only `<tbody>` data rows** scroll vertically (inline create/edit rows in the accounts table are tbody rows and scroll with the list). Use remaining viewport height below the fixed chrome. Use [`RegisterListCard`](frontend/src/components/RegisterListLayout.tsx), **`RegisterListChrome`**, and **`RegisterListTable`** with the matching classes in [`styles.css`](frontend/src/styles.css) (`.register-list-card`, `.register-list-chrome`, `.register-list-table-area`) rather than per-register one-offs.
 
 ### Toolbar
 

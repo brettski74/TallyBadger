@@ -36,6 +36,7 @@ import {
 } from "../lib/keyboardHints";
 import { isMacLikeUserAgent } from "../lib/platformKeyboard";
 import { JournalFilterMultiDropdown } from "./JournalFilterMultiDropdown";
+import { RegisterListCard, RegisterListChrome, RegisterListTable } from "./RegisterListLayout";
 import { TableRowIconButton } from "./TableRowIconButton";
 
 const DAY_OPTIONS = [
@@ -1111,7 +1112,8 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
 
   return (
     <>
-      <section className="card journal-card-wide">
+      <RegisterListCard>
+        <RegisterListChrome>
         <div className="cheque-register-toolbar">
           <h2>Accrual plans</h2>
           <div className="cheque-register-actions">
@@ -1210,10 +1212,11 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
         </div>
 
         {listError && <p className="error-text">{listError}</p>}
+        </RegisterListChrome>
 
-        <div style={{ overflowX: "auto" }}>
-          <table aria-label="Accrual plans register">
-            <thead>
+        <RegisterListTable
+          aria-label="Accrual plans register"
+          header={
               <tr>
                 <th>Name</th>
                 <th>Party</th>
@@ -1225,8 +1228,8 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
                 <th>Frequency</th>
                 <th>Actions</th>
               </tr>
-            </thead>
-            <tbody>
+          }
+        >
               {listLoading && plans.length === 0 ? (
                 <tr>
                   <td colSpan={9} className="muted">
@@ -1307,10 +1310,8 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
                   </tr>
                 ))
               )}
-            </tbody>
-          </table>
-        </div>
-      </section>
+        </RegisterListTable>
+      </RegisterListCard>
 
       {createDialogOpen && (
         <dialog

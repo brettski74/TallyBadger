@@ -62,6 +62,7 @@ import {
 import { type LedgerSettings, getLedgerSettings } from "../api/settlements";
 import { ChequePartyFilterMultiDropdown, type ChequePartyFilterId } from "./ChequePartyFilterMultiDropdown";
 import { JournalFilterMultiDropdown } from "./JournalFilterMultiDropdown";
+import { RegisterListCard, RegisterListChrome, RegisterListTable } from "./RegisterListLayout";
 import { TableRowIconButton } from "./TableRowIconButton";
 
 interface ChequesSectionProps {
@@ -1575,7 +1576,8 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
 
   return (
     <>
-      <section className="card journal-card-wide">
+      <RegisterListCard>
+        <RegisterListChrome>
         <div className="cheque-register-toolbar">
           <h2>Cheque register</h2>
           <div className="cheque-register-actions">
@@ -1798,10 +1800,10 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
             {listError}
           </p>
         )}
+        </RegisterListChrome>
 
-        <div style={{ overflowX: "auto" }}>
-          <table>
-            <thead>
+        <RegisterListTable
+          header={
               <tr>
                 <ChequeSortableColumnHeader
                   label="Status"
@@ -1859,8 +1861,8 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
                 />
                 <th>Actions</th>
               </tr>
-            </thead>
-            <tbody>
+          }
+        >
               {listLoading && cheques.length === 0 ? (
                 <tr>
                   <td colSpan={10} className="muted">
@@ -1968,9 +1970,7 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
                   </tr>
                 ))
               )}
-            </tbody>
-          </table>
-        </div>
+        </RegisterListTable>
 
         <dialog ref={saveDialogRef} aria-label="Save filter preset">
           <form method="dialog" onSubmit={(e) => void handleSavePreset(e)}>
@@ -2007,7 +2007,7 @@ export function ChequesSection({ accounts, parties }: ChequesSectionProps) {
             </div>
           </form>
         </dialog>
-      </section>
+      </RegisterListCard>
 
       {editDialogOpen && selected && (
         <dialog

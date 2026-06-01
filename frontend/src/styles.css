@@ -22,6 +22,12 @@
   --link: #0369a1;
 }
 
+html,
+body,
+#root {
+  height: 100%;
+}
+
 body {
   margin: 0;
   background: var(--bg-page);
@@ -29,7 +35,12 @@ body {
 }
 
 .app-shell {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
   min-height: 100vh;
+  overflow: hidden;
   padding: 1.5rem;
 }
 
@@ -37,6 +48,7 @@ body {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
+  flex-shrink: 0;
   gap: 1.5rem;
   margin-bottom: 1.5rem;
 }
@@ -78,8 +90,90 @@ body {
 
 .content {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  flex: 1;
   gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.content:has(> .register-list-card:only-child) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.content > .register-list-card:only-child {
+  flex: 1;
+  min-height: 0;
+}
+
+.register-list-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.register-list-chrome {
+  flex-shrink: 0;
+}
+
+.register-list-table-area {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.register-list-table-scroll-x {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.register-list-table {
+  border-collapse: collapse;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  width: 100%;
+}
+
+.register-list-table thead {
+  flex-shrink: 0;
+}
+
+.register-list-table thead tr,
+.register-list-table tbody tr {
+  display: table;
+  table-layout: fixed;
+  width: 100%;
+}
+
+.register-list-table tbody {
+  display: block;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+/* width: 1% on .table-row-actions-* fights fixed layout on per-row display:table; keep icons on one line */
+.register-list-table th.table-row-actions-heading,
+.register-list-table td.table-row-actions-cell {
+  width: calc(2 * 32px + 2px + 0.8rem);
+  min-width: calc(2 * 32px + 2px + 0.8rem);
+}
+
+.register-list-table .table-row-actions,
+.register-list-table td.table-row-actions-cell .form-actions-inline {
+  flex-wrap: nowrap;
 }
 
 .card {

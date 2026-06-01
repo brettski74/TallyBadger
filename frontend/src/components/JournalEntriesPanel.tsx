@@ -50,6 +50,7 @@ import { JournalEntryForm, type LineDraft } from "./JournalEntryForm";
 import { JournalSettlementConfirmDialog } from "./JournalSettlementConfirmDialog";
 import { JournalEntryDateRangeFilter } from "./JournalEntryDateRangeFilter";
 import { JournalFilterMultiDropdown } from "./JournalFilterMultiDropdown";
+import { RegisterListCard, RegisterListChrome, RegisterListTable } from "./RegisterListLayout";
 import { TableRowIconButton } from "./TableRowIconButton";
 
 const PAGE_SIZE = 50;
@@ -798,7 +799,8 @@ export function JournalEntriesPanel({
   return (
     <>
       {attachmentsDialog}
-      <section className="card journal-card-wide">
+      <RegisterListCard>
+      <RegisterListChrome>
       {accounts.length === 0 && (
         <p className="muted banner-info">
           Add at least two accounts under <strong>Accounts</strong> before posting journal lines.
@@ -954,6 +956,16 @@ export function JournalEntriesPanel({
         </p>
       )}
 
+      {listLoading && entries.length === 0 && <p>Loading…</p>}
+      {listError && (
+        <p className="error-text" role="alert">
+          {listError}
+        </p>
+      )}
+
+      {!listError && entries.length === 0 && !listLoading && <p>No journal entries in this range.</p>}
+      </RegisterListChrome>
+
       <dialog ref={saveDialogRef} aria-label="Save filter preset">
         <form method="dialog" onSubmit={(e) => void handleSavePreset(e)}>
           <h3>Save filter preset</h3>
@@ -990,18 +1002,10 @@ export function JournalEntriesPanel({
         </form>
       </dialog>
 
-      {listLoading && entries.length === 0 && <p>Loading…</p>}
-      {listError && (
-        <p className="error-text" role="alert">
-          {listError}
-        </p>
-      )}
-
-      {!listError && entries.length === 0 && !listLoading && <p>No journal entries in this range.</p>}
-
       {entries.length > 0 && (
-        <table className="journal-entry-list">
-          <thead>
+        <RegisterListTable
+          className="journal-entry-list"
+          header={
             <tr>
               <JournalSortableColumnHeader
                 label="Date"
@@ -1048,8 +1052,8 @@ export function JournalEntriesPanel({
               />
               <th aria-label="actions" />
             </tr>
-          </thead>
-          <tbody>
+          }
+        >
             {entries.map((row) => (
               <tr key={row.id}>
                 <td>{row.entry_date}</td>
@@ -1081,21 +1085,22 @@ export function JournalEntriesPanel({
                 </td>
               </tr>
             ))}
-          </tbody>
-        </table>
+        </RegisterListTable>
       )}
 
       {hasMore && (
-        <button
-          type="button"
-          className="button-secondary"
-          disabled={listLoading}
-          onClick={() => void loadMore()}
-        >
-          {listLoading ? "Loading…" : "Load more"}
-        </button>
+        <div className="register-list-chrome">
+          <button
+            type="button"
+            className="button-secondary"
+            disabled={listLoading}
+            onClick={() => void loadMore()}
+          >
+            {listLoading ? "Loading…" : "Load more"}
+          </button>
+        </div>
       )}
-    </section>
+    </RegisterListCard>
     </>
   );
 }
