@@ -81,6 +81,35 @@ class LedgerValidationError(LedgerError):
     """Raised when business invariants are violated."""
 
 
+def _journal_balance_db_error_message(exc: errors.RaiseException) -> str | None:
+    """Return API-facing text when ``exc`` is a journal balance constraint trigger failure."""
+    diag = exc.diag
+    msg = (diag.message_primary if diag and diag.message_primary else str(exc)).strip()
+    if msg.startswith("journal entry requires at least two lines"):
+        return msg
+    if msg.startswith("journal entry is not balanced"):
+        return msg
+    return None
+
+
+def _reraise_journal_balance_db_error(exc: BaseException) -> None:
+    """Map deferrable balance trigger failures to ``LedgerValidationError``; re-raise otherwise."""
+    if isinstance(exc, errors.RaiseException):
+        msg = _journal_balance_db_error_message(exc)
+        if msg is not None:
+            raise LedgerValidationError(msg) from exc
+    raise exc
+
+
+def _reraise_ledger_journal_db_error(exc: BaseException) -> None:
+    """Map journal-related DB errors (balance triggers, FK) to ledger service errors."""
+    if isinstance(exc, errors.RaiseException):
+        _reraise_journal_balance_db_error(exc)
+    if isinstance(exc, errors.ForeignKeyViolation):
+        raise LedgerValidationError("journal line references unknown account") from exc
+    raise exc
+
+
 class LedgerSettingsValidationError(LedgerValidationError):
     """Raised when PATCH /ledger-settings account fields fail validation."""
 
@@ -1191,29 +1220,32 @@ class LedgerService:
                 f"produced no entries between {payload.start_date} and {payload.end_date}"
             )
 
-        with self._connection_factory() as conn:
-            with conn.transaction():
-                with conn.cursor(row_factory=dict_row) as cur:
-                    self._assert_accrual_plan_write_valid(cur, payload)
-                    cur.execute(
-                        """
-                        INSERT INTO accrual_plans (
-                            name, direction, party_id, target_account_id, bridge_account_id,
-                            frequency, start_date, end_date, amount, summary_template, description_template,
-                            day_of_week, day_of_month, month_of_year, business_day_adjust
+        try:
+            with self._connection_factory() as conn:
+                with conn.transaction():
+                    with conn.cursor(row_factory=dict_row) as cur:
+                        self._assert_accrual_plan_write_valid(cur, payload)
+                        cur.execute(
+                            """
+                            INSERT INTO accrual_plans (
+                                name, direction, party_id, target_account_id, bridge_account_id,
+                                frequency, start_date, end_date, amount, summary_template, description_template,
+                                day_of_week, day_of_month, month_of_year, business_day_adjust
+                            )
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            RETURNING id, name, direction, party_id, target_account_id, bridge_account_id,
+                                      frequency, start_date, end_date, amount, summary_template, description_template,
+                                      day_of_week, day_of_month, month_of_year, business_day_adjust,
+                                      created_at, updated_at
+                            """,
+                            self._accrual_plan_row_params(payload),
                         )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        RETURNING id, name, direction, party_id, target_account_id, bridge_account_id,
-                                  frequency, start_date, end_date, amount, summary_template, description_template,
-                                  day_of_week, day_of_month, month_of_year, business_day_adjust,
-                                  created_at, updated_at
-                        """,
-                        self._accrual_plan_row_params(payload),
-                    )
-                    plan_row = cur.fetchone()
-                    self._insert_accrual_plan_schedule(
-                        cur, plan_row["id"], payload, preview
-                    )
+                        plan_row = cur.fetchone()
+                        self._insert_accrual_plan_schedule(
+                            cur, plan_row["id"], payload, preview
+                        )
+        except (errors.RaiseException, errors.ForeignKeyViolation) as exc:
+            _reraise_ledger_journal_db_error(exc)
         return AccrualPlanOut.model_validate(plan_row)
 
     def update_accrual_plan(self, plan_id: int, payload: AccrualPlanCreate) -> AccrualPlanOut:
@@ -1225,54 +1257,57 @@ class LedgerService:
                 f"produced no entries between {payload.start_date} and {payload.end_date}"
             )
 
-        with self._connection_factory() as conn:
-            with conn.transaction():
-                with conn.cursor(row_factory=dict_row) as cur:
-                    cur.execute(
-                        "SELECT id, name FROM accrual_plans WHERE id = %s FOR UPDATE",
-                        (plan_id,),
-                    )
-                    existing = cur.fetchone()
-                    if not existing:
-                        raise LedgerNotFoundError(f"accrual plan {plan_id} not found")
-                    existing_name = existing["name"]
+        try:
+            with self._connection_factory() as conn:
+                with conn.transaction():
+                    with conn.cursor(row_factory=dict_row) as cur:
+                        cur.execute(
+                            "SELECT id, name FROM accrual_plans WHERE id = %s FOR UPDATE",
+                            (plan_id,),
+                        )
+                        existing = cur.fetchone()
+                        if not existing:
+                            raise LedgerNotFoundError(f"accrual plan {plan_id} not found")
+                        existing_name = existing["name"]
 
-                    self._assert_accrual_plan_has_no_settlement_allocations(
-                        cur, plan_id, existing_name
-                    )
-                    try:
-                        self._assert_accrual_plan_write_valid(cur, payload)
-                    except LedgerValidationError as exc:
-                        raise LedgerValidationError(
-                            f'accrual plan "{existing_name}" (id={plan_id}): {exc}'
-                        ) from exc
+                        self._assert_accrual_plan_has_no_settlement_allocations(
+                            cur, plan_id, existing_name
+                        )
+                        try:
+                            self._assert_accrual_plan_write_valid(cur, payload)
+                        except LedgerValidationError as exc:
+                            raise LedgerValidationError(
+                                f'accrual plan "{existing_name}" (id={plan_id}): {exc}'
+                            ) from exc
 
-                    cur.execute(
-                        "DELETE FROM accrual_obligations WHERE accrual_plan_id = %s",
-                        (plan_id,),
-                    )
-                    cur.execute(
-                        "DELETE FROM journal_entries WHERE accrual_plan_id = %s",
-                        (plan_id,),
-                    )
-                    cur.execute(
-                        """
-                        UPDATE accrual_plans
-                        SET name = %s, direction = %s, party_id = %s, target_account_id = %s,
-                            bridge_account_id = %s, frequency = %s, start_date = %s, end_date = %s,
-                            amount = %s, summary_template = %s, description_template = %s,
-                            day_of_week = %s, day_of_month = %s, month_of_year = %s,
-                            business_day_adjust = %s, updated_at = NOW()
-                        WHERE id = %s
-                        RETURNING id, name, direction, party_id, target_account_id, bridge_account_id,
-                                  frequency, start_date, end_date, amount, summary_template, description_template,
-                                  day_of_week, day_of_month, month_of_year, business_day_adjust,
-                                  created_at, updated_at
-                        """,
-                        (*self._accrual_plan_row_params(payload), plan_id),
-                    )
-                    plan_row = cur.fetchone()
-                    self._insert_accrual_plan_schedule(cur, plan_id, payload, preview)
+                        cur.execute(
+                            "DELETE FROM accrual_obligations WHERE accrual_plan_id = %s",
+                            (plan_id,),
+                        )
+                        cur.execute(
+                            "DELETE FROM journal_entries WHERE accrual_plan_id = %s",
+                            (plan_id,),
+                        )
+                        cur.execute(
+                            """
+                            UPDATE accrual_plans
+                            SET name = %s, direction = %s, party_id = %s, target_account_id = %s,
+                                bridge_account_id = %s, frequency = %s, start_date = %s, end_date = %s,
+                                amount = %s, summary_template = %s, description_template = %s,
+                                day_of_week = %s, day_of_month = %s, month_of_year = %s,
+                                business_day_adjust = %s, updated_at = NOW()
+                            WHERE id = %s
+                            RETURNING id, name, direction, party_id, target_account_id, bridge_account_id,
+                                      frequency, start_date, end_date, amount, summary_template, description_template,
+                                      day_of_week, day_of_month, month_of_year, business_day_adjust,
+                                      created_at, updated_at
+                            """,
+                            (*self._accrual_plan_row_params(payload), plan_id),
+                        )
+                        plan_row = cur.fetchone()
+                        self._insert_accrual_plan_schedule(cur, plan_id, payload, preview)
+        except (errors.RaiseException, errors.ForeignKeyViolation) as exc:
+            _reraise_ledger_journal_db_error(exc)
         return AccrualPlanOut.model_validate(plan_row)
 
     def cancel_accrual_plan(self, plan_id: int) -> None:
@@ -1503,144 +1538,163 @@ class LedgerService:
         if allocated_total > payload.amount:
             raise LedgerValidationError("allocated amount cannot exceed settlement amount")
 
-        with self._connection_factory() as conn:
-            with conn.transaction():
-                with conn.cursor(row_factory=dict_row) as cur:
-                    settings = self._fetch_settings_row(cur)
-                    if payload.settlement_type == "receipt":
-                        if settings["accounts_receivable_account_id"] is None:
-                            raise LedgerValidationError("configure accounts receivable account in ledger settings first")
-                    else:
-                        if settings["accounts_payable_account_id"] is None:
-                            raise LedgerValidationError("configure accounts payable account in ledger settings first")
-
-                    self._assert_account_active(cur, payload.cash_account_id)
-                    obligations = self._load_settlement_obligations(cur, payload.party_id, payload.allocations)
-                    self._validate_obligation_types_for_settlement(payload.settlement_type, obligations)
-                    self._validate_allocation_amounts(payload.allocations, obligations)
-                    allocation_by_id = {item.obligation_id: item.amount for item in payload.allocations}
-                    due_allocated = Decimal("0")
-                    early_allocated = Decimal("0")
-                    if payload.settlement_type == "receipt":
-                        due_allocated, early_allocated = self._split_receipt_allocations(
-                            payload.event_date,
-                            obligations,
-                            allocation_by_id,
-                        )
-                        if (early_allocated > 0 or payload.amount > allocated_total) and settings["unearned_revenue_account_id"] is None:
-                            raise LedgerValidationError("configure unearned revenue account for early/over receipts")
-                    else:
-                        due_allocated, early_allocated = self._split_payment_allocations(
-                            payload.event_date,
-                            obligations,
-                            allocation_by_id,
-                        )
-                        if (early_allocated > 0 or payload.amount > allocated_total) and settings["prepaid_expenses_account_id"] is None:
-                            raise LedgerValidationError("configure prepaid expenses account for early/over payments")
-
-                    collapse_same_day = self._allocations_all_same_accrual_day(
-                        obligations, allocation_by_id, payload.event_date
-                    )
-
-                    touched_entry_ids: set[int] = set()
-                    if collapse_same_day:
-                        primary_entry_id: int | None = None
+        try:
+            with self._connection_factory() as conn:
+                with conn.transaction():
+                    with conn.cursor(row_factory=dict_row) as cur:
+                        settings = self._fetch_settings_row(cur)
                         if payload.settlement_type == "receipt":
-                            bridge_id = settings["accounts_receivable_account_id"]
-                            settle_fn = self._same_day_settle_receivable_obligation
+                            if settings["accounts_receivable_account_id"] is None:
+                                raise LedgerValidationError("configure accounts receivable account in ledger settings first")
                         else:
-                            bridge_id = settings["accounts_payable_account_id"]
-                            settle_fn = self._same_day_settle_payable_obligation
-                        for obligation in obligations:
-                            alloc_amt = allocation_by_id[obligation["id"]]
-                            if alloc_amt <= Decimal("0"):
-                                continue
-                            accrual_eid = obligation["source_entry_id"]
-                            touched_entry_ids.add(accrual_eid)
-                            if primary_entry_id is None:
-                                primary_entry_id = accrual_eid
-                            settle_fn(
-                                cur,
-                                obligation,
-                                alloc_amt,
-                                payload.cash_account_id,
-                                bridge_id,
-                            )
-                        assert primary_entry_id is not None
-                        unapplied = payload.amount - allocated_total
-                        if unapplied > Decimal("0"):
-                            if payload.settlement_type == "receipt":
-                                role_id = settings["unearned_revenue_account_id"]
-                                self._assert_account_active(cur, role_id)
-                                self._append_cash_and_unearned_lines(
-                                    cur,
-                                    primary_entry_id,
-                                    payload.party_id,
-                                    payload.cash_account_id,
-                                    role_id,
-                                    unapplied,
-                                )
-                            else:
-                                role_id = settings["prepaid_expenses_account_id"]
-                                self._assert_account_active(cur, role_id)
-                                self._append_cash_and_prepaid_lines(
-                                    cur,
-                                    primary_entry_id,
-                                    payload.party_id,
-                                    payload.cash_account_id,
-                                    role_id,
-                                    unapplied,
-                                )
-                        for eid in touched_entry_ids:
-                            cur.execute(
-                                "UPDATE journal_entries SET updated_at = NOW() WHERE id = %s",
-                                (eid,),
-                            )
-                        entry_id = primary_entry_id
-                    else:
-                        settlement_summary = self._settlement_journal_summary(obligations, allocation_by_id)
+                            if settings["accounts_payable_account_id"] is None:
+                                raise LedgerValidationError("configure accounts payable account in ledger settings first")
 
-                        cur.execute(
-                            """
-                            INSERT INTO journal_entries (entry_date, summary, description)
-                            VALUES (%s, %s, %s)
-                            RETURNING id
-                            """,
-                            (
+                        self._assert_account_active(cur, payload.cash_account_id)
+                        obligations = self._load_settlement_obligations(
+                            cur, payload.party_id, payload.allocations
+                        )
+                        self._validate_obligation_types_for_settlement(
+                            payload.settlement_type, obligations
+                        )
+                        self._validate_allocation_amounts(payload.allocations, obligations)
+                        allocation_by_id = {
+                            item.obligation_id: item.amount for item in payload.allocations
+                        }
+                        due_allocated = Decimal("0")
+                        early_allocated = Decimal("0")
+                        if payload.settlement_type == "receipt":
+                            due_allocated, early_allocated = self._split_receipt_allocations(
                                 payload.event_date,
-                                settlement_summary,
-                                payload.note,
-                            ),
-                        )
-                        entry_id = cur.fetchone()["id"]
-                        self._insert_settlement_journal_lines(
-                            cur,
-                            payload,
-                            settings,
-                            entry_id,
-                            allocated_total,
-                            due_allocated=due_allocated,
-                            early_allocated=early_allocated,
-                        )
-                        touched_entry_ids = {entry_id}
+                                obligations,
+                                allocation_by_id,
+                            )
+                            if (
+                                early_allocated > 0 or payload.amount > allocated_total
+                            ) and settings["unearned_revenue_account_id"] is None:
+                                raise LedgerValidationError(
+                                    "configure unearned revenue account for early/over receipts"
+                                )
+                        else:
+                            due_allocated, early_allocated = self._split_payment_allocations(
+                                payload.event_date,
+                                obligations,
+                                allocation_by_id,
+                            )
+                            if (
+                                early_allocated > 0 or payload.amount > allocated_total
+                            ) and settings["prepaid_expenses_account_id"] is None:
+                                raise LedgerValidationError(
+                                    "configure prepaid expenses account for early/over payments"
+                                )
 
-                    allocation_ids = self._insert_settlement_allocations_and_update_obligations(
-                        cur,
-                        entry_id,
-                        obligations,
-                        allocation_by_id,
-                    )
-                    self._apply_early_settlement_reclassifications(
-                        cur,
-                        settlement_type=payload.settlement_type,
-                        collapse_same_day=collapse_same_day,
-                        event_date=payload.event_date,
-                        obligations=obligations,
-                        allocation_by_id=allocation_by_id,
-                        settings=settings,
-                    )
-                    for eid in touched_entry_ids:
-                        self._assert_entry_balanced(cur, eid)
+                        collapse_same_day = self._allocations_all_same_accrual_day(
+                            obligations, allocation_by_id, payload.event_date
+                        )
+
+                        touched_entry_ids: set[int] = set()
+                        if collapse_same_day:
+                            primary_entry_id: int | None = None
+                            if payload.settlement_type == "receipt":
+                                bridge_id = settings["accounts_receivable_account_id"]
+                                settle_fn = self._same_day_settle_receivable_obligation
+                            else:
+                                bridge_id = settings["accounts_payable_account_id"]
+                                settle_fn = self._same_day_settle_payable_obligation
+                            for obligation in obligations:
+                                alloc_amt = allocation_by_id[obligation["id"]]
+                                if alloc_amt <= Decimal("0"):
+                                    continue
+                                accrual_eid = obligation["source_entry_id"]
+                                touched_entry_ids.add(accrual_eid)
+                                if primary_entry_id is None:
+                                    primary_entry_id = accrual_eid
+                                settle_fn(
+                                    cur,
+                                    obligation,
+                                    alloc_amt,
+                                    payload.cash_account_id,
+                                    bridge_id,
+                                )
+                            assert primary_entry_id is not None
+                            unapplied = payload.amount - allocated_total
+                            if unapplied > Decimal("0"):
+                                if payload.settlement_type == "receipt":
+                                    role_id = settings["unearned_revenue_account_id"]
+                                    self._assert_account_active(cur, role_id)
+                                    self._append_cash_and_unearned_lines(
+                                        cur,
+                                        primary_entry_id,
+                                        payload.party_id,
+                                        payload.cash_account_id,
+                                        role_id,
+                                        unapplied,
+                                    )
+                                else:
+                                    role_id = settings["prepaid_expenses_account_id"]
+                                    self._assert_account_active(cur, role_id)
+                                    self._append_cash_and_prepaid_lines(
+                                        cur,
+                                        primary_entry_id,
+                                        payload.party_id,
+                                        payload.cash_account_id,
+                                        role_id,
+                                        unapplied,
+                                    )
+                            for eid in touched_entry_ids:
+                                cur.execute(
+                                    "UPDATE journal_entries SET updated_at = NOW() WHERE id = %s",
+                                    (eid,),
+                                )
+                            entry_id = primary_entry_id
+                        else:
+                            settlement_summary = self._settlement_journal_summary(
+                                obligations, allocation_by_id
+                            )
+
+                            cur.execute(
+                                """
+                                INSERT INTO journal_entries (entry_date, summary, description)
+                                VALUES (%s, %s, %s)
+                                RETURNING id
+                                """,
+                                (
+                                    payload.event_date,
+                                    settlement_summary,
+                                    payload.note,
+                                ),
+                            )
+                            entry_id = cur.fetchone()["id"]
+                            self._insert_settlement_journal_lines(
+                                cur,
+                                payload,
+                                settings,
+                                entry_id,
+                                allocated_total,
+                                due_allocated=due_allocated,
+                                early_allocated=early_allocated,
+                            )
+                            touched_entry_ids = {entry_id}
+
+                        allocation_ids = self._insert_settlement_allocations_and_update_obligations(
+                            cur,
+                            entry_id,
+                            obligations,
+                            allocation_by_id,
+                        )
+                        self._apply_early_settlement_reclassifications(
+                            cur,
+                            settlement_type=payload.settlement_type,
+                            collapse_same_day=collapse_same_day,
+                            event_date=payload.event_date,
+                            obligations=obligations,
+                            allocation_by_id=allocation_by_id,
+                            settings=settings,
+                        )
+                        for eid in touched_entry_ids:
+                            self._assert_entry_balanced(cur, eid)
+        except (errors.RaiseException, errors.ForeignKeyViolation) as exc:
+            _reraise_ledger_journal_db_error(exc)
         return SettlementOut(
             entry_id=entry_id,
             allocation_ids=allocation_ids,
@@ -2947,8 +3001,8 @@ class LedgerService:
                             settings=settings,
                         )
                     return self.get_entry(entry_id, conn=conn)
-        except errors.ForeignKeyViolation as exc:
-            raise LedgerValidationError("journal line references unknown account") from exc
+        except (errors.RaiseException, errors.ForeignKeyViolation) as exc:
+            _reraise_ledger_journal_db_error(exc)
 
     def preview_journal_entry_settlement(
         self,
@@ -3020,8 +3074,8 @@ class LedgerService:
                             )
                             created_ids.append(entry_id)
                     return [self.get_entry(entry_id, conn=conn) for entry_id in created_ids]
-        except errors.ForeignKeyViolation as exc:
-            raise LedgerValidationError("journal line references unknown account") from exc
+        except (errors.RaiseException, errors.ForeignKeyViolation) as exc:
+            _reraise_ledger_journal_db_error(exc)
 
     @contextmanager
     def open_import_batch(
@@ -3080,8 +3134,8 @@ class LedgerService:
             LedgerImportBatchEntryError,
         ):
             raise
-        except errors.ForeignKeyViolation as exc:
-            raise LedgerValidationError("journal line references unknown account") from exc
+        except (errors.RaiseException, errors.ForeignKeyViolation) as exc:
+            _reraise_ledger_journal_db_error(exc)
 
     def create_import_batch_with_entries(
         self,
@@ -3950,8 +4004,8 @@ class LedgerService:
                             prev_cheque_id=old_cheque_id,
                         )
                     return self.get_entry(entry_id, conn=conn)
-        except errors.ForeignKeyViolation as exc:
-            raise LedgerValidationError("journal line references unknown account") from exc
+        except (errors.RaiseException, errors.ForeignKeyViolation) as exc:
+            _reraise_ledger_journal_db_error(exc)
 
     def delete_journal_entry_review_message(self, entry_id: int, message_id: int) -> None:
         with self._connection_factory() as conn:

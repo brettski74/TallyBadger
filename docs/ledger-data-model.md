@@ -74,6 +74,8 @@ erDiagram
     }
 ```
 
+Each journal entry must have **at least two lines** and **line amounts that sum to zero**; PostgreSQL enforces this at **transaction commit** via deferrable constraint triggers (migration `027`), in addition to application validation in `LedgerService`.
+
 ---
 
 ## Settlements are allocations grouped by `entry_id`
