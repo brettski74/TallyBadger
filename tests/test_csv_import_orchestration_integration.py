@@ -820,6 +820,241 @@ def test_unload_import_batch_rolls_back_same_day_receipt_settlement(
     assert Decimal(obligations[0]["open_amount"]) == Decimal("500.00")
 
 
+def test_unload_import_batch_rolls_back_same_day_payment_settlement(
+    import_api_client: TestClient,
+    integration_db_url: str,
+) -> None:
+    for payload in (
+        {"name": "Cash", "type": "asset", "is_active": True},
+        {"name": "Repairs Expense", "type": "expense", "is_active": True},
+        {"name": "Accounts Payable", "type": "liability", "is_active": True},
+    ):
+        assert import_api_client.post("/accounts", json=payload).status_code == 201
+
+    accounts = import_api_client.get("/accounts").json()
+    by_name = {a["name"]: a["id"] for a in accounts}
+    ap_id = by_name["Accounts Payable"]
+    repairs_id = by_name["Repairs Expense"]
+
+    pr = import_api_client.post(
+        "/parties",
+        json={"name": "Vendor Unload", "role": "vendor", "is_active": True},
+    )
+    assert pr.status_code == 201, pr.text
+    party_id = pr.json()["id"]
+
+    assert (
+        import_api_client.patch(
+            "/ledger-settings",
+            json={"accounts_payable_account_id": ap_id},
+        ).status_code
+        == 200
+    )
+
+    plan = import_api_client.post(
+        "/accrual-plans",
+        json={
+            "name": "July unload payable",
+            "direction": "expense",
+            "party_id": party_id,
+            "target_account_id": repairs_id,
+            "bridge_account_id": ap_id,
+            "frequency": "monthly_day",
+            "start_date": "2026-07-01",
+            "end_date": "2026-07-31",
+            "amount": "500.00",
+            "summary_template": "{plan}",
+            "day_of_month": 1,
+        },
+    )
+    assert plan.status_code == 201, plan.text
+    obligation_id = import_api_client.get(f"/obligations/{party_id}").json()[0]["id"]
+
+    rule_set = {
+        "name": "same-day settle payment lines",
+        "rule_set": {
+            "rules": [
+                {
+                    "sort_order": 10,
+                    "expression": (
+                        '{"set":{"line":['
+                        '{"account":"Cash","amount":-attributes["amt"],"party":"Vendor Unload"},'
+                        '{"account":"Accounts Payable","amount":attributes["amt"],'
+                        '"party":"Vendor Unload","obligation-id":'
+                        + str(obligation_id)
+                        + "}]}}"
+                    ),
+                },
+            ],
+        },
+    }
+    rs = import_api_client.post("/import-rules/cel/rule-sets", json=rule_set)
+    assert rs.status_code == 201, rs.text
+    rule_set_id = rs.json()["id"]
+
+    ex = import_api_client.post(
+        "/imports/csv/execute",
+        json={
+            "csv_text": "date,summary,amt\n2026-07-01,July vendor payment,500.00\n",
+            "basename": "settle-payment-then-unload.csv",
+            "has_header_row": True,
+            "columns": [
+                {"attribute_name": "date", "data_type": "date", "date_format": "YYYY-MM-DD"},
+                {"attribute_name": "summary", "data_type": "string"},
+                {"attribute_name": "amt", "data_type": "numeric"},
+            ],
+            "cel_rule_set_id": rule_set_id,
+        },
+    )
+    assert ex.status_code == 200, ex.text
+    batch_id = ex.json()["import_batch_id"]
+    assert _count_rows(integration_db_url, "journal_entries") == 1
+    assert _count_rows(integration_db_url, "settlement_allocations") == 1
+
+    du = import_api_client.delete(f"/import-batches/{batch_id}")
+    assert du.status_code == 204, du.text
+    assert _count_rows(integration_db_url, "import_batches") == 0
+    assert _count_rows(integration_db_url, "journal_entries") == 1
+    assert _count_rows(integration_db_url, "settlement_allocations") == 0
+
+    obligations = import_api_client.get(f"/obligations/{party_id}").json()
+    assert len(obligations) == 1
+    assert obligations[0]["status"] == "open"
+    assert Decimal(obligations[0]["open_amount"]) == Decimal("500.00")
+
+
+def test_unload_import_batch_reverses_early_payment_prepaid_reclassification(
+    import_api_client: TestClient,
+    integration_db_url: str,
+) -> None:
+    for payload in (
+        {"name": "Cash", "type": "asset", "is_active": True},
+        {"name": "Repairs Expense", "type": "expense", "is_active": True},
+        {"name": "Accounts Payable", "type": "liability", "is_active": True},
+        {"name": "Prepaid Expenses", "type": "asset", "is_active": True},
+    ):
+        assert import_api_client.post("/accounts", json=payload).status_code == 201
+
+    accounts = import_api_client.get("/accounts").json()
+    by_name = {a["name"]: a["id"] for a in accounts}
+    ap_id = by_name["Accounts Payable"]
+    prepaid_id = by_name["Prepaid Expenses"]
+    repairs_id = by_name["Repairs Expense"]
+
+    pr = import_api_client.post(
+        "/parties",
+        json={"name": "Vendor Early Unload", "role": "vendor", "is_active": True},
+    )
+    assert pr.status_code == 201, pr.text
+    party_id = pr.json()["id"]
+
+    assert (
+        import_api_client.patch(
+            "/ledger-settings",
+            json={
+                "accounts_payable_account_id": ap_id,
+                "prepaid_expenses_account_id": prepaid_id,
+            },
+        ).status_code
+        == 200
+    )
+
+    plan = import_api_client.post(
+        "/accrual-plans",
+        json={
+            "name": "Aug early unload payable",
+            "direction": "expense",
+            "party_id": party_id,
+            "target_account_id": repairs_id,
+            "bridge_account_id": ap_id,
+            "frequency": "monthly_day",
+            "start_date": "2026-08-01",
+            "end_date": "2026-08-31",
+            "amount": "500.00",
+            "summary_template": "{plan}",
+            "day_of_month": 1,
+        },
+    )
+    assert plan.status_code == 201, plan.text
+    obligation = import_api_client.get(f"/obligations/{party_id}").json()[0]
+    obligation_id = obligation["id"]
+    accrual_entry_id = obligation["source_entry_id"]
+
+    rule_set = {
+        "name": "early payment settle lines",
+        "rule_set": {
+            "rules": [
+                {
+                    "sort_order": 10,
+                    "expression": (
+                        '{"set":{"line":['
+                        '{"account":"Cash","amount":-attributes["amt"],"party":"Vendor Early Unload"},'
+                        '{"account":"Prepaid Expenses","amount":attributes["amt"],'
+                        '"party":"Vendor Early Unload","obligation-id":'
+                        + str(obligation_id)
+                        + "}]}}"
+                    ),
+                },
+            ],
+        },
+    }
+    rs = import_api_client.post("/import-rules/cel/rule-sets", json=rule_set)
+    assert rs.status_code == 201, rs.text
+    rule_set_id = rs.json()["id"]
+
+    ex = import_api_client.post(
+        "/imports/csv/execute",
+        json={
+            "csv_text": "date,summary,amt\n2026-07-15,Early vendor payment,500.00\n",
+            "basename": "early-payment-then-unload.csv",
+            "has_header_row": True,
+            "columns": [
+                {"attribute_name": "date", "data_type": "date", "date_format": "YYYY-MM-DD"},
+                {"attribute_name": "summary", "data_type": "string"},
+                {"attribute_name": "amt", "data_type": "numeric"},
+            ],
+            "cel_rule_set_id": rule_set_id,
+        },
+    )
+    assert ex.status_code == 200, ex.text
+    batch_id = ex.json()["import_batch_id"]
+    assert _count_rows(integration_db_url, "settlement_allocations") == 1
+
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT account_id, amount
+                FROM journal_lines
+                WHERE entry_id = %s
+                ORDER BY id ASC
+                """,
+                (accrual_entry_id,),
+            )
+            before = cur.fetchall()
+    assert any(int(r["account_id"]) == prepaid_id for r in before)
+    assert not any(int(r["account_id"]) == ap_id for r in before)
+
+    du = import_api_client.delete(f"/import-batches/{batch_id}")
+    assert du.status_code == 204, du.text
+    assert _count_rows(integration_db_url, "settlement_allocations") == 0
+
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT account_id, amount
+                FROM journal_lines
+                WHERE entry_id = %s
+                ORDER BY id ASC
+                """,
+                (accrual_entry_id,),
+            )
+            after = cur.fetchall()
+    assert any(int(r["account_id"]) == ap_id for r in after)
+    assert not any(int(r["account_id"]) == prepaid_id for r in after)
+
+
 def test_import_batches_is_latest_loaded_import_two_batches(
     import_api_client: TestClient,
     integration_db_url: str,

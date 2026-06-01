@@ -505,6 +505,86 @@ def test_auto_settlement_payment_closes_payable(
     assert import_api_client.get(f"/obligations/{party_id}").json() == []
 
 
+def test_auto_settlement_payment_uses_per_obligation_bridge_accounts(
+    import_api_client: TestClient,
+) -> None:
+    for payload in (
+        {"name": "Cash", "type": "asset", "is_active": True},
+        {"name": "Repairs Expense", "type": "expense", "is_active": True},
+        {"name": "Accounts Payable", "type": "liability", "is_active": True},
+        {"name": "Prepaid Expenses", "type": "asset", "is_active": True},
+    ):
+        assert import_api_client.post("/accounts", json=payload).status_code == 201
+    by_name = {a["name"]: a["id"] for a in import_api_client.get("/accounts").json()}
+    assert (
+        import_api_client.patch(
+            "/ledger-settings",
+            json={
+                "accounts_payable_account_id": by_name["Accounts Payable"],
+                "prepaid_expenses_account_id": by_name["Prepaid Expenses"],
+            },
+        ).status_code
+        == 200
+    )
+
+    pr = import_api_client.post(
+        "/parties",
+        json={"name": "Vendor Bridge Split", "role": "vendor", "is_active": True},
+    )
+    assert pr.status_code == 201
+    party_id = pr.json()["id"]
+    plan = import_api_client.post(
+        "/accrual-plans",
+        json={
+            "name": "Two-month payable",
+            "direction": "expense",
+            "party_id": party_id,
+            "target_account_id": by_name["Repairs Expense"],
+            "bridge_account_id": by_name["Accounts Payable"],
+            "frequency": "monthly_day",
+            "start_date": "2026-08-01",
+            "end_date": "2026-09-01",
+            "amount": "400.00",
+            "summary_template": "{plan}",
+            "day_of_month": 1,
+        },
+    )
+    assert plan.status_code == 201, plan.text
+
+    expression = (
+        '{"set": {"settlement": "payment", "summary": attributes["summary"], '
+        '"amount": attributes["amount"], "date": attributes["date"], '
+        '"dr-account": "Repairs Expense", "dr-party": "Vendor Bridge Split", "cr-account": "Cash"}}'
+    )
+    rs = import_api_client.post(
+        "/import-rules/cel/rule-sets",
+        json={"name": "pay mixed obligations", "rule_set": {"rules": [{"sort_order": 10, "expression": expression}]}},
+    )
+    assert rs.status_code == 201
+
+    payload = {
+        "csv_text": "date,summary,amount\n2026-08-15,Pay vendor mixed,600.00\n",
+        "basename": "payment-bridge-split.csv",
+        "has_header_row": True,
+        "columns": [
+            {"attribute_name": "date", "data_type": "date", "date_format": "YYYY-MM-DD"},
+            {"attribute_name": "summary", "data_type": "string"},
+            {"attribute_name": "amount", "data_type": "numeric"},
+        ],
+        "cel_rule_set_id": rs.json()["id"],
+    }
+    r = import_api_client.post("/imports/csv/execute", json=payload)
+    assert r.status_code == 200, r.text
+    entry = r.json()["entries"][0]
+
+    ap_lines = [ln for ln in entry["lines"] if ln["account_name"] == "Accounts Payable"]
+    prepaid_lines = [ln for ln in entry["lines"] if ln["account_name"] == "Prepaid Expenses"]
+    assert len(ap_lines) == 1
+    assert len(prepaid_lines) == 1
+    assert Decimal(ap_lines[0]["amount"]) == Decimal("400.00")
+    assert Decimal(prepaid_lines[0]["amount"]) == Decimal("200.00")
+
+
 def test_auto_settlement_with_cheque_on_same_row(
     import_api_client: TestClient,
     integration_db_url: str,

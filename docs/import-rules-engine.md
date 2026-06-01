@@ -149,7 +149,7 @@ Rules:
 - **Multi-obligation:** multiple lines, each with its own id.
 - **Remainder / overpay:** lines **without** `obligation-id` (e.g. unearned or revenue) — prevents exact same-day collapse when present alongside a full obligation line.
 
-Receipt settlements use the **accounts receivable** bridge (negative amount on A/R); payments use **accounts payable** (positive amount on A/P). Row validation rejects unknown obligations, duplicate ids on one entry, amounts exceeding `open_amount`, party mismatch, and wrong bridge account or sign.
+Bridge selection is **per obligation date**: receipts use **accounts receivable** unless the obligation accrual is in the future (then **unearned revenue**), and payments use **accounts payable** unless the obligation accrual is in the future (then **prepaid expenses**). Row validation rejects unknown obligations, duplicate ids on one entry, amounts exceeding `open_amount`, party mismatch, and wrong bridge account or sign.
 
 Posting (each CSV row in file order inside `open_import_batch`, one transaction for the whole file):
 
@@ -183,7 +183,7 @@ The optional top-level **`settlement`** auto-build attribute ([#152](https://git
 
 ## `settlement` auto-build attribute ([#152](https://github.com/brettski74/TallyBadger/issues/152))
 
-After CEL and **import default account** resolution, the CSV path may set **`settlement`** to **`receipt`** or **`payment`**. The engine matches open obligations, allocates **FIFO** (`source_entry_date`, then `id`), synthesizes **`line[]`** (cash + A/R or A/P bridges with **`obligation-id`**), and posts through the [#151](https://github.com/brettski74/TallyBadger/issues/151) import settlement path.
+After CEL and **import default account** resolution, the CSV path may set **`settlement`** to **`receipt`** or **`payment`**. The engine matches open obligations, allocates **FIFO** (`source_entry_date`, then `id`), synthesizes **`line[]`** (cash + per-obligation bridge line with **`obligation-id`**), and posts through the [#151](https://github.com/brettski74/TallyBadger/issues/151) import settlement path.
 
 | `settlement` | Behaviour |
 |--------------|-----------|
@@ -211,7 +211,7 @@ Open obligations for the party where the accrual plan **`target_account_id`** eq
 
 | Case | Behaviour |
 |------|-----------|
-| Fully allocated | Cash + bridge lines only |
+| Fully allocated | Cash + bridge lines only (bridge account chosen per obligation date: A/R vs unearned, or A/P vs prepaid) |
 | Receipt overpay / no more obligations | Remainder on **`cr-account`** (P&amp;L hint) + **review** (not unearned revenue) |
 | Payment overpay | Remainder on **`dr-account`** + **review** |
 | No matching obligations | Simple journal from bag + **review** |
