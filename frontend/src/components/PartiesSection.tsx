@@ -43,6 +43,7 @@ import {
   type PartySortKey,
 } from "../lib/partyRegisterSort";
 import { JournalFilterMultiDropdown } from "./JournalFilterMultiDropdown";
+import { RegisterListCard, RegisterListChrome, RegisterListTable } from "./RegisterListLayout";
 import { SubtypeCombobox } from "./SubtypeCombobox";
 import { TableRowIconButton } from "./TableRowIconButton";
 
@@ -804,7 +805,8 @@ export function PartiesSection({ accounts, onPartyCreated, onPartyUpdated }: Par
 
   return (
     <>
-      <section className="card journal-card-wide">
+      <RegisterListCard>
+        <RegisterListChrome>
         <div className="cheque-register-toolbar">
           <h2>Parties</h2>
           <div className="cheque-register-actions">
@@ -883,10 +885,11 @@ export function PartiesSection({ accounts, onPartyCreated, onPartyUpdated }: Par
             {rowActionError}
           </p>
         )}
+        </RegisterListChrome>
 
-        <div style={{ overflowX: "auto" }}>
-          <table aria-label="Parties register">
-            <thead>
+        <RegisterListTable
+          aria-label="Parties register"
+          header={
               <tr>
                 <PartySortableColumnHeader
                   label="Name"
@@ -915,8 +918,8 @@ export function PartiesSection({ accounts, onPartyCreated, onPartyUpdated }: Par
                 />
                 <th className="table-row-actions-heading" aria-label="actions" />
               </tr>
-            </thead>
-            <tbody>
+          }
+        >
               {registerLoading && registerRows.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="muted">
@@ -1002,10 +1005,8 @@ export function PartiesSection({ accounts, onPartyCreated, onPartyUpdated }: Par
                   );
                 })
               )}
-            </tbody>
-          </table>
-        </div>
-      </section>
+        </RegisterListTable>
+      </RegisterListCard>
 
       <dialog
         ref={createDialogRef}

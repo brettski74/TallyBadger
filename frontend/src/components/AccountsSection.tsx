@@ -22,6 +22,7 @@ import {
 import { accountNameMatchesGlob } from "../lib/accountNameGlob";
 import { isMacLikeUserAgent } from "../lib/platformKeyboard";
 import { JournalFilterMultiDropdown } from "./JournalFilterMultiDropdown";
+import { RegisterListCard, RegisterListChrome, RegisterListTable } from "./RegisterListLayout";
 import { TableRowIconButton } from "./TableRowIconButton";
 
 const ACCOUNT_TYPES: AccountType[] = ["asset", "liability", "equity", "revenue", "expense", "suspense"];
@@ -366,7 +367,8 @@ export function AccountsSection({
   }
 
   return (
-    <section className="card journal-card-wide accounts-panel">
+    <RegisterListCard className="accounts-panel">
+      <RegisterListChrome>
       <div className="journal-list-toolbar journal-list-toolbar-with-filters">
         <h2>Accounts</h2>
         <div className="journal-filters-line">
@@ -425,18 +427,19 @@ export function AccountsSection({
         </p>
       )}
       {!loading && !error && accounts.length === 0 && !isCreating && <p>No accounts yet.</p>}
+      </RegisterListChrome>
 
       {!loading && !error && (accounts.length > 0 || isCreating) && (
-        <table>
-          <thead>
+        <RegisterListTable
+          header={
             <tr>
               <th>Name</th>
               <th>Type</th>
               <th>Status</th>
               <th className="table-row-actions-heading" aria-label="actions" />
             </tr>
-          </thead>
-          <tbody>
+          }
+        >
             {isCreating && (
               <Fragment key="__inline-create-block__">
                 <tr>
@@ -679,9 +682,8 @@ export function AccountsSection({
                 </tr>
               );
             })}
-          </tbody>
-        </table>
+        </RegisterListTable>
       )}
-    </section>
+    </RegisterListCard>
   );
 }

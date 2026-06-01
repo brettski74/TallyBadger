@@ -402,6 +402,20 @@ describe("AccountsSection", () => {
     expect(screen.queryByText("Dead Expense")).not.toBeInTheDocument();
   });
 
+  it("uses shared register list scroll layout when the table is shown", () => {
+    render(
+      <AccountsSection
+        accounts={[baseAccount]}
+        loading={false}
+        error={null}
+        onAccountCreated={vi.fn()}
+        onAccountUpdated={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId("register-list-table-area")).toBeInTheDocument();
+    expect(screen.getByRole("table").querySelector("tbody")).toBeTruthy();
+  });
+
   it("shows no-match message when filters exclude all accounts", async () => {
     const user = userEvent.setup();
     render(
