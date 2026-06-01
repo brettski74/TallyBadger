@@ -85,5 +85,44 @@ describe("SettlementsSection", () => {
     expect(screen.getByLabelText("Allocate obligation 11")).toHaveValue("75.00");
     expect(screen.getByLabelText("Allocate obligation 12")).toHaveValue("250.00");
     expect(screen.getByText("future")).toBeInTheDocument();
+    expect(
+      screen.getByText(/future portions flow through unearned revenue automatically/i),
+    ).toBeInTheDocument();
+  });
+
+  it("shows future due and prepaid hint for payments", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(
+        JSON.stringify([
+          {
+            id: 20,
+            party_id: 1,
+            source_entry_id: 200,
+            source_entry_date: "2126-06-01",
+            source_entry_summary: "Future vendor accrual",
+            obligation_type: "payable",
+            status: "open",
+            original_amount: "500.00",
+            open_amount: "500.00",
+          },
+        ]),
+        { status: 200 },
+      ),
+    );
+
+    render(<SettlementsSection accounts={accounts} parties={parties} />);
+    const user = userEvent.setup();
+
+    await user.selectOptions(screen.getByLabelText("Settlement type"), "payment");
+    await user.clear(screen.getByLabelText("Date"));
+    await user.type(screen.getByLabelText("Date"), "2026-05-01");
+    await user.selectOptions(screen.getByLabelText("Party"), "1");
+
+    expect(await screen.findByText("Future vendor accrual")).toBeInTheDocument();
+    expect(screen.getByText("future")).toBeInTheDocument();
+    expect(screen.getByText(/prepaid expenses accounts are configured under/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/future portions flow through prepaid expenses automatically/i),
+    ).toBeInTheDocument();
   });
 });

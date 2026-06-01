@@ -99,6 +99,29 @@ def _seed_chart(ledger_service: LedgerService) -> dict[str, int]:
     return {"cash_id": cash.id, "ar_id": ar.id, "rent_id": rent.id, "party_id": party.id}
 
 
+def _seed_expense_chart(ledger_service: LedgerService) -> dict[str, int]:
+    cash = ledger_service.create_account(AccountCreate(name="Cash", type="asset"))
+    ap = ledger_service.create_account(AccountCreate(name="Accounts Payable", type="liability"))
+    prepaid = ledger_service.create_account(AccountCreate(name="Prepaid Expenses", type="asset"))
+    repairs = ledger_service.create_account(AccountCreate(name="Repairs Expense", type="expense"))
+    party = ledger_service.create_party(
+        PartyCreate(name="Vendor Rollup", role="vendor", is_active=True)
+    )
+    ledger_service.update_ledger_settings(
+        LedgerSettingsUpdate(
+            accounts_payable_account_id=ap.id,
+            prepaid_expenses_account_id=prepaid.id,
+        ),
+    )
+    return {
+        "cash_id": cash.id,
+        "ap_id": ap.id,
+        "prepaid_id": prepaid.id,
+        "expense_id": repairs.id,
+        "party_id": party.id,
+    }
+
+
 def _set_obligation_entry_dates(
     integration_db_url: str,
     *,
@@ -207,6 +230,7 @@ def test_get_accrual_plan_detail_rollups_and_today_boundary(
     assert Decimal(summary["past_due"]) == Decimal("300.00")
     assert Decimal(summary["not_yet_due"]) == Decimal("200.00")
     assert Decimal(summary["unearned"]) == Decimal("100.00")
+    assert Decimal(summary["prepaid"]) == Decimal("100.00")
 
     open_on_today = Decimal("250.00")
     total_open = sum(Decimal(ob["open_amount"]) for ob in body["obligations"])
@@ -265,5 +289,65 @@ def test_get_accrual_plan_detail_today_excluded_from_date_bucket_rollups(
     assert Decimal(summary["past_due"]) == Decimal("0")
     assert Decimal(summary["not_yet_due"]) == Decimal("0")
     assert Decimal(summary["unearned"]) == Decimal("0")
+    assert Decimal(summary["prepaid"]) == Decimal("0")
     assert Decimal(summary["total_original_accrued"]) == Decimal("400.00")
     assert Decimal(summary["total_settled_to_date"]) == Decimal("0")
+
+
+def test_get_accrual_plan_detail_expense_prepaid_rollup(
+    api_client: TestClient,
+    ledger_service: LedgerService,
+    integration_db_url: str,
+) -> None:
+    """Expense plan prepaid rollup mirrors revenue unearned (settled on future obligations)."""
+    ids = _seed_expense_chart(ledger_service)
+    today = date.today()
+    tomorrow = today + timedelta(days=1)
+
+    plan = ledger_service.create_accrual_plan(
+        AccrualPlanCreate(
+            name="Expense Rollup",
+            direction="expense",
+            party_id=ids["party_id"],
+            target_account_id=ids["expense_id"],
+            bridge_account_id=ids["ap_id"],
+            frequency="monthly_day",
+            start_date=date(2026, 1, 1),
+            end_date=date(2026, 2, 28),
+            amount=Decimal("200.00"),
+            summary_template="{plan}",
+            day_of_month=1,
+        )
+    )
+    obligations = [
+        ob
+        for ob in ledger_service.list_open_obligations(ids["party_id"])
+        if ob.accrual_plan_id == plan.id
+    ]
+    assert len(obligations) == 2
+    obligations.sort(key=lambda ob: ob.id)
+    future_ob = obligations[-1]
+
+    _set_obligation_entry_dates(
+        integration_db_url,
+        obligation_dates={future_ob.id: tomorrow},
+    )
+
+    ledger_service.record_settlement(
+        SettlementWrite(
+            party_id=ids["party_id"],
+            settlement_type="payment",
+            event_date=today,
+            amount=Decimal("75.00"),
+            cash_account_id=ids["cash_id"],
+            allocations=[
+                SettlementAllocationIn(obligation_id=future_ob.id, amount=Decimal("75.00")),
+            ],
+        )
+    )
+
+    response = api_client.get(f"/accrual-plans/{plan.id}")
+    assert response.status_code == 200
+    summary = response.json()["summary"]
+    assert Decimal(summary["prepaid"]) == Decimal("75.00")
+    assert Decimal(summary["unearned"]) == Decimal("75.00")

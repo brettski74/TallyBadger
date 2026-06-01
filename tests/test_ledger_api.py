@@ -80,6 +80,7 @@ class StubLedgerService:
                 past_due=Decimal("0"),
                 not_yet_due=Decimal("100.00"),
                 unearned=Decimal("0"),
+                prepaid=Decimal("0"),
             ),
         )
 
