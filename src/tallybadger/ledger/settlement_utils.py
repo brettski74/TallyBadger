@@ -29,6 +29,27 @@ def receipt_bridge_account_id(
     return accounts_receivable_account_id
 
 
+def is_early_payment_obligation(
+    event_date: date,
+    source_entry_date: date | None,
+) -> bool:
+    """True when cash is paid before the accrual journal entry date."""
+    return source_entry_date is not None and source_entry_date > event_date
+
+
+def payment_bridge_account_id(
+    event_date: date,
+    source_entry_date: date | None,
+    *,
+    accounts_payable_account_id: int | None,
+    prepaid_expenses_account_id: int | None,
+) -> int | None:
+    """A/P for due payments; prepaid expenses when the obligation accrual is still in the future."""
+    if is_early_payment_obligation(event_date, source_entry_date):
+        return prepaid_expenses_account_id
+    return accounts_payable_account_id
+
+
 def fifo_allocate(
     obligations: list[AccrualObligationOut],
     total: Decimal,

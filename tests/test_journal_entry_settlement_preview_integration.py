@@ -354,6 +354,85 @@ def test_preview_early_receipt_uses_unearned_bridge(api_client: TestClient) -> N
     assert bridge_lines[0]["account_id"] != ctx["ar_id"]
 
 
+def _setup_payment_accrual_with_prepaid(api_client: TestClient) -> dict[str, int]:
+    for payload in (
+        {"name": "Cash", "type": "asset", "is_active": True},
+        {"name": "Repairs Expense", "type": "expense", "is_active": True},
+        {"name": "Accounts Payable", "type": "liability", "is_active": True},
+        {"name": "Prepaid Expenses", "type": "asset", "is_active": True},
+    ):
+        assert api_client.post("/accounts", json=payload).status_code == 201
+
+    by_name = {account["name"]: account["id"] for account in api_client.get("/accounts").json()}
+    assert (
+        api_client.patch(
+            "/ledger-settings",
+            json={
+                "accounts_payable_account_id": by_name["Accounts Payable"],
+                "prepaid_expenses_account_id": by_name["Prepaid Expenses"],
+            },
+        ).status_code
+        == 200
+    )
+
+    party = api_client.post(
+        "/parties",
+        json={"name": "Early Vendor", "role": "vendor", "is_active": True},
+    )
+    assert party.status_code == 201, party.text
+    party_id = party.json()["id"]
+
+    plan = api_client.post(
+        "/accrual-plans",
+        json={
+            "name": "August repair",
+            "direction": "expense",
+            "party_id": party_id,
+            "target_account_id": by_name["Repairs Expense"],
+            "bridge_account_id": by_name["Accounts Payable"],
+            "frequency": "monthly_day",
+            "start_date": "2026-08-01",
+            "end_date": "2026-08-31",
+            "amount": "800.00",
+            "summary_template": "{plan}",
+            "day_of_month": 1,
+        },
+    )
+    assert plan.status_code == 201, plan.text
+
+    obligations = api_client.get(f"/obligations/{party_id}").json()
+    assert len(obligations) == 1
+    return {
+        "party_id": party_id,
+        "cash_id": by_name["Cash"],
+        "expense_id": by_name["Repairs Expense"],
+        "ap_id": by_name["Accounts Payable"],
+        "prepaid_id": by_name["Prepaid Expenses"],
+        "obligation_id": obligations[0]["id"],
+    }
+
+
+def test_preview_early_payment_uses_prepaid_bridge(api_client: TestClient) -> None:
+    ctx = _setup_payment_accrual_with_prepaid(api_client)
+
+    preview = _preview(
+        api_client,
+        {
+            "entry_date": date(2026, 7, 26).isoformat(),
+            "summary": "Early vendor payment",
+            "lines": [
+                {"account_id": ctx["expense_id"], "party_id": ctx["party_id"], "amount": "800.00"},
+                {"account_id": ctx["cash_id"], "party_id": ctx["party_id"], "amount": "-800.00"},
+            ],
+        },
+    )
+    assert preview is not None
+    bridge_lines = [line for line in preview["lines"] if line.get("obligation_id") is not None]
+    assert len(bridge_lines) == 1
+    assert bridge_lines[0]["account_id"] == ctx["prepaid_id"]
+    assert bridge_lines[0]["account_id"] != ctx["ap_id"]
+
+
 def test_preview_receipt_full_match(api_client: TestClient) -> None:
     ctx = _setup_rent_accrual(api_client)
 

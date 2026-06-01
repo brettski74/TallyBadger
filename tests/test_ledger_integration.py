@@ -854,6 +854,389 @@ def test_same_day_overpayment_adds_cash_and_unearned_on_accrual_entry(
     assert not any(line.account_id == ar.id for line in entry.lines)
 
 
+def test_early_payment_settlement_reclasses_accrual_ap_to_prepaid(
+    ledger_service: LedgerService,
+    integration_db_url: str,
+) -> None:
+    _ensure_ledger_settings_row(integration_db_url)
+    cash = ledger_service.create_account(AccountCreate(name="Cash", type="asset"))
+    ap = ledger_service.create_account(AccountCreate(name="Accounts Payable", type="liability"))
+    repairs = ledger_service.create_account(AccountCreate(name="Repairs Expense", type="expense"))
+    prepaid = ledger_service.create_account(AccountCreate(name="Prepaid Expenses", type="asset"))
+
+    ledger_service.update_ledger_settings(
+        LedgerSettingsUpdate(
+            accounts_payable_account_id=ap.id,
+            prepaid_expenses_account_id=prepaid.id,
+        )
+    )
+
+    party = ledger_service.create_party(
+        PartyCreate(name="Vendor Co", role="vendor", is_active=True)
+    )
+
+    ledger_service.create_accrual_plan(
+        AccrualPlanCreate(
+            name="Repair bill Aug",
+            direction="expense",
+            party_id=party.id,
+            target_account_id=repairs.id,
+            bridge_account_id=ap.id,
+            frequency="monthly_day",
+            start_date=date(2026, 8, 1),
+            end_date=date(2026, 8, 31),
+            amount=Decimal("800.00"),
+            summary_template="{plan}",
+            day_of_month=1,
+        )
+    )
+
+    ob = ledger_service.list_open_obligations(party.id)[0]
+    accrual_entry_id = ob.source_entry_id
+    assert accrual_entry_id is not None
+
+    result = ledger_service.record_settlement(
+        SettlementWrite(
+            party_id=party.id,
+            settlement_type="payment",
+            event_date=date(2026, 7, 26),
+            amount=Decimal("800.00"),
+            cash_account_id=cash.id,
+            allocations=[
+                SettlementAllocationIn(obligation_id=ob.id, amount=Decimal("800.00")),
+            ],
+            note="early repair payment",
+        )
+    )
+
+    assert ledger_service.get_entry(result.entry_id).summary == "Settlement Repair bill Aug"
+
+    accrual_entry = ledger_service.get_entry(accrual_entry_id)
+    account_ids = {line.account_id for line in accrual_entry.lines}
+    assert ap.id not in account_ids
+    assert prepaid.id in account_ids
+    assert repairs.id in account_ids
+
+
+def test_partial_early_payment_splits_accrual_bridge_between_prepaid_and_ap(
+    ledger_service: LedgerService,
+    integration_db_url: str,
+) -> None:
+    _ensure_ledger_settings_row(integration_db_url)
+    cash = ledger_service.create_account(AccountCreate(name="Cash", type="asset"))
+    ap = ledger_service.create_account(AccountCreate(name="Accounts Payable", type="liability"))
+    repairs = ledger_service.create_account(AccountCreate(name="Repairs Expense", type="expense"))
+    prepaid = ledger_service.create_account(AccountCreate(name="Prepaid Expenses", type="asset"))
+
+    ledger_service.update_ledger_settings(
+        LedgerSettingsUpdate(
+            accounts_payable_account_id=ap.id,
+            prepaid_expenses_account_id=prepaid.id,
+        )
+    )
+
+    party = ledger_service.create_party(
+        PartyCreate(name="Vendor Co", role="vendor", is_active=True)
+    )
+
+    ledger_service.create_accrual_plan(
+        AccrualPlanCreate(
+            name="Repair bill partial",
+            direction="expense",
+            party_id=party.id,
+            target_account_id=repairs.id,
+            bridge_account_id=ap.id,
+            frequency="monthly_day",
+            start_date=date(2026, 8, 1),
+            end_date=date(2026, 8, 31),
+            amount=Decimal("800.00"),
+            summary_template="{plan}",
+            day_of_month=1,
+        )
+    )
+
+    ob = ledger_service.list_open_obligations(party.id)[0]
+    accrual_entry_id = ob.source_entry_id
+    assert accrual_entry_id is not None
+
+    ledger_service.record_settlement(
+        SettlementWrite(
+            party_id=party.id,
+            settlement_type="payment",
+            event_date=date(2026, 7, 26),
+            amount=Decimal("300.00"),
+            cash_account_id=cash.id,
+            allocations=[
+                SettlementAllocationIn(obligation_id=ob.id, amount=Decimal("300.00")),
+            ],
+            note="partial early payment",
+        )
+    )
+
+    accrual_entry = ledger_service.get_entry(accrual_entry_id)
+    assert len(accrual_entry.lines) == 3
+    by_account = {line.account_id: line.amount for line in accrual_entry.lines}
+    assert by_account[prepaid.id] == Decimal("-300.00")
+    assert by_account[ap.id] == Decimal("-500.00")
+    assert by_account[repairs.id] == Decimal("800.00")
+    assert sum(line.amount for line in accrual_entry.lines) == Decimal("0")
+
+    still_open = ledger_service.list_open_obligations(party.id)
+    assert len(still_open) == 1
+    assert still_open[0].open_amount == Decimal("500.00")
+
+
+def test_partial_early_payment_on_future_accrual_keeps_entry_balanced(
+    ledger_service: LedgerService,
+    integration_db_url: str,
+) -> None:
+    """FIFO payment: due slice on Dec accrual, early slice reclassifies Jan accrual with signed prepaid."""
+    _ensure_ledger_settings_row(integration_db_url)
+    cash = ledger_service.create_account(AccountCreate(name="Cash", type="asset"))
+    ap = ledger_service.create_account(AccountCreate(name="Accounts Payable", type="liability"))
+    maintenance = ledger_service.create_account(
+        AccountCreate(name="Maintenance and Repairs", type="expense")
+    )
+    prepaid = ledger_service.create_account(AccountCreate(name="Prepaid Expenses", type="asset"))
+
+    ledger_service.update_ledger_settings(
+        LedgerSettingsUpdate(
+            accounts_payable_account_id=ap.id,
+            prepaid_expenses_account_id=prepaid.id,
+        )
+    )
+
+    party = ledger_service.create_party(
+        PartyCreate(name="Mower Man Yard Maintenance", role="vendor", is_active=True)
+    )
+
+    ledger_service.create_accrual_plan(
+        AccrualPlanCreate(
+            name="Mower monthly",
+            direction="expense",
+            party_id=party.id,
+            target_account_id=maintenance.id,
+            bridge_account_id=ap.id,
+            frequency="monthly_day",
+            start_date=date(2025, 12, 1),
+            end_date=date(2026, 1, 31),
+            amount=Decimal("904.00"),
+            summary_template="{plan}",
+            day_of_month=1,
+        )
+    )
+
+    open_obs = sorted(
+        ledger_service.list_open_obligations(party.id),
+        key=lambda ob: ob.source_entry_date or date.min,
+    )
+    assert len(open_obs) == 2
+    dec_ob, jan_ob = open_obs[0], open_obs[1]
+    assert dec_ob.source_entry_date == date(2025, 12, 1)
+    assert jan_ob.source_entry_date == date(2026, 1, 1)
+    assert jan_ob.source_entry_id is not None
+
+    ledger_service.record_settlement(
+        SettlementWrite(
+            party_id=party.id,
+            settlement_type="payment",
+            event_date=date(2025, 12, 6),
+            amount=Decimal("1000.00"),
+            cash_account_id=cash.id,
+            allocations=[
+                SettlementAllocationIn(obligation_id=dec_ob.id, amount=Decimal("904.00")),
+                SettlementAllocationIn(obligation_id=jan_ob.id, amount=Decimal("96.00")),
+            ],
+            note="pay Dec due plus early slice on Jan",
+        )
+    )
+
+    jan_accrual = ledger_service.get_entry(jan_ob.source_entry_id)
+    by_account = {line.account_id: line.amount for line in jan_accrual.lines}
+    assert by_account[maintenance.id] == Decimal("904.00")
+    assert by_account[prepaid.id] == Decimal("-96.00")
+    assert by_account[ap.id] == Decimal("-808.00")
+    assert sum(line.amount for line in jan_accrual.lines) == Decimal("0")
+
+
+def test_same_day_full_payment_collapses_into_accrual_entry(
+    ledger_service: LedgerService,
+    integration_db_url: str,
+) -> None:
+    _ensure_ledger_settings_row(integration_db_url)
+    cash = ledger_service.create_account(AccountCreate(name="Cash", type="asset"))
+    ap = ledger_service.create_account(AccountCreate(name="Accounts Payable", type="liability"))
+    repairs = ledger_service.create_account(AccountCreate(name="Repairs Expense", type="expense"))
+    prepaid = ledger_service.create_account(AccountCreate(name="Prepaid Expenses", type="asset"))
+
+    ledger_service.update_ledger_settings(
+        LedgerSettingsUpdate(
+            accounts_payable_account_id=ap.id,
+            prepaid_expenses_account_id=prepaid.id,
+        )
+    )
+
+    party = ledger_service.create_party(
+        PartyCreate(name="Vendor Co", role="vendor", is_active=True)
+    )
+
+    ledger_service.create_accrual_plan(
+        AccrualPlanCreate(
+            name="August repair",
+            direction="expense",
+            party_id=party.id,
+            target_account_id=repairs.id,
+            bridge_account_id=ap.id,
+            frequency="monthly_day",
+            start_date=date(2026, 8, 1),
+            end_date=date(2026, 8, 31),
+            amount=Decimal("800.00"),
+            summary_template="{plan}",
+            day_of_month=1,
+        )
+    )
+
+    assert _journal_entry_count(integration_db_url) == 1
+    ob = ledger_service.list_open_obligations(party.id)[0]
+    accrual_entry_id = ob.source_entry_id
+    assert accrual_entry_id is not None
+
+    result = ledger_service.record_settlement(
+        SettlementWrite(
+            party_id=party.id,
+            settlement_type="payment",
+            event_date=date(2026, 8, 1),
+            amount=Decimal("800.00"),
+            cash_account_id=cash.id,
+            allocations=[
+                SettlementAllocationIn(obligation_id=ob.id, amount=Decimal("800.00")),
+            ],
+            note=None,
+        )
+    )
+
+    assert _journal_entry_count(integration_db_url) == 1
+    assert result.entry_id == accrual_entry_id
+
+    entry = ledger_service.get_entry(accrual_entry_id)
+    assert not any(line.account_id == ap.id for line in entry.lines)
+    assert sum(line.amount for line in entry.lines if line.account_id == cash.id) == Decimal("-800.00")
+    assert sum(line.amount for line in entry.lines if line.account_id == repairs.id) == Decimal("800.00")
+
+
+def test_same_day_overpayment_adds_cash_and_prepaid_on_accrual_entry(
+    ledger_service: LedgerService,
+    integration_db_url: str,
+) -> None:
+    _ensure_ledger_settings_row(integration_db_url)
+    cash = ledger_service.create_account(AccountCreate(name="Cash", type="asset"))
+    ap = ledger_service.create_account(AccountCreate(name="Accounts Payable", type="liability"))
+    repairs = ledger_service.create_account(AccountCreate(name="Repairs Expense", type="expense"))
+    prepaid = ledger_service.create_account(AccountCreate(name="Prepaid Expenses", type="asset"))
+
+    ledger_service.update_ledger_settings(
+        LedgerSettingsUpdate(
+            accounts_payable_account_id=ap.id,
+            prepaid_expenses_account_id=prepaid.id,
+        )
+    )
+
+    party = ledger_service.create_party(
+        PartyCreate(name="Vendor Co", role="vendor", is_active=True)
+    )
+
+    ledger_service.create_accrual_plan(
+        AccrualPlanCreate(
+            name="August repair overpay",
+            direction="expense",
+            party_id=party.id,
+            target_account_id=repairs.id,
+            bridge_account_id=ap.id,
+            frequency="monthly_day",
+            start_date=date(2026, 8, 1),
+            end_date=date(2026, 8, 31),
+            amount=Decimal("800.00"),
+            summary_template="{plan}",
+            day_of_month=1,
+        )
+    )
+
+    ob = ledger_service.list_open_obligations(party.id)[0]
+    accrual_entry_id = ob.source_entry_id
+    assert accrual_entry_id is not None
+
+    ledger_service.record_settlement(
+        SettlementWrite(
+            party_id=party.id,
+            settlement_type="payment",
+            event_date=date(2026, 8, 1),
+            amount=Decimal("1000.00"),
+            cash_account_id=cash.id,
+            allocations=[
+                SettlementAllocationIn(obligation_id=ob.id, amount=Decimal("800.00")),
+            ],
+            note=None,
+        )
+    )
+
+    assert _journal_entry_count(integration_db_url) == 1
+    entry = ledger_service.get_entry(accrual_entry_id)
+    assert sum(line.amount for line in entry.lines if line.account_id == cash.id) == Decimal("-1000.00")
+    assert sum(line.amount for line in entry.lines if line.account_id == prepaid.id) == Decimal("200.00")
+    assert sum(line.amount for line in entry.lines if line.account_id == repairs.id) == Decimal("800.00")
+    assert not any(line.account_id == ap.id for line in entry.lines)
+
+
+def test_early_payment_without_prepaid_account_rejected(
+    ledger_service: LedgerService,
+    integration_db_url: str,
+) -> None:
+    _ensure_ledger_settings_row(integration_db_url)
+    cash = ledger_service.create_account(AccountCreate(name="Cash", type="asset"))
+    ap = ledger_service.create_account(AccountCreate(name="Accounts Payable", type="liability"))
+    repairs = ledger_service.create_account(AccountCreate(name="Repairs Expense", type="expense"))
+
+    ledger_service.update_ledger_settings(
+        LedgerSettingsUpdate(accounts_payable_account_id=ap.id)
+    )
+
+    party = ledger_service.create_party(
+        PartyCreate(name="Vendor Co", role="vendor", is_active=True)
+    )
+
+    ledger_service.create_accrual_plan(
+        AccrualPlanCreate(
+            name="Future repair",
+            direction="expense",
+            party_id=party.id,
+            target_account_id=repairs.id,
+            bridge_account_id=ap.id,
+            frequency="monthly_day",
+            start_date=date(2026, 8, 1),
+            end_date=date(2026, 8, 31),
+            amount=Decimal("800.00"),
+            summary_template="{plan}",
+            day_of_month=1,
+        )
+    )
+
+    ob = ledger_service.list_open_obligations(party.id)[0]
+
+    with pytest.raises(LedgerValidationError, match="prepaid expenses"):
+        ledger_service.record_settlement(
+            SettlementWrite(
+                party_id=party.id,
+                settlement_type="payment",
+                event_date=date(2026, 7, 26),
+                amount=Decimal("800.00"),
+                cash_account_id=cash.id,
+                allocations=[
+                    SettlementAllocationIn(obligation_id=ob.id, amount=Decimal("800.00")),
+                ],
+            )
+        )
+
+
 def test_party_default_revenue_and_cel_party_and_revenue_account(ledger_service: LedgerService) -> None:
     rent = ledger_service.create_account(AccountCreate(name="Rent Revenue", type="revenue"))
     ledger_service.create_party(
