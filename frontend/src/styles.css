@@ -164,6 +164,18 @@ body {
   scrollbar-gutter: stable;
 }
 
+/* width: 1% on .table-row-actions-* fights fixed layout on per-row display:table; keep icons on one line */
+.register-list-table th.table-row-actions-heading,
+.register-list-table td.table-row-actions-cell {
+  width: calc(2 * 32px + 2px + 0.8rem);
+  min-width: calc(2 * 32px + 2px + 0.8rem);
+}
+
+.register-list-table .table-row-actions,
+.register-list-table td.table-row-actions-cell .form-actions-inline {
+  flex-wrap: nowrap;
+}
+
 .card {
   background: var(--bg-card);
   border: 1px solid var(--border);
