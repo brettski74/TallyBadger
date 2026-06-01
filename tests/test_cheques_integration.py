@@ -265,6 +265,107 @@ def test_journal_create_marks_cheque_cleared(
     assert data["cleared_date"] == "2026-05-05"
 
 
+def test_journal_create_same_day_as_issue_clears_cheque(ledger_service: LedgerService) -> None:
+    cr_id, dr_id = _two_accounts(ledger_service)
+    ch = ledger_service.create_cheque(
+        ChequeCreate(
+            credit_account_id=cr_id,
+            debit_account_id=dr_id,
+            summary="Same day",
+            cheque_number=104,
+            issue_date=date(2026, 6, 1),
+            amount=Decimal("50.00"),
+        )
+    )
+    ledger_service.create_entry(
+        JournalEntryWrite(
+            entry_date=date(2026, 6, 1),
+            summary="Clear same day",
+            lines=[
+                JournalLineIn(account_id=dr_id, amount=Decimal("50.00")),
+                JournalLineIn(account_id=cr_id, amount=Decimal("-50.00")),
+            ],
+            cheque_id=ch.id,
+        )
+    )
+    reg = ledger_service.get_cheque(ch.id)
+    assert reg.status == "cleared"
+    assert reg.cleared_date == date(2026, 6, 1)
+
+
+def test_journal_create_predated_cheque_fails(
+    api_client: TestClient,
+    ledger_service: LedgerService,
+) -> None:
+    cr_id, dr_id = _two_accounts(ledger_service)
+    ch = ledger_service.create_cheque(
+        ChequeCreate(
+            credit_account_id=cr_id,
+            debit_account_id=dr_id,
+            summary="Future issue",
+            cheque_number=105,
+            issue_date=date(2026, 1, 1),
+            amount=Decimal("25.00"),
+        )
+    )
+    with pytest.raises(LedgerValidationError, match="before cheque issue date"):
+        ledger_service.create_entry(
+            JournalEntryWrite(
+                entry_date=date(2025, 12, 1),
+                summary="Too early",
+                lines=[
+                    JournalLineIn(account_id=dr_id, amount=Decimal("25.00")),
+                    JournalLineIn(account_id=cr_id, amount=Decimal("-25.00")),
+                ],
+                cheque_id=ch.id,
+            )
+        )
+    reg = api_client.get(f"/cheques/{ch.id}")
+    assert reg.status_code == 200
+    assert reg.json()["status"] == "open"
+
+
+def test_journal_update_predated_cheque_fails(ledger_service: LedgerService) -> None:
+    cr_id, dr_id = _two_accounts(ledger_service)
+    ch = ledger_service.create_cheque(
+        ChequeCreate(
+            credit_account_id=cr_id,
+            debit_account_id=dr_id,
+            summary="Update predated",
+            cheque_number=106,
+            issue_date=date(2026, 1, 1),
+            amount=Decimal("30.00"),
+        )
+    )
+    entry = ledger_service.create_entry(
+        JournalEntryWrite(
+            entry_date=date(2026, 2, 1),
+            summary="Valid clear",
+            lines=[
+                JournalLineIn(account_id=dr_id, amount=Decimal("30.00")),
+                JournalLineIn(account_id=cr_id, amount=Decimal("-30.00")),
+            ],
+            cheque_id=ch.id,
+        )
+    )
+    with pytest.raises(LedgerValidationError, match="before cheque issue date"):
+        ledger_service.update_entry(
+            entry.id,
+            JournalEntryWrite(
+                entry_date=date(2025, 12, 1),
+                summary="Valid clear",
+                lines=[
+                    JournalLineIn(account_id=dr_id, amount=Decimal("30.00")),
+                    JournalLineIn(account_id=cr_id, amount=Decimal("-30.00")),
+                ],
+                cheque_id=ch.id,
+            ),
+        )
+    reg = ledger_service.get_cheque(ch.id)
+    assert reg.status == "cleared"
+    assert reg.cleared_date == date(2026, 2, 1)
+
+
 def test_journal_second_entry_cannot_link_same_cheque(ledger_service: LedgerService) -> None:
     cr_id, dr_id = _two_accounts(ledger_service)
     ch = ledger_service.create_cheque(

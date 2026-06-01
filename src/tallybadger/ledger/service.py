@@ -2118,6 +2118,37 @@ class LedgerService:
             raise LedgerValidationError("journal entry references unknown cheque")
 
     @staticmethod
+    def _assert_journal_cheque_clearing_dates(
+        cur,
+        *,
+        cheque_id: int | None,
+        entry_date: date,
+    ) -> None:
+        """Reject manual journal saves that would clear a cheque before its issue date (#241)."""
+        if cheque_id is None:
+            return
+        cur.execute(
+            """
+            SELECT c.issue_date, c.cheque_number, a.name AS credit_account_name
+            FROM cheques c
+            INNER JOIN accounts a ON a.id = c.credit_account_id
+            WHERE c.id = %s
+            """,
+            (cheque_id,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return
+        issue_date = row["issue_date"]
+        if entry_date < issue_date:
+            cheque_number = int(row["cheque_number"])
+            credit_account_name = row["credit_account_name"]
+            raise LedgerValidationError(
+                f"Journal entry date {entry_date.isoformat()} is before cheque issue date "
+                f"{issue_date.isoformat()} (cheque #{cheque_number}, account {credit_account_name!r}).",
+            )
+
+    @staticmethod
     def _sync_cheque_register_after_journal_save(
         cur,
         *,
@@ -2839,6 +2870,12 @@ class LedgerService:
         self._assert_all_line_accounts_exist(cur, payload.lines)
         self._assert_all_line_parties_exist(cur, payload.lines)
         self._assert_journal_cheque_reference(cur, payload.cheque_id)
+        if import_batch_id is None:
+            self._assert_journal_cheque_clearing_dates(
+                cur,
+                cheque_id=payload.cheque_id,
+                entry_date=payload.entry_date,
+            )
         new_review = _coerce_new_review_messages(payload)
         if import_batch_id is None:
             cur.execute(
@@ -3847,6 +3884,11 @@ class LedgerService:
                         old_cheque_id = prev_header.get("cheque_id")
 
                         self._assert_journal_cheque_reference(cur, payload.cheque_id)
+                        self._assert_journal_cheque_clearing_dates(
+                            cur,
+                            cheque_id=payload.cheque_id,
+                            entry_date=payload.entry_date,
+                        )
                         cur.execute(
                             """
                             UPDATE journal_entries
