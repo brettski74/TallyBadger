@@ -43,7 +43,11 @@ from tallybadger.ledger.service import (
     LedgerService,
     LedgerValidationError,
 )
-from tallybadger.ledger.settlement_utils import fifo_allocate as _fifo_allocate
+from tallybadger.ledger.settlement_utils import (
+    fifo_allocate as _fifo_allocate,
+    payment_bridge_account_id,
+    receipt_bridge_account_id,
+)
 
 router = APIRouter(prefix="", tags=["import-csv"])
 
@@ -493,7 +497,7 @@ def _build_auto_settlement_line_array(
     total: Decimal,
     allocations: list[tuple[int, Decimal]],
     remainder: Decimal,
-    bridge_account_name: str,
+    bridge_account_name_by_obligation_id: dict[int, str],
 ) -> list[dict[str, Any]]:
     party = pre.party_name
     lines: list[dict[str, Any]] = []
@@ -508,7 +512,7 @@ def _build_auto_settlement_line_array(
         for obligation_id, alloc in allocations:
             lines.append(
                 {
-                    "account": bridge_account_name,
+                    "account": bridge_account_name_by_obligation_id[obligation_id],
                     "amount": _format_line_amount(-alloc),
                     "party": party,
                     "obligation-id": obligation_id,
@@ -533,7 +537,7 @@ def _build_auto_settlement_line_array(
         for obligation_id, alloc in allocations:
             lines.append(
                 {
-                    "account": bridge_account_name,
+                    "account": bridge_account_name_by_obligation_id[obligation_id],
                     "amount": _format_line_amount(alloc),
                     "party": party,
                     "obligation-id": obligation_id,
@@ -622,16 +626,43 @@ def _maybe_apply_auto_settlement(
     if not allocations:
         return ["Auto-settlement could not match open obligations; posted as a simple journal entry."]
 
-    if pre.settlement_type == "receipt":
-        bridge_id = ledger_settings.accounts_receivable_account_id
-    else:
-        bridge_id = ledger_settings.accounts_payable_account_id
-    assert bridge_id is not None
-    bridge_name = _account_name_by_id(bridge_id, accounts_by_id)
-    if bridge_name is None:
-        return _auto_settlement_precondition_review_messages(
-            f"settlement bridge account id {bridge_id} is missing or inactive in the chart.",
-        )
+    event_date = _to_entry_date(bag.get("date"))
+    obligation_by_id = {ob.id: ob for ob in obligations}
+    bridge_account_name_by_obligation_id: dict[int, str] = {}
+    for obligation_id, _ in allocations:
+        obligation = obligation_by_id.get(obligation_id)
+        if obligation is None:
+            return _auto_settlement_precondition_review_messages(
+                f"obligation {obligation_id} disappeared before settlement line synthesis.",
+            )
+        if pre.settlement_type == "receipt":
+            bridge_id = receipt_bridge_account_id(
+                event_date,
+                obligation.source_entry_date,
+                accounts_receivable_account_id=ledger_settings.accounts_receivable_account_id,
+                unearned_revenue_account_id=ledger_settings.unearned_revenue_account_id,
+            )
+        else:
+            bridge_id = payment_bridge_account_id(
+                event_date,
+                obligation.source_entry_date,
+                accounts_payable_account_id=ledger_settings.accounts_payable_account_id,
+                prepaid_expenses_account_id=ledger_settings.prepaid_expenses_account_id,
+            )
+        if bridge_id is None:
+            if pre.settlement_type == "receipt":
+                return _auto_settlement_precondition_review_messages(
+                    "configure unearned revenue account for early receipts.",
+                )
+            return _auto_settlement_precondition_review_messages(
+                "configure prepaid expenses account for early payments.",
+            )
+        bridge_name = _account_name_by_id(bridge_id, accounts_by_id)
+        if bridge_name is None:
+            return _auto_settlement_precondition_review_messages(
+                f"settlement bridge account id {bridge_id} is missing or inactive in the chart.",
+            )
+        bridge_account_name_by_obligation_id[obligation_id] = bridge_name
 
     review_messages: list[str] = []
     if remainder > Decimal("0"):
@@ -645,7 +676,7 @@ def _maybe_apply_auto_settlement(
         total=total,
         allocations=allocations,
         remainder=remainder,
-        bridge_account_name=bridge_name,
+        bridge_account_name_by_obligation_id=bridge_account_name_by_obligation_id,
     )
     bag.pop("amount", None)
     bag.pop("dr-account", None)

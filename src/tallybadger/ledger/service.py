@@ -3249,6 +3249,50 @@ class LedgerService:
         cur.execute("DELETE FROM settlement_allocations WHERE entry_id = %s", (entry_id,))
 
         if settlement_type == "payment":
+            collapse = (
+                entry_header.get("accrual_plan_id") is not None
+                and self._allocations_all_same_accrual_day(
+                    obligations, allocation_by_id, event_date
+                )
+            )
+            if collapse:
+                unapplied = cash_amount - allocated_total
+                prepaid_id = settings.get("prepaid_expenses_account_id")
+                if unapplied > Decimal("0") and prepaid_id is not None:
+                    self._reverse_append_cash_prepaid(
+                        cur,
+                        entry_id,
+                        party_id,
+                        cash_account_id,
+                        int(prepaid_id),
+                        unapplied,
+                    )
+                ap_id = settings["accounts_payable_account_id"]
+                for ob in reversed(obligations):
+                    amt = allocation_by_id.get(int(ob["id"]), Decimal("0"))
+                    if amt <= Decimal("0"):
+                        continue
+                    self._reverse_same_day_settle_payable_obligation(
+                        cur,
+                        ob,
+                        amt,
+                        cash_account_id,
+                        int(ap_id),
+                    )
+                self._finalize_settlement_entry_after_import_unload(
+                    cur,
+                    entry_id,
+                    entry_header,
+                    batch_entry_ids,
+                )
+                return
+
+            for ob in reversed(obligations):
+                amt = allocation_by_id.get(int(ob["id"]), Decimal("0"))
+                sd = ob.get("source_entry_date")
+                if sd is not None and sd > event_date and amt > Decimal("0"):
+                    self._reverse_early_payment_line_reclassification(cur, ob, amt, settings)
+
             self._finalize_settlement_entry_after_import_unload(
                 cur,
                 entry_id,
@@ -3257,7 +3301,10 @@ class LedgerService:
             )
             return
 
-        collapse = self._allocations_all_same_accrual_day(obligations, allocation_by_id, event_date)
+        collapse = (
+            entry_header.get("accrual_plan_id") is not None
+            and self._allocations_all_same_accrual_day(obligations, allocation_by_id, event_date)
+        )
 
         if collapse:
             unapplied = cash_amount - allocated_total
@@ -3438,6 +3485,48 @@ class LedgerService:
         )
 
     @staticmethod
+    def _reverse_append_cash_prepaid(
+        cur: Any,
+        entry_id: int,
+        party_id: int,
+        cash_account_id: int,
+        prepaid_account_id: int,
+        unapplied: Decimal,
+    ) -> None:
+        cur.execute(
+            """
+            DELETE FROM journal_lines
+            WHERE id = (
+                SELECT jl.id
+                FROM journal_lines jl
+                WHERE jl.entry_id = %s
+                  AND jl.account_id = %s
+                  AND jl.party_id IS NOT DISTINCT FROM %s
+                  AND jl.amount = %s
+                ORDER BY jl.id DESC
+                LIMIT 1
+            )
+            """,
+            (entry_id, prepaid_account_id, party_id, unapplied),
+        )
+        cur.execute(
+            """
+            DELETE FROM journal_lines
+            WHERE id = (
+                SELECT jl.id
+                FROM journal_lines jl
+                WHERE jl.entry_id = %s
+                  AND jl.account_id = %s
+                  AND jl.party_id IS NOT DISTINCT FROM %s
+                  AND jl.amount = %s
+                ORDER BY jl.id DESC
+                LIMIT 1
+            )
+            """,
+            (entry_id, cash_account_id, party_id, -unapplied),
+        )
+
+    @staticmethod
     def _reverse_same_day_settle_receivable_obligation(
         cur: Any,
         obligation: dict,
@@ -3470,6 +3559,73 @@ class LedgerService:
                 WHERE id = %s
                 """,
                 (ar_account_id, sl_id),
+            )
+            return
+        sign = Decimal("1") if Decimal(line["amount"]) >= 0 else Decimal("-1")
+        target_amt = sign * allocation_amount
+        cur.execute(
+            """
+            SELECT jl.id, jl.amount
+            FROM journal_lines jl
+            WHERE jl.entry_id = %s
+              AND jl.account_id = %s
+              AND jl.party_id IS NOT DISTINCT FROM %s
+              AND jl.id <> %s
+              AND jl.amount = %s
+            ORDER BY jl.id DESC
+            LIMIT 1
+            """,
+            (entry_id, cash_account_id, party_id, sl_id, target_amt),
+        )
+        cash_row = cur.fetchone()
+        if not cash_row:
+            raise LedgerValidationError("cannot reverse same-day partial settlement: cash line not found")
+        allocated_signed = Decimal(cash_row["amount"])
+        cash_line_id = int(cash_row["id"])
+        cur.execute("DELETE FROM journal_lines WHERE id = %s", (cash_line_id,))
+        new_amt = Decimal(line["amount"]) + allocated_signed
+        cur.execute(
+            """
+            UPDATE journal_lines
+            SET amount = %s
+            WHERE id = %s
+            """,
+            (new_amt, sl_id),
+        )
+
+    @staticmethod
+    def _reverse_same_day_settle_payable_obligation(
+        cur: Any,
+        obligation: dict,
+        allocation_amount: Decimal,
+        cash_account_id: int,
+        ap_account_id: int,
+    ) -> None:
+        sl_id = obligation.get("source_line_id")
+        if sl_id is None:
+            raise LedgerValidationError("cannot reverse same-day settlement: obligation missing source line")
+        cur.execute(
+            """
+            SELECT id, entry_id, party_id, account_id, amount
+            FROM journal_lines
+            WHERE id = %s
+            FOR UPDATE
+            """,
+            (sl_id,),
+        )
+        line = cur.fetchone()
+        if not line:
+            raise LedgerValidationError("cannot reverse same-day settlement: source line missing")
+        entry_id = int(line["entry_id"])
+        party_id = line["party_id"]
+        if line["account_id"] == cash_account_id:
+            cur.execute(
+                """
+                UPDATE journal_lines
+                SET account_id = %s
+                WHERE id = %s
+                """,
+                (ap_account_id, sl_id),
             )
             return
         sign = Decimal("1") if Decimal(line["amount"]) >= 0 else Decimal("-1")
@@ -3560,15 +3716,99 @@ class LedgerService:
         if not ur_row:
             return
         merged = Decimal(ur_row["amount"]) + Decimal(line["amount"])
-        cur.execute("DELETE FROM journal_lines WHERE id = %s", (sl_id,))
+        ur_line_id = int(ur_row["id"])
         cur.execute(
             """
             UPDATE journal_lines
             SET account_id = %s, amount = %s
             WHERE id = %s
             """,
-            (ar_id, merged, int(ur_row["id"])),
+            (ar_id, merged, ur_line_id),
         )
+        cur.execute(
+            """
+            UPDATE accrual_obligations
+            SET source_line_id = %s, updated_at = NOW()
+            WHERE id = %s
+            """,
+            (ur_line_id, int(obligation["id"])),
+        )
+        cur.execute("DELETE FROM journal_lines WHERE id = %s", (sl_id,))
+
+    @staticmethod
+    def _reverse_early_payment_line_reclassification(
+        cur: Any,
+        obligation: dict,
+        allocation_amount: Decimal,
+        settings: dict,
+    ) -> None:
+        ap_id = settings["accounts_payable_account_id"]
+        prepaid_id = settings["prepaid_expenses_account_id"]
+        if ap_id is None or prepaid_id is None:
+            raise LedgerValidationError("cannot reverse early payment: A/P or prepaid account not configured")
+        sl_id = obligation.get("source_line_id")
+        if sl_id is None:
+            return
+        cur.execute(
+            """
+            SELECT id, entry_id, party_id, account_id, amount
+            FROM journal_lines
+            WHERE id = %s
+            FOR UPDATE
+            """,
+            (sl_id,),
+        )
+        line = cur.fetchone()
+        if not line:
+            return
+        entry_id = int(line["entry_id"])
+        party_id = line["party_id"]
+        if line["account_id"] == prepaid_id:
+            cur.execute(
+                """
+                UPDATE journal_lines
+                SET account_id = %s
+                WHERE id = %s
+                """,
+                (ap_id, sl_id),
+            )
+            return
+        if line["account_id"] != ap_id:
+            return
+        cur.execute(
+            """
+            SELECT jl.id, jl.amount
+            FROM journal_lines jl
+            WHERE jl.entry_id = %s
+              AND jl.account_id = %s
+              AND jl.party_id IS NOT DISTINCT FROM %s
+              AND jl.id <> %s
+            ORDER BY jl.id ASC
+            """,
+            (entry_id, prepaid_id, party_id, sl_id),
+        )
+        prepaid_row = cur.fetchone()
+        if not prepaid_row:
+            return
+        merged = Decimal(prepaid_row["amount"]) + Decimal(line["amount"])
+        prepaid_line_id = int(prepaid_row["id"])
+        cur.execute(
+            """
+            UPDATE journal_lines
+            SET account_id = %s, amount = %s
+            WHERE id = %s
+            """,
+            (ap_id, merged, prepaid_line_id),
+        )
+        cur.execute(
+            """
+            UPDATE accrual_obligations
+            SET source_line_id = %s, updated_at = NOW()
+            WHERE id = %s
+            """,
+            (prepaid_line_id, int(obligation["id"])),
+        )
+        cur.execute("DELETE FROM journal_lines WHERE id = %s", (sl_id,))
 
     def update_entry(self, entry_id: int, payload: JournalEntryWrite) -> JournalEntryOut:
         self._validate_summary(payload.summary)

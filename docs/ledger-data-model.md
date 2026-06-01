@@ -162,7 +162,7 @@ sequenceDiagram
 `DELETE /import-batches/{id}` (see `unload_import_batch` in `ledger/service.py`):
 
 1. Collect `batch_entry_ids` = all `journal_entries` where `import_batch_id = batch`.
-2. **Rollback settlements** by finding `settlement_allocations` where **`entry_id ∈ batch_entry_ids`**, then reversing obligation balances, journal line side effects (collapse, early receipt reclassification, unapplied/unearned lines), and deleting allocation rows.
+2. **Rollback settlements** by finding `settlement_allocations` where **`entry_id ∈ batch_entry_ids`**, then reversing obligation balances, journal line side effects (receipt/payment same-day collapse rewrites, early receipt/payment reclassification, unapplied unearned/prepaid lines), and deleting allocation rows.
 3. **Delete obligations** whose source accrual line/entry is in the batch (batch-created obligations only).
 4. **Delete** each batch journal entry (and reopen cheques if needed).
 5. **Delete** the `import_batches` row.
