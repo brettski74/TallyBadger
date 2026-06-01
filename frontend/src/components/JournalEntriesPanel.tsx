@@ -759,6 +759,7 @@ export function JournalEntriesPanel({
         <JournalSettlementConfirmDialog
           open={settlementDialogOpen && settlementPending != null}
           preview={settlementPending?.preview ?? null}
+          originalPayload={settlementPending?.originalPayload ?? null}
           accounts={accounts}
           parties={parties}
           saving={settlementSaving}

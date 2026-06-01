@@ -1274,6 +1274,186 @@ describe("JournalEntriesPanel", () => {
       expect(body.lines.every((l: { obligation_id?: number }) => l.obligation_id == null)).toBe(true);
     });
 
+    it("shows collapsed lines in preview when same-day full payment will collapse", async () => {
+      const payableAccount: Account = {
+        id: 4,
+        name: "Accounts Payable",
+        type: "liability",
+        is_active: true,
+        created_at: "2026-04-01T00:00:00Z",
+        updated_at: "2026-04-01T00:00:00Z",
+      };
+      const expenseAccount: Account = {
+        id: 5,
+        name: "Maintenance and Repairs",
+        type: "expense",
+        is_active: true,
+        created_at: "2026-04-01T00:00:00Z",
+        updated_at: "2026-04-01T00:00:00Z",
+      };
+      const fetchMock = vi.spyOn(global, "fetch").mockImplementation(async (input, init) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (url.includes("/journal-entries/settlement-preview") && method === "POST") {
+          const request = JSON.parse(String(init?.body));
+          const previewCollapseOffer = {
+            party_id: 1,
+            party_name: "Acme Yard Maintenance",
+            lines: [
+              { account_id: 1, party_id: 1, amount: "-904.00" },
+              { account_id: 4, party_id: 1, amount: "904.00", obligation_id: 88 },
+            ],
+            allocations: [
+              {
+                obligation_id: 88,
+                accrual_date: request.entry_date,
+                source_entry_summary: "2025/6 Snow Removal 2026-02",
+                open_amount: "904.00",
+                applied_amount: "904.00",
+                settlement_type: "payment",
+              },
+            ],
+            receipt_cash_amount: null,
+            payment_cash_amount: "904.00",
+          };
+          return new Response(JSON.stringify(previewCollapseOffer), { status: 200 });
+        }
+        if (url.includes("/journal-entries") && method === "POST") {
+          return new Response(JSON.stringify(createdEntry), { status: 201 });
+        }
+        const fallback = defaultListFetch(url);
+        if (fallback) {
+          return fallback;
+        }
+        return new Response("not mocked", { status: 500 });
+      });
+
+      render(
+        <JournalEntriesPanel
+          accounts={[...panelAccounts, payableAccount, expenseAccount]}
+          parties={parties}
+          accountsLoading={false}
+          accountsError={null}
+        />,
+      );
+
+      const user = userEvent.setup();
+      await openNewEntryForm(user);
+      await user.type(screen.getByLabelText("Entry summary"), "Pay Mower Man");
+      const accountSelects = screen
+        .getAllByRole("combobox")
+        .filter((el) => String(el.getAttribute("aria-label")).startsWith("Account for line"));
+      await user.selectOptions(accountSelects[0]!, "5");
+      await user.selectOptions(accountSelects[1]!, "1");
+      const partySelects = screen
+        .getAllByRole("combobox")
+        .filter((el) => String(el.getAttribute("aria-label")).startsWith("Party for line"));
+      await user.selectOptions(partySelects[0]!, "1");
+      await user.selectOptions(partySelects[1]!, "1");
+      const amountInputs = screen.getAllByPlaceholderText("100.00 or -100.00");
+      await user.clear(amountInputs[0]!);
+      await user.type(amountInputs[0]!, "904.00");
+      await user.clear(amountInputs[1]!);
+      await user.type(amountInputs[1]!, "-904.00");
+      await user.click(screen.getByRole("button", { name: /Post entry/ }));
+
+      const dialog = await screen.findByRole("dialog", { name: "Confirm obligation settlement" });
+      const proposed = within(dialog).getByRole("table", { name: "Proposed journal lines" });
+      expect(within(proposed).getByText("Maintenance and Repairs")).toBeInTheDocument();
+      expect(within(proposed).queryByText("Accounts Payable")).toBeNull();
+      expect(
+        within(dialog).getByText(
+          "Same-day full settlement collapse applies: allocation is recorded in settlement breakdown; the collapsed journal lines shown here do not carry per-line obligation ids.",
+        ),
+      ).toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: /Accept — post with settlement/ }));
+
+      await waitFor(() => {
+        expect(screen.queryByRole("dialog", { name: "Confirm obligation settlement" })).toBeNull();
+      });
+      const createCalls = fetchMock.mock.calls.filter(([u, i]) => {
+        const s = String(u);
+        return s.includes("/journal-entries") && !s.includes("settlement-preview") && (i?.method ?? "GET") === "POST";
+      });
+      expect(createCalls).toHaveLength(1);
+      const body = JSON.parse(String(createCalls[0]![1]!.body));
+      expect(body.lines.some((l: { obligation_id?: number }) => l.obligation_id === 88)).toBe(true);
+    });
+
+    it("shows collapsed lines in preview when same-day full receipt will collapse", async () => {
+      const fetchMock = vi.spyOn(global, "fetch").mockImplementation(async (input, init) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (url.includes("/journal-entries/settlement-preview") && method === "POST") {
+          const request = JSON.parse(String(init?.body));
+          const previewReceiptOffer = {
+            party_id: 1,
+            party_name: "Acme Yard Maintenance",
+            lines: [
+              { account_id: 1, party_id: 1, amount: "100.00" },
+              { account_id: 3, party_id: 1, amount: "-100.00", obligation_id: 56 },
+            ],
+            allocations: [
+              {
+                obligation_id: 56,
+                accrual_date: request.entry_date,
+                source_entry_summary: "April rent accrual",
+                open_amount: "100.00",
+                applied_amount: "100.00",
+                settlement_type: "receipt",
+              },
+            ],
+            receipt_cash_amount: "100.00",
+            payment_cash_amount: null,
+          };
+          return new Response(JSON.stringify(previewReceiptOffer), { status: 200 });
+        }
+        if (url.includes("/journal-entries") && method === "POST") {
+          return new Response(JSON.stringify(createdEntry), { status: 201 });
+        }
+        const fallback = defaultListFetch(url);
+        if (fallback) {
+          return fallback;
+        }
+        return new Response("not mocked", { status: 500 });
+      });
+
+      render(
+        <JournalEntriesPanel
+          accounts={panelAccounts}
+          parties={parties}
+          accountsLoading={false}
+          accountsError={null}
+        />,
+      );
+
+      const user = userEvent.setup();
+      await openNewEntryForm(user);
+      await fillAndPostBalancedEntry(user);
+
+      const dialog = await screen.findByRole("dialog", { name: "Confirm obligation settlement" });
+      const proposed = within(dialog).getByRole("table", { name: "Proposed journal lines" });
+      expect(within(proposed).getByText("Income")).toBeInTheDocument();
+      expect(within(proposed).queryByText("Accounts Receivable")).toBeNull();
+      expect(
+        within(dialog).getByText(
+          "Same-day full settlement collapse applies: allocation is recorded in settlement breakdown; the collapsed journal lines shown here do not carry per-line obligation ids.",
+        ),
+      ).toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: /Accept — post with settlement/ }));
+      await waitFor(() => {
+        expect(screen.queryByRole("dialog", { name: "Confirm obligation settlement" })).toBeNull();
+      });
+      const createCalls = fetchMock.mock.calls.filter(([u, i]) => {
+        const s = String(u);
+        return s.includes("/journal-entries") && !s.includes("settlement-preview") && (i?.method ?? "GET") === "POST";
+      });
+      const body = JSON.parse(String(createCalls[0]![1]!.body));
+      expect(body.lines.some((l: { obligation_id?: number }) => l.obligation_id === 56)).toBe(true);
+    });
+
     it("does not show dialog when preview is empty (e.g. multi-party)", async () => {
       const fetchMock = vi.spyOn(global, "fetch").mockImplementation(async (input, init) => {
         const url = String(input);

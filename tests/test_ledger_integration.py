@@ -976,13 +976,87 @@ def test_partial_early_payment_splits_accrual_bridge_between_prepaid_and_ap(
     accrual_entry = ledger_service.get_entry(accrual_entry_id)
     assert len(accrual_entry.lines) == 3
     by_account = {line.account_id: line.amount for line in accrual_entry.lines}
-    assert by_account[prepaid.id] == Decimal("300.00")
+    assert by_account[prepaid.id] == Decimal("-300.00")
     assert by_account[ap.id] == Decimal("-500.00")
     assert by_account[repairs.id] == Decimal("800.00")
+    assert sum(line.amount for line in accrual_entry.lines) == Decimal("0")
 
     still_open = ledger_service.list_open_obligations(party.id)
     assert len(still_open) == 1
     assert still_open[0].open_amount == Decimal("500.00")
+
+
+def test_partial_early_payment_on_future_accrual_keeps_entry_balanced(
+    ledger_service: LedgerService,
+    integration_db_url: str,
+) -> None:
+    """FIFO payment: due slice on Dec accrual, early slice reclassifies Jan accrual with signed prepaid."""
+    _ensure_ledger_settings_row(integration_db_url)
+    cash = ledger_service.create_account(AccountCreate(name="Cash", type="asset"))
+    ap = ledger_service.create_account(AccountCreate(name="Accounts Payable", type="liability"))
+    maintenance = ledger_service.create_account(
+        AccountCreate(name="Maintenance and Repairs", type="expense")
+    )
+    prepaid = ledger_service.create_account(AccountCreate(name="Prepaid Expenses", type="asset"))
+
+    ledger_service.update_ledger_settings(
+        LedgerSettingsUpdate(
+            accounts_payable_account_id=ap.id,
+            prepaid_expenses_account_id=prepaid.id,
+        )
+    )
+
+    party = ledger_service.create_party(
+        PartyCreate(name="Mower Man Yard Maintenance", role="vendor", is_active=True)
+    )
+
+    ledger_service.create_accrual_plan(
+        AccrualPlanCreate(
+            name="Mower monthly",
+            direction="expense",
+            party_id=party.id,
+            target_account_id=maintenance.id,
+            bridge_account_id=ap.id,
+            frequency="monthly_day",
+            start_date=date(2025, 12, 1),
+            end_date=date(2026, 1, 31),
+            amount=Decimal("904.00"),
+            summary_template="{plan}",
+            day_of_month=1,
+        )
+    )
+
+    open_obs = sorted(
+        ledger_service.list_open_obligations(party.id),
+        key=lambda ob: ob.source_entry_date or date.min,
+    )
+    assert len(open_obs) == 2
+    dec_ob, jan_ob = open_obs[0], open_obs[1]
+    assert dec_ob.source_entry_date == date(2025, 12, 1)
+    assert jan_ob.source_entry_date == date(2026, 1, 1)
+    assert jan_ob.source_entry_id is not None
+
+    ledger_service.record_settlement(
+        SettlementWrite(
+            party_id=party.id,
+            settlement_type="payment",
+            event_date=date(2025, 12, 6),
+            amount=Decimal("1000.00"),
+            cash_account_id=cash.id,
+            allocations=[
+                SettlementAllocationIn(obligation_id=dec_ob.id, amount=Decimal("904.00")),
+                SettlementAllocationIn(obligation_id=jan_ob.id, amount=Decimal("96.00")),
+            ],
+            note="pay Dec due plus early slice on Jan",
+        )
+    )
+
+    jan_accrual = ledger_service.get_entry(jan_ob.source_entry_id)
+    by_account = {line.account_id: line.amount for line in jan_accrual.lines}
+    assert by_account[maintenance.id] == Decimal("904.00")
+    assert by_account[prepaid.id] == Decimal("-96.00")
+    assert by_account[ap.id] == Decimal("-808.00")
+    assert sum(line.amount for line in jan_accrual.lines) == Decimal("0")
 
 
 def test_same_day_full_payment_collapses_into_accrual_entry(

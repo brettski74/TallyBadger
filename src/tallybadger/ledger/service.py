@@ -5007,16 +5007,17 @@ class LedgerService:
         if not source_line:
             raise LedgerValidationError("obligation source line not found for early payment reclassification")
         current_amount = Decimal(source_line["amount"])
-        moved_amount = allocation_amount
-        remaining_amount = current_amount + allocation_amount
+        sign = Decimal("1") if current_amount >= Decimal("0") else Decimal("-1")
+        moved_amount = sign * allocation_amount
+        remaining_amount = current_amount - moved_amount
         if remaining_amount == Decimal("0"):
             cur.execute(
                 """
                 UPDATE journal_lines
-                SET account_id = %s, amount = %s
+                SET account_id = %s
                 WHERE id = %s
                 """,
-                (prepaid_account_id, -current_amount, source_line_id),
+                (prepaid_account_id, source_line_id),
             )
             return
         cur.execute(

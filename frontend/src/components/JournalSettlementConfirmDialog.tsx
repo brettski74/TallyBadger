@@ -10,6 +10,7 @@ import type { Party } from "../api/parties";
 export interface JournalSettlementConfirmDialogProps {
   open: boolean;
   preview: JournalEntrySettlementPreviewOut | null;
+  originalPayload: { entry_date: string; lines: JournalLineIn[] } | null;
   accounts: Account[];
   parties: Party[];
   saving: boolean;
@@ -51,6 +52,7 @@ function formatProposedLine(
 export function JournalSettlementConfirmDialog({
   open,
   preview,
+  originalPayload,
   accounts,
   parties,
   saving,
@@ -83,12 +85,51 @@ export function JournalSettlementConfirmDialog({
     return map;
   }, [preview]);
 
+  const displayLines = useMemo(() => {
+    if (!preview) {
+      return [];
+    }
+    if (!originalPayload) {
+      return preview.lines;
+    }
+    if (originalPayload.lines.length !== 2 || preview.lines.length !== 2 || preview.allocations.length !== 1) {
+      return preview.lines;
+    }
+    const allocation = preview.allocations[0];
+    if (allocation.accrual_date == null || allocation.accrual_date !== originalPayload.entry_date) {
+      return preview.lines;
+    }
+    if (Number(allocation.applied_amount) !== Number(allocation.open_amount)) {
+      return preview.lines;
+    }
+    const cashAmount =
+      allocation.settlement_type === "payment"
+        ? preview.payment_cash_amount
+        : preview.receipt_cash_amount;
+    if (cashAmount == null || Number(cashAmount) !== Number(allocation.applied_amount)) {
+      return preview.lines;
+    }
+    const obligationLines = preview.lines.filter((line) => line.obligation_id != null);
+    if (obligationLines.length !== 1) {
+      return preview.lines;
+    }
+    // For same-day full settlement collapse, posting keeps the original P/L+cash shape.
+    return originalPayload.lines.map((line) => ({ ...line, obligation_id: null }));
+  }, [preview, originalPayload]);
+
+  const showsCollapsedOutcome =
+    preview != null &&
+    originalPayload != null &&
+    displayLines.length === originalPayload.lines.length &&
+    preview.lines.some((line) => line.obligation_id != null) &&
+    displayLines.every((line) => line.obligation_id == null);
+
   const proposedRows = useMemo(
     () =>
       preview
-        ? preview.lines.map((line) => formatProposedLine(line, accounts, parties, obligationSummaryById))
+        ? displayLines.map((line) => formatProposedLine(line, accounts, parties, obligationSummaryById))
         : [],
-    [preview, accounts, parties, obligationSummaryById],
+    [preview, displayLines, accounts, parties, obligationSummaryById],
   );
 
   if (preview == null) {
@@ -136,6 +177,12 @@ export function JournalSettlementConfirmDialog({
         </table>
 
         <h3>Proposed journal lines</h3>
+        {showsCollapsedOutcome ? (
+          <p className="muted">
+            Same-day full settlement collapse applies: allocation is recorded in settlement breakdown; the
+            collapsed journal lines shown here do not carry per-line obligation ids.
+          </p>
+        ) : null}
         <table className="journal-lines" aria-label="Proposed journal lines">
           <thead>
             <tr>
