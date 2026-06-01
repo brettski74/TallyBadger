@@ -56,6 +56,7 @@ export interface AccrualPlanSummaryRollups {
   past_due: string;
   not_yet_due: string;
   unearned: string;
+  prepaid: string;
 }
 
 export interface AccrualPlanDetailResponse {

@@ -253,6 +253,7 @@ describe("AccrualPlansSection view modal", () => {
       past_due: "300.00",
       not_yet_due: "200.00",
       unearned: "100.00",
+      prepaid: "100.00",
     },
     obligations: [
       {
@@ -373,6 +374,52 @@ describe("AccrualPlansSection view modal", () => {
       String(c[0]).match(/\/accrual-plans\/7$/),
     );
     expect(detailCalls).toHaveLength(1);
+  });
+
+  it("shows Prepaid rollup on expense plan view modal", async () => {
+    const expenseDetail = {
+      ...detailBody,
+      plan: { ...detailBody.plan, id: 8, name: "Vendor Repairs", direction: "expense" as const },
+      summary: { ...detailBody.summary, prepaid: "75.00", unearned: "75.00" },
+    };
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        listPlansResponse([
+          {
+            id: 8,
+            name: "Vendor Repairs",
+            direction: "expense",
+            party_id: 1,
+            target_account_id: 3,
+            bridge_account_id: 2,
+            frequency: "monthly_day",
+            start_date: "2026-01-01",
+            end_date: "2026-03-31",
+            amount: "200.00",
+            summary_template: "{plan}",
+            description_template: null,
+            day_of_week: null,
+            day_of_month: 1,
+            month_of_year: null,
+            business_day_adjust: false,
+            created_at: "",
+            updated_at: "",
+            has_settlement_allocations: true,
+          },
+        ]),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify(expenseDetail), { status: 200 }));
+
+    render(<AccrualPlansSection accounts={accounts} parties={parties} />);
+    const user = userEvent.setup();
+    await waitFor(() => expect(screen.getByText("Vendor Repairs")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "View plan Vendor Repairs" }));
+
+    expect(await screen.findByRole("heading", { name: "Vendor Repairs" })).toBeInTheDocument();
+    const rollups = screen.getByLabelText("Plan summary rollups");
+    expect(within(rollups).getByText("Prepaid")).toBeInTheDocument();
+    expect(within(rollups).queryByText("Unearned")).not.toBeInTheDocument();
+    expect(within(rollups).getByText("$75.00")).toBeInTheDocument();
   });
 
   it("shows roll forward on frequency when business day adjust is enabled", async () => {

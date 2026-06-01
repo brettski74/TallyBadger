@@ -1155,7 +1155,13 @@ class LedgerService:
                           WHERE je.entry_date > CURRENT_DATE
                         ),
                         0
-                      ) AS unearned
+                      ) AS unearned,
+                      COALESCE(
+                        SUM(ao.original_amount - ao.open_amount) FILTER (
+                          WHERE je.entry_date > CURRENT_DATE
+                        ),
+                        0
+                      ) AS prepaid
                     FROM accrual_obligations ao
                     LEFT JOIN journal_entries je ON je.id = ao.source_entry_id
                     WHERE ao.accrual_plan_id = %s

@@ -107,7 +107,8 @@ export function SettlementsSection({ accounts, parties }: SettlementsSectionProp
     <>
       <section className="card journal-card-wide">
         <p className="muted">
-          A/R, A/P, and unearned revenue accounts are configured under <strong>Configuration</strong>.
+          A/R, A/P, unearned revenue, and prepaid expenses accounts are configured under{" "}
+          <strong>Configuration</strong>.
         </p>
         <h2>Settle obligations</h2>
         <form noValidate onSubmit={(e) => void handleSubmitSettlement(e)}>
@@ -172,8 +173,7 @@ export function SettlementsSection({ accounts, parties }: SettlementsSectionProp
                     <td>{obligation.source_entry_summary ?? "—"}</td>
                     <td>{obligation.obligation_type}</td>
                     <td>
-                      {settlementType === "receipt" &&
-                      obligation.source_entry_date !== null &&
+                      {obligation.source_entry_date !== null &&
                       obligation.source_entry_date > eventDate
                         ? "future"
                         : "due"}
@@ -192,7 +192,16 @@ export function SettlementsSection({ accounts, parties }: SettlementsSectionProp
             </table>
           )}
           {settlementType === "receipt" && (
-            <p className="muted">Receipts auto-allocate oldest-first; future portions flow through unearned revenue automatically.</p>
+            <p className="muted">
+              Receipts auto-allocate oldest-first; future portions flow through unearned revenue
+              automatically.
+            </p>
+          )}
+          {settlementType === "payment" && (
+            <p className="muted">
+              Payments auto-allocate oldest-first; future portions flow through prepaid expenses
+              automatically.
+            </p>
           )}
           <button type="submit">Post settlement</button>
           {formError && <p className="error" role="alert">{formError}</p>}

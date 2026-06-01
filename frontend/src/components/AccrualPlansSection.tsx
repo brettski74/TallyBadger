@@ -1058,13 +1058,16 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
     );
   }
 
-  function renderSummaryRollups(summary: AccrualPlanSummaryRollups) {
+  function renderSummaryRollups(summary: AccrualPlanSummaryRollups, direction: AccrualPlan["direction"]) {
+    const settledEarlyLabel = direction === "revenue" ? "Unearned" : "Prepaid";
+    const settledEarlyValue =
+      direction === "revenue" ? summary.unearned : summary.prepaid;
     const items: { label: string; value: string }[] = [
       { label: "Total original accrued", value: formatAmount(summary.total_original_accrued) },
       { label: "Total settled to date", value: formatAmount(summary.total_settled_to_date) },
       { label: "Past due", value: formatAmount(summary.past_due) },
       { label: "Not yet due", value: formatAmount(summary.not_yet_due) },
-      { label: "Unearned", value: formatAmount(summary.unearned) },
+      { label: settledEarlyLabel, value: formatAmount(settledEarlyValue) },
     ];
     return (
       <dl className="accrual-plan-summary-rollups" aria-label="Plan summary rollups">
@@ -1522,7 +1525,7 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
             {viewDetail && !viewLoading && (
               <>
                 {renderViewPlanFields(viewDetail.plan)}
-                {renderSummaryRollups(viewDetail.summary)}
+                {renderSummaryRollups(viewDetail.summary, viewDetail.plan.direction)}
                 {renderObligationsTable(viewDetail.obligations)}
               </>
             )}

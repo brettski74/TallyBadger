@@ -627,6 +627,7 @@ class AccrualPlanSummaryRollups(BaseModel):
     past_due: Decimal
     not_yet_due: Decimal
     unearned: Decimal
+    prepaid: Decimal
 
 
 class AccrualPlanDetailResponse(BaseModel):
