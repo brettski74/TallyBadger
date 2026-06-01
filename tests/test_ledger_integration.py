@@ -6,7 +6,7 @@ import os
 
 import pytest
 from fastapi.testclient import TestClient
-from psycopg import connect
+from psycopg import connect, errors as pg_errors
 from psycopg.rows import dict_row
 
 from tallybadger.api.routes.ledger import get_ledger_service
@@ -402,28 +402,142 @@ def test_list_entries_filters_by_new_dimensions(ledger_service: LedgerService) -
         ledger_service.list_entries(amount_low=300, amount_high=100, limit=10, offset=0)
 
 
-def test_list_entries_amount_band_uses_credit_magnitude_fallback(
+def test_list_entries_amount_band_filters_by_debit_magnitude(
     ledger_service: LedgerService,
 ) -> None:
-    """When an entry has no positive lines the list amount falls back to the credit magnitude."""
+    """Balanced entries are filtered by list amount (debit-side magnitude when debits exist)."""
 
-    # Use raw SQL to construct an "unbalanced" credit-only entry (the service forbids this
-    # via posting validation, so we bypass it to exercise the list-amount fallback rule).
-    with connect(os.environ["TALLYBADGER_TEST_DATABASE_URL"], row_factory=dict_row) as conn:
-        cash = ledger_service.create_account(AccountCreate(name="Cash", type="asset"))
-        rent = ledger_service.create_account(AccountCreate(name="Rent", type="revenue"))
-        # First post a normal entry so the table isn't empty.
-        normal = ledger_service.create_entry(
-            JournalEntryWrite(
-                entry_date=date(2026, 7, 1),
-                summary="normal",
-                description="normal",
-                lines=[
-                    JournalLineIn(account_id=cash.id, amount=Decimal("100.00")),
-                    JournalLineIn(account_id=rent.id, amount=Decimal("-100.00")),
-                ],
-            )
+    cash = ledger_service.create_account(AccountCreate(name="Cash", type="asset"))
+    rent = ledger_service.create_account(AccountCreate(name="Rent", type="revenue"))
+    expense = ledger_service.create_account(AccountCreate(name="Misc Expense", type="expense"))
+
+    ledger_service.create_entry(
+        JournalEntryWrite(
+            entry_date=date(2026, 7, 1),
+            summary="large",
+            description="large",
+            lines=[
+                JournalLineIn(account_id=cash.id, amount=Decimal("100.00")),
+                JournalLineIn(account_id=rent.id, amount=Decimal("-100.00")),
+            ],
         )
+    )
+    in_band = ledger_service.create_entry(
+        JournalEntryWrite(
+            entry_date=date(2026, 7, 2),
+            summary="mid",
+            description="mid",
+            lines=[
+                JournalLineIn(account_id=expense.id, amount=Decimal("25.00")),
+                JournalLineIn(account_id=cash.id, amount=Decimal("-25.00")),
+            ],
+        )
+    )
+
+    matches = ledger_service.list_entries(amount_low=10, amount_high=50, limit=10, offset=0)
+    assert [e.id for e in matches] == [in_band.id]
+
+
+def test_db_rejects_journal_entry_header_without_lines(integration_db_url: str) -> None:
+    # Deferrable balance triggers run at the outer transaction COMMIT; keep
+    # pytest.raises around the whole connection context (not only conn.transaction()).
+    with pytest.raises(pg_errors.RaiseException, match="journal entry requires at least two lines"):
+        with connect(integration_db_url, row_factory=dict_row) as conn:
+            with conn.transaction():
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO journal_entries (entry_date, summary, description)
+                        VALUES (%s, %s, %s)
+                        """,
+                        (date(2026, 8, 1), "orphan header", "orphan header"),
+                    )
+
+
+def test_db_rejects_journal_entry_with_one_line(integration_db_url: str) -> None:
+    conn = connect(integration_db_url, row_factory=dict_row)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO accounts (name, type) VALUES ('DB Cash', 'asset') RETURNING id"
+            )
+            cash_id = int(cur.fetchone()["id"])
+        conn.commit()
+        with pytest.raises(pg_errors.RaiseException, match="journal entry requires at least two lines"):
+            with conn.transaction():
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO journal_entries (entry_date, summary, description)
+                        VALUES (%s, %s, %s) RETURNING id
+                        """,
+                        (date(2026, 8, 2), "one line", "one line"),
+                    )
+                    entry_id = int(cur.fetchone()["id"])
+                    cur.execute(
+                        """
+                        INSERT INTO journal_lines (entry_id, account_id, amount)
+                        VALUES (%s, %s, %s)
+                        """,
+                        (entry_id, cash_id, Decimal("10.00")),
+                    )
+    finally:
+        conn.close()
+
+
+def test_db_rejects_unbalanced_journal_entry_at_commit(integration_db_url: str) -> None:
+    conn = connect(integration_db_url, row_factory=dict_row)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO accounts (name, type) VALUES ('DB Cash 2', 'asset') RETURNING id"
+            )
+            cash_id = int(cur.fetchone()["id"])
+            cur.execute(
+                "INSERT INTO accounts (name, type) VALUES ('DB Rent', 'revenue') RETURNING id"
+            )
+            rent_id = int(cur.fetchone()["id"])
+        conn.commit()
+        with pytest.raises(pg_errors.RaiseException, match="journal entry is not balanced"):
+            with conn.transaction():
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO journal_entries (entry_date, summary, description)
+                        VALUES (%s, %s, %s) RETURNING id
+                        """,
+                        (date(2026, 8, 3), "unbalanced", "unbalanced"),
+                    )
+                    entry_id = int(cur.fetchone()["id"])
+                    cur.execute(
+                        """
+                        INSERT INTO journal_lines (entry_id, account_id, amount)
+                        VALUES (%s, %s, %s), (%s, %s, %s)
+                        """,
+                        (
+                            entry_id,
+                            cash_id,
+                            Decimal("100.00"),
+                            entry_id,
+                            rent_id,
+                            Decimal("-50.00"),
+                        ),
+                    )
+    finally:
+        conn.close()
+
+
+def test_db_accepts_balanced_journal_entry_via_raw_sql(integration_db_url: str) -> None:
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO accounts (name, type) VALUES ('DB Cash 3', 'asset') RETURNING id"
+            )
+            cash_id = int(cur.fetchone()["id"])
+            cur.execute(
+                "INSERT INTO accounts (name, type) VALUES ('DB Rent 2', 'revenue') RETURNING id"
+            )
+            rent_id = int(cur.fetchone()["id"])
         with conn.transaction():
             with conn.cursor() as cur:
                 cur.execute(
@@ -431,19 +545,29 @@ def test_list_entries_amount_band_uses_credit_magnitude_fallback(
                     INSERT INTO journal_entries (entry_date, summary, description)
                     VALUES (%s, %s, %s) RETURNING id
                     """,
-                    (date(2026, 7, 2), "credits only", "credits only"),
+                    (date(2026, 8, 4), "balanced raw", "balanced raw"),
                 )
-                row = cur.fetchone()
-                credits_only_id = int(row["id"])
+                entry_id = int(cur.fetchone()["id"])
                 cur.execute(
-                    "INSERT INTO journal_lines (entry_id, account_id, amount) VALUES (%s, %s, %s)",
-                    (credits_only_id, rent.id, Decimal("-25.00")),
+                    """
+                    INSERT INTO journal_lines (entry_id, account_id, amount)
+                    VALUES (%s, %s, %s), (%s, %s, %s)
+                    """,
+                    (
+                        entry_id,
+                        cash_id,
+                        Decimal("40.00"),
+                        entry_id,
+                        rent_id,
+                        Decimal("-40.00"),
+                    ),
                 )
-
-    # The credit-only entry has list amount 25.00; only it should fall in [10, 50].
-    in_band = ledger_service.list_entries(amount_low=10, amount_high=50, limit=10, offset=0)
-    assert any(e.id == credits_only_id for e in in_band)
-    assert all(e.id != normal.id for e in in_band)
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*)::int AS c FROM journal_lines WHERE entry_id = %s",
+                (entry_id,),
+            )
+            assert int(cur.fetchone()["c"]) == 2
 
 
 def test_get_entry_includes_account_name_on_each_line(ledger_service: LedgerService) -> None:
