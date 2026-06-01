@@ -3249,7 +3249,12 @@ class LedgerService:
         cur.execute("DELETE FROM settlement_allocations WHERE entry_id = %s", (entry_id,))
 
         if settlement_type == "payment":
-            collapse = self._allocations_all_same_accrual_day(obligations, allocation_by_id, event_date)
+            collapse = (
+                entry_header.get("accrual_plan_id") is not None
+                and self._allocations_all_same_accrual_day(
+                    obligations, allocation_by_id, event_date
+                )
+            )
             if collapse:
                 unapplied = cash_amount - allocated_total
                 prepaid_id = settings.get("prepaid_expenses_account_id")
@@ -3296,7 +3301,10 @@ class LedgerService:
             )
             return
 
-        collapse = self._allocations_all_same_accrual_day(obligations, allocation_by_id, event_date)
+        collapse = (
+            entry_header.get("accrual_plan_id") is not None
+            and self._allocations_all_same_accrual_day(obligations, allocation_by_id, event_date)
+        )
 
         if collapse:
             unapplied = cash_amount - allocated_total
@@ -3708,15 +3716,24 @@ class LedgerService:
         if not ur_row:
             return
         merged = Decimal(ur_row["amount"]) + Decimal(line["amount"])
-        cur.execute("DELETE FROM journal_lines WHERE id = %s", (sl_id,))
+        ur_line_id = int(ur_row["id"])
         cur.execute(
             """
             UPDATE journal_lines
             SET account_id = %s, amount = %s
             WHERE id = %s
             """,
-            (ar_id, merged, int(ur_row["id"])),
+            (ar_id, merged, ur_line_id),
         )
+        cur.execute(
+            """
+            UPDATE accrual_obligations
+            SET source_line_id = %s, updated_at = NOW()
+            WHERE id = %s
+            """,
+            (ur_line_id, int(obligation["id"])),
+        )
+        cur.execute("DELETE FROM journal_lines WHERE id = %s", (sl_id,))
 
     @staticmethod
     def _reverse_early_payment_line_reclassification(
@@ -3774,15 +3791,24 @@ class LedgerService:
         if not prepaid_row:
             return
         merged = Decimal(prepaid_row["amount"]) + Decimal(line["amount"])
-        cur.execute("DELETE FROM journal_lines WHERE id = %s", (sl_id,))
+        prepaid_line_id = int(prepaid_row["id"])
         cur.execute(
             """
             UPDATE journal_lines
             SET account_id = %s, amount = %s
             WHERE id = %s
             """,
-            (ap_id, merged, int(prepaid_row["id"])),
+            (ap_id, merged, prepaid_line_id),
         )
+        cur.execute(
+            """
+            UPDATE accrual_obligations
+            SET source_line_id = %s, updated_at = NOW()
+            WHERE id = %s
+            """,
+            (prepaid_line_id, int(obligation["id"])),
+        )
+        cur.execute("DELETE FROM journal_lines WHERE id = %s", (sl_id,))
 
     def update_entry(self, entry_id: int, payload: JournalEntryWrite) -> JournalEntryOut:
         self._validate_summary(payload.summary)
