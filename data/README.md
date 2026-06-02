@@ -32,7 +32,7 @@ When `seed_data.tar.gz` is newer than any output listed in `seed_data.deps.mk` (
 2. Pretty-print each manifest `*.json` member with **`jq .`** (preserves key and row order).
 3. Copy binary `attachments/*` members when present.
 4. Write **`metadata.json`** from the archive (preserves **`member_manifest` array order**).
-5. Run **`scripts/mkmeta`** on `metadata.json` (digest update only).
+5. Run **`scripts/mkmeta -r -c`** on `metadata.json` (digest update only; no write when digests already match).
 6. Rewrite **`seed_data.deps.mk`** from the current manifest.
 
 Regen does **not** run `git add`. If expanded `*.json` files exist that are **not** in the manifest, regen prints **warnings** and suggested `rm -f` lines.

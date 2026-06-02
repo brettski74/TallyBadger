@@ -260,6 +260,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         metavar="COUNT",
         help="After writing, keep at most COUNT timestamped backups of the output file",
     )
+    parser.add_argument(
+        "-c",
+        "--change",
+        action="store_true",
+        help=(
+            "Write only when --input and --output differ, or at least one "
+            "member_manifest digest would change"
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -271,6 +280,18 @@ def resolve_retain_count(args: argparse.Namespace) -> int | None:
     if args.retain is not None:
         return args.retain
     return None
+
+
+def should_write_output(
+    *,
+    input_path: Path,
+    output_path: Path,
+    mismatches: list[str],
+    change_only: bool,
+) -> bool:
+    if change_only:
+        return input_path.resolve() != output_path.resolve() or bool(mismatches)
+    return bool(mismatches)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -292,6 +313,8 @@ def main(argv: list[str] | None = None) -> None:
     if args.check:
         if retain is not None:
             _die("--retain and -r are not valid with --check")
+        if args.change:
+            _die("--change is not valid with --check")
         try:
             mismatches = find_check_mismatches(metadata, base_dir=base_dir)
         except MkmetaError as exc:
@@ -307,7 +330,12 @@ def main(argv: list[str] | None = None) -> None:
         mismatches = find_check_mismatches(metadata, base_dir=base_dir)
     except MkmetaError as exc:
         _die(str(exc))
-    if not mismatches:
+    if not should_write_output(
+        input_path=input_path,
+        output_path=output_path,
+        mismatches=mismatches,
+        change_only=args.change,
+    ):
         _info("All member_manifest digests already up to date.", quiet=args.quiet)
         return
 
