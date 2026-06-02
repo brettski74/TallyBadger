@@ -13,7 +13,7 @@
       "unallocated_credits_account_id": 5,
       "unallocated_debits_account_id": 6,
       "unearned_revenue_account_id": 3,
-      "updated_at": "2026-05-01T00:00:00-04:00"
+      "updated_at": "2025-05-01T00:00:00-04:00"
     }
   ],
   "table": "ledger_settings"

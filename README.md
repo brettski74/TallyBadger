@@ -205,12 +205,14 @@ Error responses use plain-English prefixes (integrity vs validation vs database 
 Use a throwaway database (Compose default is fine). Example with API on `http://127.0.0.1:8080`:
 
 1. **Seed or create data** you care about (use the UI, integration tests, or restore a snapshot).
-2. **Export:** `tbsave -o /tmp/tb-snap.tar.gz` or `curl -fsS -X POST -o /tmp/tb-snap.tar.gz "http://127.0.0.1:8080/backup/export?export_type=complete"` (or copy into `examples/tallybadger-complete-*.zip` for local UAT).
+2. **Export:** `tbsave -o /tmp/tb-snap.tar.gz` or `curl -fsS -X POST -o /tmp/tb-snap.tar.gz "http://127.0.0.1:8080/backup/export?export_type=complete"` (or copy into `examples/tallybadger-complete-*.tar.gz` for local UAT).
 3. **Wipe schema (optional):** `make dbempty` recreates the DB volume and applies `sql/*.sql` only.
 4. **Import:** `tbload --mode erase-reload -i /tmp/tb-snap.tar.gz` or `curl -fsS -X POST -F "snapshot=@/tmp/tb-snap.tar.gz" -F "restore_mode=erase-reload" "http://127.0.0.1:8080/backup/import"` (multipart; raw-body streaming is documented in the format spec for new clients). Invalid modes such as `erase-spice-girls-music` are rejected. Mode prefixes (`a`, `o`, `e`, `erase-`) resolve to the single matching canonical value.
 5. **Sanity check:** `curl -fsS http://127.0.0.1:8080/health` and confirm accounts / journals in the UI match expectations.
 
-**Local UAT bootstrap:** place a complete snapshot at `examples/tallybadger-complete-*.zip` (gitignored), start the API, then run **`make dbclean`** (runs `tbload --mode erase-reload` on the newest match).
+**Local UAT bootstrap:** place a complete snapshot at `examples/tallybadger-complete-*.tar.gz` (gitignored; see **`examples/README.md`**), start the API, then run **`make dbclean`** (runs `tbload --mode erase-reload` on the newest match).
+
+**Foundation configuration seed:** version-controlled expanded JSON under **`data/`** (see **`data/README.md`**); gitignored archive `data/seed_data.tar.gz`, refresh with **`make -C data regen`** or **`make -C data upgrade`**.
 
 `make backup-restore-drill-help` prints a short pointer to this section.
 
