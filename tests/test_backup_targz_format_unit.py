@@ -100,6 +100,16 @@ def test_pack_targz_metadata_last_and_gzip_level_nine() -> None:
     assert names == ["accounts.json", "metadata.json"]
 
 
+def test_pack_targz_sets_member_mtime() -> None:
+    fixed_mtime = 1_735_689_600  # 2025-01-01 00:00:00 UTC
+    payloads = {"accounts.json": b"[]"}
+    archive = _pack_targz(("accounts.json",), payloads, b"{}", mtime=fixed_mtime)
+    with gzip.GzipFile(fileobj=io.BytesIO(archive), mode="rb") as gz:
+        with tarfile.open(fileobj=gz, mode="r:") as tar:
+            mtimes = {m.name: m.mtime for m in tar.getmembers() if m.isfile()}
+    assert mtimes == {"accounts.json": fixed_mtime, "metadata.json": fixed_mtime}
+
+
 def test_load_targz_members_validates_order_and_hashes() -> None:
     fmt = "2.0.0"
     rows = [{"id": 1, "name": "Cash", "type": "asset", "is_active": True}]

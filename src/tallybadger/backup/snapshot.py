@@ -475,7 +475,9 @@ def export_snapshot(conn: Connection, export_type: ExportType) -> bytes:
     fmt = export_format_version()
     tables = tables_for_export_type(export_type)
     schema_ver = current_schema_version(conn)
-    exported_at = datetime.now(timezone.utc).isoformat()
+    export_local = datetime.now().astimezone()
+    exported_at = export_local.astimezone(timezone.utc).isoformat()
+    archive_mtime = int(export_local.timestamp())
 
     payloads: dict[str, bytes] = {}
     for table in tables:
@@ -517,15 +519,18 @@ def export_snapshot(conn: Connection, export_type: ExportType) -> bytes:
         separators=(",", ":"),
     ).encode("utf-8")
 
-    return _pack_targz(member_paths, payloads, metadata_bytes)
+    return _pack_targz(member_paths, payloads, metadata_bytes, mtime=archive_mtime)
 
 
 def _pack_targz(
     member_paths: tuple[str, ...],
     payloads: dict[str, bytes],
     metadata_bytes: bytes,
+    *,
+    mtime: int | None = None,
 ) -> bytes:
     """Write data members in ``member_paths`` order, then ``metadata.json`` (gzip level 9)."""
+    member_mtime = int(datetime.now().astimezone().timestamp()) if mtime is None else mtime
     buf = io.BytesIO()
     with gzip.GzipFile(fileobj=buf, mode="wb", compresslevel=9) as gz:
         with tarfile.open(fileobj=gz, mode="w") as tar:
@@ -533,9 +538,11 @@ def _pack_targz(
                 data = payloads[path]
                 info = tarfile.TarInfo(name=path)
                 info.size = len(data)
+                info.mtime = member_mtime
                 tar.addfile(info, io.BytesIO(data))
             meta_info = tarfile.TarInfo(name="metadata.json")
             meta_info.size = len(metadata_bytes)
+            meta_info.mtime = member_mtime
             tar.addfile(meta_info, io.BytesIO(metadata_bytes))
     return buf.getvalue()
 
