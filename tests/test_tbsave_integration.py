@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import gzip
 import io
 import json
 import shutil
+import tarfile
 import socket
 import subprocess
 import sys
@@ -29,6 +31,17 @@ from tallybadger.ledger.service import LedgerService
 from tallybadger.main import app
 
 pytestmark = pytest.mark.integration
+
+
+def _read_snapshot_metadata(data: bytes) -> dict[str, object]:
+    if data[:2] == b"\x1f\x8b":
+        with gzip.GzipFile(fileobj=io.BytesIO(data), mode="rb") as gz:
+            with tarfile.open(fileobj=gz, mode="r:") as archive:
+                member = archive.extractfile("metadata.json")
+                assert member is not None
+                return json.loads(member.read().decode("utf-8"))
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        return json.loads(archive.read("metadata.json").decode("utf-8"))
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TBSAVE_PATH = REPO_ROOT / "scripts" / "tbsave"
@@ -160,7 +173,7 @@ def test_tbsave_writes_zip_to_file(
     tmp_path: Path,
 ) -> None:
     _seed_minimal_ledger(ledger_service)
-    out_file = tmp_path / "snap.zip"
+    out_file = tmp_path / "snap.tar.gz"
     proc = subprocess.run(  # noqa: S603
         [
             sys.executable,
@@ -176,8 +189,7 @@ def test_tbsave_writes_zip_to_file(
     )
     assert proc.returncode == 0, proc.stderr.decode("utf-8", errors="replace")
     assert out_file.is_file()
-    with zipfile.ZipFile(out_file) as archive:
-        meta = json.loads(archive.read("metadata.json").decode("utf-8"))
+    meta = _read_snapshot_metadata(out_file.read_bytes())
     assert meta["export_type"] == "complete"
 
 
@@ -198,9 +210,8 @@ def test_tbsave_stdout_mode_emits_zip_bytes(
         check=False,
     )
     assert proc.returncode == 0, proc.stderr.decode("utf-8", errors="replace")
-    assert proc.stdout[:2] == b"PK"
-    with zipfile.ZipFile(io.BytesIO(proc.stdout)) as archive:
-        meta = json.loads(archive.read("metadata.json").decode("utf-8"))
+    assert proc.stdout[:2] == b"\x1f\x8b"
+    meta = _read_snapshot_metadata(proc.stdout)
     assert meta["export_type"] == "complete"
 
 
@@ -210,7 +221,7 @@ def test_tbsave_full_scope_uses_api_alias(
     tmp_path: Path,
 ) -> None:
     _seed_minimal_ledger(ledger_service)
-    out_file = tmp_path / "snap.zip"
+    out_file = tmp_path / "snap.tar.gz"
     proc = subprocess.run(  # noqa: S603
         [
             sys.executable,
@@ -227,8 +238,7 @@ def test_tbsave_full_scope_uses_api_alias(
         check=False,
     )
     assert proc.returncode == 0, proc.stderr.decode("utf-8", errors="replace")
-    with zipfile.ZipFile(out_file) as archive:
-        meta = json.loads(archive.read("metadata.json").decode("utf-8"))
+    meta = _read_snapshot_metadata(out_file.read_bytes())
     assert meta["export_type"] == "complete"
 
 
@@ -256,8 +266,8 @@ def test_tbsave_full_scope_directory_uses_full_filename_stem(
         check=False,
     )
     assert proc.returncode == 0, proc.stderr.decode("utf-8", errors="replace")
-    zips = list(out_dir.glob("tallybadger-full-*.zip"))
-    assert len(zips) == 1
+    archives = list(out_dir.glob("tallybadger-full-*.tar.gz"))
+    assert len(archives) == 1
 
 
 def test_tbsave_directory_output_uses_default_filename(
@@ -284,8 +294,14 @@ def test_tbsave_directory_output_uses_default_filename(
         check=False,
     )
     assert proc.returncode == 0, proc.stderr.decode("utf-8", errors="replace")
-    zips = list(out_dir.glob("tallybadger-financial-*.zip"))
-    assert len(zips) == 1
-    with zipfile.ZipFile(zips[0]) as archive:
-        meta = json.loads(archive.read("metadata.json").decode("utf-8"))
+    archives = list(out_dir.glob("tallybadger-financial-*.tar.gz"))
+    assert len(archives) == 1
+    import gzip
+    import tarfile
+
+    with gzip.open(archives[0], "rb") as gz:
+        with tarfile.open(fileobj=gz, mode="r:") as archive:
+            meta_member = archive.extractfile("metadata.json")
+            assert meta_member is not None
+            meta = json.loads(meta_member.read().decode("utf-8"))
     assert meta["export_type"] == "financial"

@@ -15,16 +15,16 @@ afterEach(() => {
 describe("backup API", () => {
   it("backupDownloadFilename uses local time and export kind", () => {
     const at = new Date(2026, 4, 3, 14, 9, 7);
-    expect(backupDownloadFilename("complete", at)).toBe("tallybadger-complete-20260503-140907.zip");
-    expect(backupDownloadFilename("configuration", at)).toBe("tallybadger-config-20260503-140907.zip");
-    expect(backupDownloadFilename("financial", at)).toBe("tallybadger-financial-20260503-140907.zip");
+    expect(backupDownloadFilename("complete", at)).toBe("tallybadger-complete-20260503-140907.tar.gz");
+    expect(backupDownloadFilename("configuration", at)).toBe("tallybadger-config-20260503-140907.tar.gz");
+    expect(backupDownloadFilename("financial", at)).toBe("tallybadger-financial-20260503-140907.tar.gz");
   });
 
   it("exportBackup POSTs /backup/export with export_type and returns blob", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(new Blob(["zip-bytes"]), {
         status: 200,
-        headers: { "Content-Type": "application/zip" },
+        headers: { "Content-Type": "application/gzip" },
       }),
     );
     const blob = await exportBackup("configuration");

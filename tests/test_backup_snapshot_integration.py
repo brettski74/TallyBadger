@@ -6,11 +6,14 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import date
 from decimal import Decimal
+import gzip
 import hashlib
 import io
 import json
 import os
+import tarfile
 import zipfile
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -32,8 +35,11 @@ from tallybadger.backup.errors import (
 from tallybadger.backup.snapshot import (
     COMPLETE_TABLES,
     CONFIGURATION_TABLES,
+    _canonical_envelope_bytes,
+    _pack_targz,
     attachment_blob_member_path,
     current_schema_version,
+    detect_snapshot_container,
     export_complete_snapshot,
     export_format_version,
     export_snapshot,
@@ -43,6 +49,7 @@ from tallybadger.backup.snapshot import (
     import_snapshot,
     oldest_supported_import_format_version,
     snapshot_includes_attachment_tables,
+    snapshot_uses_json_envelopes,
     snapshot_table_counts,
     tables_for_import,
 )
@@ -131,6 +138,128 @@ def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def _read_archive_members(archive_bytes: bytes) -> dict[str, bytes]:
+    kind = detect_snapshot_container(archive_bytes)
+    if kind == "zip":
+        with zipfile.ZipFile(io.BytesIO(archive_bytes)) as zf:
+            return {name: zf.read(name) for name in zf.namelist() if not name.endswith("/")}
+    with gzip.GzipFile(fileobj=io.BytesIO(archive_bytes), mode="rb") as gz:
+        with tarfile.open(fileobj=gz, mode="r:") as tar:
+            out: dict[str, bytes] = {}
+            for member in tar.getmembers():
+                if member.isfile():
+                    extracted = tar.extractfile(member)
+                    if extracted is not None:
+                        out[member.name] = extracted.read()
+            return out
+
+
+def _archive_member_names(archive_bytes: bytes) -> set[str]:
+    return set(_read_archive_members(archive_bytes).keys())
+
+
+def _expand_archive_to_directory(archive_bytes: bytes, destination: Path) -> None:
+    """Extract a snapshot archive (tar.gz or legacy ZIP) to ``destination``."""
+    destination.mkdir(parents=True, exist_ok=True)
+    kind = detect_snapshot_container(archive_bytes)
+    if kind == "gzip":
+        with gzip.GzipFile(fileobj=io.BytesIO(archive_bytes), mode="rb") as gz:
+            with tarfile.open(fileobj=gz, mode="r:") as archive:
+                archive.extractall(destination)
+        return
+    with zipfile.ZipFile(io.BytesIO(archive_bytes)) as archive:
+        archive.extractall(destination)
+
+
+def _archive_metadata(archive_bytes: bytes) -> dict[str, object]:
+    return json.loads(_read_archive_members(archive_bytes)["metadata.json"].decode("utf-8"))
+
+
+def _envelope_rows(path: str, raw: bytes, format_version: str) -> list[dict[str, object]]:
+    data = json.loads(raw.decode("utf-8"))
+    if snapshot_uses_json_envelopes(format_version):
+        if not isinstance(data, dict):
+            raise ValueError(f"expected envelope in {path}")
+        rows = data["rows"]
+        if not isinstance(rows, list):
+            raise ValueError(f"expected rows list in {path}")
+        return rows
+    if not isinstance(data, list):
+        raise ValueError(f"expected array in {path}")
+    return data
+
+
+def _repack_targz_table_members(
+    table_members: dict[str, bytes],
+    metadata: dict[str, object],
+) -> bytes:
+    """Rebuild a tar.gz snapshot after tampering (bare row arrays in ``table_members``)."""
+    fmt = str(metadata.get("format_version", export_format_version()))
+    on_wire: dict[str, bytes] = {}
+    for path, raw in table_members.items():
+        if path.endswith(".json") and not path.startswith("attachments/"):
+            table = path.removesuffix(".json")
+            rows = json.loads(raw.decode("utf-8"))
+            if isinstance(rows, dict) and "rows" in rows:
+                rows = rows["rows"]
+            if snapshot_uses_json_envelopes(fmt):
+                on_wire[path] = _canonical_envelope_bytes(table, rows, fmt)
+            else:
+                on_wire[path] = json.dumps(
+                    rows,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+        else:
+            on_wire[path] = raw
+    manifest = metadata.get("member_manifest")
+    if not isinstance(manifest, list):
+        raise ValueError("member_manifest required")
+    paths = tuple(item["path"] for item in manifest if isinstance(item, dict) and "path" in item)
+    meta_out = dict(metadata)
+    meta_out["member_manifest"] = [{"path": p, "sha256": _sha256(on_wire[p])} for p in paths]
+    meta_bytes = json.dumps(
+        meta_out,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return _pack_targz(paths, on_wire, meta_bytes)
+
+
+def _tamper_configuration_drop_account_ids(archive_bytes: bytes, account_ids: set[int]) -> bytes:
+    members = _read_archive_members(archive_bytes)
+    meta = _archive_metadata(archive_bytes)
+    fmt = str(meta["format_version"])
+    table_members = {k: v for k, v in members.items() if k != "metadata.json"}
+    rows = _envelope_rows("accounts.json", table_members["accounts.json"], fmt)
+    kept = [r for r in rows if int(r["id"]) not in account_ids]
+    table_members["accounts.json"] = json.dumps(
+        kept,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return _repack_targz_table_members(table_members, meta)
+
+
+def _bare_table_json_bytes(path: str, raw: bytes, source_format_version: str) -> bytes:
+    data = json.loads(raw.decode("utf-8"))
+    if snapshot_uses_json_envelopes(source_format_version):
+        if not isinstance(data, dict):
+            raise ValueError(f"expected envelope in {path}")
+        rows = data["rows"]
+    else:
+        rows = data
+    return json.dumps(
+        rows,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
 def _rezip_table_members_with_metadata(table_members: dict[str, bytes], metadata: dict) -> bytes:
     """Rebuild metadata.manifest hashes from table JSON bytes and write a new ZIP."""
     manifest = [{"path": p, "sha256": _sha256(table_members[p])} for p in sorted(table_members)]
@@ -149,68 +278,72 @@ def _rezip_table_members_with_metadata(table_members: dict[str, bytes], metadata
     return buf.getvalue()
 
 
-def _replace_metadata_only(zip_bytes: bytes, **meta_patch: object) -> bytes:
-    zin = zipfile.ZipFile(io.BytesIO(zip_bytes))
-    try:
-        meta = json.loads(zin.read("metadata.json").decode("utf-8"))
-        meta.update(meta_patch)
-        new_meta = json.dumps(
-            meta,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
+def _replace_metadata_only(archive_bytes: bytes, **meta_patch: object) -> bytes:
+    members = _read_archive_members(archive_bytes)
+    meta = json.loads(members["metadata.json"].decode("utf-8"))
+    meta.update(meta_patch)
+    new_meta = json.dumps(
+        meta,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    kind = detect_snapshot_container(archive_bytes)
+    if kind == "zip":
         out = io.BytesIO()
         with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED) as zout:
-            for name in zin.namelist():
-                if name.endswith("/"):
-                    continue
+            for name, body in members.items():
                 if name == "metadata.json":
                     zout.writestr(name, new_meta)
                 else:
-                    zout.writestr(name, zin.read(name))
-    finally:
-        zin.close()
-    return out.getvalue()
+                    zout.writestr(name, body)
+        return out.getvalue()
+    payloads = {k: v for k, v in members.items() if k != "metadata.json"}
+    manifest = meta.get("member_manifest")
+    if not isinstance(manifest, list):
+        raise ValueError("member_manifest required for tar.gz repack")
+    paths = tuple(item["path"] for item in manifest if isinstance(item, dict) and "path" in item)
+    return _pack_targz(paths, payloads, new_meta)
 
 
 def _repack_snapshot_for_format(
-    zip_bytes: bytes,
+    archive_bytes: bytes,
     format_version: str,
     *,
     export_type: str = "complete",
 ) -> bytes:
-    """Rebuild a current-schema export ZIP for an older ``format_version`` member matrix."""
-    zin = zipfile.ZipFile(io.BytesIO(zip_bytes))
-    try:
-        meta = json.loads(zin.read("metadata.json").decode("utf-8"))
-        table_members: dict[str, bytes] = {}
-        for name in zin.namelist():
-            if name.endswith("/") or name == "metadata.json":
-                continue
-            table_members[name] = zin.read(name)
+    """Rebuild a current-schema export as a legacy ZIP for an older ``format_version`` member matrix."""
+    members = _read_archive_members(archive_bytes)
+    meta = json.loads(members["metadata.json"].decode("utf-8"))
+    source_fmt = str(meta.get("format_version", export_format_version()))
+    table_members: dict[str, bytes] = {}
+    for name, raw in members.items():
+        if name.endswith("/") or name == "metadata.json":
+            continue
+        if name.endswith(".json") and not name.startswith("attachments/"):
+            table_members[name] = _bare_table_json_bytes(name, raw, source_fmt)
+        else:
+            table_members[name] = raw
 
-        required_tables = tables_for_import(export_type, format_version)
-        cleaned: dict[str, bytes] = {}
-        for table in required_tables:
-            path = f"{table}.json"
-            cleaned[path] = table_members.get(path, b"[]")
+    required_tables = tables_for_import(export_type, format_version)
+    cleaned: dict[str, bytes] = {}
+    for table in required_tables:
+        path = f"{table}.json"
+        cleaned[path] = table_members.get(path, b"[]")
 
-        if snapshot_includes_attachment_tables(format_version):
-            for path, data in table_members.items():
-                if path.startswith("attachments/"):
-                    cleaned[path] = data
+    if snapshot_includes_attachment_tables(format_version):
+        for path, data in table_members.items():
+            if path.startswith("attachments/"):
+                cleaned[path] = data
 
-        meta_out = {
-            k: v
-            for k, v in meta.items()
-            if k not in ("member_manifest", "format_version", "export_type")
-        }
-        meta_out["format_version"] = format_version
-        meta_out["export_type"] = export_type
-        return _rezip_table_members_with_metadata(cleaned, meta_out)
-    finally:
-        zin.close()
+    meta_out = {
+        k: v
+        for k, v in meta.items()
+        if k not in ("member_manifest", "format_version", "export_type")
+    }
+    meta_out["format_version"] = format_version
+    meta_out["export_type"] = export_type
+    return _rezip_table_members_with_metadata(cleaned, meta_out)
 
 
 def _seed_minimal_ledger(ledger_service: LedgerService) -> None:
@@ -292,12 +425,11 @@ def test_complete_export_round_trip_restores_row_counts(
         before = snapshot_table_counts(conn)
         zip_bytes = export_complete_snapshot(conn)
 
-    zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
-    names = {n for n in zf.namelist() if not n.endswith("/")}
+    names = _archive_member_names(zip_bytes)
     assert "metadata.json" in names
     for table in COMPLETE_TABLES:
         assert f"{table}.json" in names
-    meta = json.loads(zf.read("metadata.json").decode("utf-8"))
+    meta = _archive_metadata(zip_bytes)
     assert meta["export_type"] == "complete"
     assert meta["format_version"] == export_format_version()
     assert isinstance(meta["member_manifest"], list)
@@ -376,11 +508,10 @@ def test_complete_export_round_trip_restores_attachment_blob(
             before_blob = bytes(blob_raw) if not isinstance(blob_raw, bytes) else blob_raw
         zip_bytes = export_complete_snapshot(conn)
 
-    zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
+    members = _read_archive_members(zip_bytes)
     blob_path = attachment_blob_member_path(att_id, mime)
-    names = {n for n in zf.namelist() if not n.endswith("/")}
-    assert blob_path in names
-    assert zf.read(blob_path) == before_blob
+    assert blob_path in members
+    assert members[blob_path] == before_blob
 
     _truncate_all_data(integration_db_url)
 
@@ -440,26 +571,24 @@ def test_import_rejects_unbalanced_journal(
     with connect(integration_db_url, row_factory=dict_row) as conn:
         zip_bytes = export_complete_snapshot(conn)
 
-    zin = zipfile.ZipFile(io.BytesIO(zip_bytes))
-    try:
-        meta = json.loads(zin.read("metadata.json").decode("utf-8"))
-        members = {
-            n: zin.read(n) for n in zin.namelist() if not n.endswith("/") and n != "metadata.json"
-        }
-    finally:
-        zin.close()
-    lines = json.loads(members["journal_lines.json"].decode("utf-8"))
-    lines[0]["amount"] = "999.00"
-    members["journal_lines.json"] = json.dumps(
-        lines,
+    all_members = _read_archive_members(zip_bytes)
+    meta = _archive_metadata(zip_bytes)
+    fmt = str(meta["format_version"])
+    members = {k: v for k, v in all_members.items() if k != "metadata.json"}
+    envelope = json.loads(members["journal_lines.json"].decode("utf-8"))
+    rows = envelope["rows"]
+    rows[0]["amount"] = "999.00"
+    members["journal_lines.json"] = _canonical_envelope_bytes("journal_lines", rows, fmt)
+    paths = tuple(item["path"] for item in meta["member_manifest"])
+    meta_out = {k: v for k, v in meta.items() if k != "member_manifest"}
+    meta_out["member_manifest"] = [{"path": p, "sha256": _sha256(members[p])} for p in paths]
+    meta_bytes = json.dumps(
+        meta_out,
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
-    corrupted = _rezip_table_members_with_metadata(
-        members,
-        {k: v for k, v in meta.items() if k != "member_manifest"},
-    )
+    corrupted = _pack_targz(paths, members, meta_bytes)
 
     _truncate_all_data(integration_db_url)
 
@@ -524,14 +653,22 @@ def test_import_accepts_prior_format_version_in_history(
 
 
 def test_import_accepts_format_one_five_zero_settlement_events_archive(
+    monkeypatch: pytest.MonkeyPatch,
     integration_db_url: str,
     ledger_service: LedgerService,
 ) -> None:
     """Archives with settlement_events.json (< 1.6.0) normalize to allocations-only on import (#153)."""
+    import tallybadger.backup.snapshot as snap
+
+    monkeypatch.setattr(
+        snap,
+        "supported_import_format_versions",
+        lambda: frozenset({"1.5.0", "1.6.0", "1.7.0", "1.8.0"}),
+    )
     _seed_minimal_ledger(ledger_service)
     with connect(integration_db_url, row_factory=dict_row) as conn:
-        zip_bytes = export_complete_snapshot(conn)
-    legacy = _repack_snapshot_for_format(zip_bytes, "1.5.0")
+        archive_bytes = export_complete_snapshot(conn)
+    legacy = _repack_snapshot_for_format(archive_bytes, "1.5.0")
     zf = zipfile.ZipFile(io.BytesIO(legacy))
     assert "settlement_events.json" in zf.namelist()
     assert "settlement_allocations.json" in zf.namelist()
@@ -620,14 +757,15 @@ def test_backup_export_and_import_api_round_trip(
         client = TestClient(app)
         exp = client.post("/backup/export")
         assert exp.status_code == 200
-        assert exp.headers["content-type"] == "application/zip"
-        zip_bytes = exp.content
+        assert exp.headers["content-type"] == "application/gzip"
+        archive_bytes = exp.content
+        assert detect_snapshot_container(archive_bytes) == "gzip"
 
         _truncate_all_data(integration_db_url)
 
         imp = client.post(
             "/backup/import",
-            files={"snapshot": ("snap.zip", zip_bytes, "application/zip")},
+            files={"snapshot": ("snap.tar.gz", archive_bytes, "application/gzip")},
         )
         assert imp.status_code == 200
         assert imp.json() == {"status": "imported"}
@@ -653,7 +791,7 @@ def test_backup_import_api_deprecation_warning_for_older_supported_format(
         _seed_minimal_ledger(ledger_service)
         with connect(integration_db_url, row_factory=dict_row) as conn:
             zip_bytes = export_complete_snapshot(conn)
-        older_fmt = "1.5.0"
+        older_fmt = "1.8.0"
         legacy_zip = _repack_snapshot_for_format(zip_bytes, older_fmt)
 
         _truncate_all_data(integration_db_url)
@@ -728,7 +866,7 @@ def test_backup_import_api_reports_duplicate_key_in_detail(
             zip_bytes = export_complete_snapshot(conn)
         imp = client.post(
             "/backup/import",
-            files={"snapshot": ("snap.zip", zip_bytes, "application/zip")},
+            files={"snapshot": ("snap.tar.gz", zip_bytes, "application/gzip")},
             data={"restore_mode": "abort"},
         )
         assert imp.status_code == 409
@@ -761,14 +899,14 @@ def test_backup_export_query_and_import_restore_mode_form(
         _truncate_all_data(integration_db_url)
         imp_cfg = client.post(
             "/backup/import",
-            files={"snapshot": ("c.zip", cfg, "application/zip")},
+            files={"snapshot": ("c.tar.gz", cfg, "application/gzip")},
             data={"restore_mode": "abort"},
         )
         assert imp_cfg.status_code == 200
 
         imp_fin = client.post(
             "/backup/import",
-            files={"snapshot": ("f.zip", fin_zip, "application/zip")},
+            files={"snapshot": ("f.tar.gz", fin_zip, "application/gzip")},
             data={"restore_mode": "abort"},
         )
         assert imp_fin.status_code == 200
@@ -790,11 +928,12 @@ def test_backup_export_accepts_full_export_type_alias(
         client = TestClient(app)
         exp = client.post("/backup/export?export_type=full")
         assert exp.status_code == 200
-        assert exp.headers["content-type"] == "application/zip"
-        zf = zipfile.ZipFile(io.BytesIO(exp.content))
-        meta = json.loads(zf.read("metadata.json").decode("utf-8"))
+        assert exp.headers["content-type"] == "application/gzip"
+        meta = _archive_metadata(exp.content)
         assert meta["export_type"] == "complete"
-        assert "tallybadger-complete-" in exp.headers.get("content-disposition", "")
+        disposition = exp.headers.get("content-disposition", "")
+        assert "tallybadger-complete-" in disposition
+        assert ".tar.gz" in disposition
     finally:
         core_config.get_settings.cache_clear()
 
@@ -821,9 +960,8 @@ def test_configuration_export_has_only_configuration_members(
     _seed_minimal_ledger(ledger_service)
     with connect(integration_db_url, row_factory=dict_row) as conn:
         zip_bytes = export_snapshot(conn, "configuration")
-    zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
-    names = {n for n in zf.namelist() if not n.endswith("/")}
-    meta = json.loads(zf.read("metadata.json").decode("utf-8"))
+    names = _archive_member_names(zip_bytes)
+    meta = _archive_metadata(zip_bytes)
     assert meta["export_type"] == "configuration"
     data_members = names - {"metadata.json"}
     assert data_members == {f"{t}.json" for t in CONFIGURATION_TABLES}
@@ -836,9 +974,8 @@ def test_financial_export_has_only_financial_members(
     _seed_minimal_ledger(ledger_service)
     with connect(integration_db_url, row_factory=dict_row) as conn:
         zip_bytes = export_snapshot(conn, "financial")
-    zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
-    names = {n for n in zf.namelist() if not n.endswith("/")}
-    meta = json.loads(zf.read("metadata.json").decode("utf-8"))
+    names = _archive_member_names(zip_bytes)
+    meta = _archive_metadata(zip_bytes)
     assert meta["export_type"] == "financial"
     data_members = names - {"metadata.json"}
     assert data_members == {f"{t}.json" for t in financial_tables_for_format(export_format_version())}
@@ -871,12 +1008,12 @@ def test_financial_export_includes_accrual_plans(
     _seed_ledger_with_accrual_plan(ledger_service)
     with connect(integration_db_url, row_factory=dict_row) as conn:
         zip_bytes = export_snapshot(conn, "financial")
-    zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
-    names = {n for n in zf.namelist() if not n.endswith("/")}
-    meta = json.loads(zf.read("metadata.json").decode("utf-8"))
+    names = _archive_member_names(zip_bytes)
+    meta = _archive_metadata(zip_bytes)
     assert meta["format_version"] == export_format_version()
     assert "accrual_plans.json" in names
-    plans = json.loads(zf.read("accrual_plans.json").decode("utf-8"))
+    envelope = json.loads(_read_archive_members(zip_bytes)["accrual_plans.json"].decode("utf-8"))
+    plans = envelope["rows"]
     assert len(plans) == 1
     assert plans[0]["name"] == "Rent Plan 2026"
 
@@ -895,9 +1032,7 @@ def test_configuration_then_financial_preserves_accrual_plan_links(
         assert full_counts["journal_entries"] >= 2
         assert full_counts["accrual_obligations"] >= 2
 
-    zf = zipfile.ZipFile(io.BytesIO(fin_zip))
-    assert "accrual_plans.json" in zf.namelist()
-    zf.close()
+    assert "accrual_plans.json" in _archive_member_names(fin_zip)
 
     _truncate_all_data(integration_db_url)
 
@@ -940,26 +1075,18 @@ def test_financial_import_rejects_missing_account_reference(
     with connect(integration_db_url, row_factory=dict_row) as conn:
         import_snapshot(conn, config_zip, restore_mode="abort")
 
-    zin = zipfile.ZipFile(io.BytesIO(fin_zip))
-    try:
-        meta = json.loads(zin.read("metadata.json").decode("utf-8"))
-        members = {
-            n: zin.read(n) for n in zin.namelist() if not n.endswith("/") and n != "metadata.json"
-        }
-    finally:
-        zin.close()
-    lines = json.loads(members["journal_lines.json"].decode("utf-8"))
+    members_map = {k: v for k, v in _read_archive_members(fin_zip).items() if k != "metadata.json"}
+    meta = _archive_metadata(fin_zip)
+    fmt = str(meta["format_version"])
+    lines = _envelope_rows("journal_lines.json", members_map["journal_lines.json"], fmt)
     lines[0]["account_id"] = 999999
-    members["journal_lines.json"] = json.dumps(
+    members_map["journal_lines.json"] = json.dumps(
         lines,
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
-    bad_fin = _rezip_table_members_with_metadata(
-        members,
-        {k: v for k, v in meta.items() if k != "member_manifest"},
-    )
+    bad_fin = _repack_targz_table_members(members_map, meta)
 
     with connect(integration_db_url, row_factory=dict_row) as conn, pytest.raises(
         SnapshotValidationError,
@@ -995,26 +1122,18 @@ def test_financial_import_rejects_import_batch_id_missing_everywhere(
     with connect(integration_db_url, row_factory=dict_row) as conn:
         import_snapshot(conn, config_zip, restore_mode="abort")
 
-    zin = zipfile.ZipFile(io.BytesIO(fin_zip))
-    try:
-        meta = json.loads(zin.read("metadata.json").decode("utf-8"))
-        members = {
-            n: zin.read(n) for n in zin.namelist() if not n.endswith("/") and n != "metadata.json"
-        }
-    finally:
-        zin.close()
-    entries = json.loads(members["journal_entries.json"].decode("utf-8"))
+    members_map = {k: v for k, v in _read_archive_members(fin_zip).items() if k != "metadata.json"}
+    meta = _archive_metadata(fin_zip)
+    fmt = str(meta["format_version"])
+    entries = _envelope_rows("journal_entries.json", members_map["journal_entries.json"], fmt)
     entries[0]["import_batch_id"] = 999999
-    members["journal_entries.json"] = json.dumps(
+    members_map["journal_entries.json"] = json.dumps(
         entries,
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
-    bad_fin = _rezip_table_members_with_metadata(
-        members,
-        {k: v for k, v in meta.items() if k != "member_manifest"},
-    )
+    bad_fin = _repack_targz_table_members(members_map, meta)
 
     with connect(integration_db_url, row_factory=dict_row) as conn, pytest.raises(
         SnapshotValidationError,
@@ -1050,7 +1169,7 @@ def test_backup_import_api_rejects_legacy_erase_reload_spelling(
         client = TestClient(app)
         imp = client.post(
             "/backup/import",
-            files={"snapshot": ("snap.zip", zip_bytes, "application/zip")},
+            files={"snapshot": ("snap.tar.gz", zip_bytes, "application/gzip")},
             data={"restore_mode": "erase_reload"},
         )
         assert imp.status_code == 400
@@ -1072,7 +1191,7 @@ def test_backup_import_api_rejects_invalid_restore_mode(
         client = TestClient(app)
         imp = client.post(
             "/backup/import",
-            files={"snapshot": ("snap.zip", zip_bytes, "application/zip")},
+            files={"snapshot": ("snap.tar.gz", zip_bytes, "application/gzip")},
             data={"restore_mode": "erase-spice-girls-music"},
         )
         assert imp.status_code == 400
@@ -1152,7 +1271,7 @@ def test_import_rejects_zip_with_extra_member(integration_db_url: str) -> None:
     _truncate_all_data(integration_db_url)
     _ensure_ledger_settings(integration_db_url)
     with connect(integration_db_url, row_factory=dict_row) as conn:
-        zip_bytes = export_complete_snapshot(conn)
+        zip_bytes = _repack_snapshot_for_format(export_complete_snapshot(conn), "1.8.0")
     zin = zipfile.ZipFile(io.BytesIO(zip_bytes))
     try:
         out = io.BytesIO()
@@ -1280,22 +1399,7 @@ def test_snapshot_rejects_prepaid_expenses_pointing_at_missing_account(
     with connect(integration_db_url, row_factory=dict_row) as conn:
         archive = export_snapshot(conn, "configuration")
 
-    zin = zipfile.ZipFile(io.BytesIO(archive))
-    try:
-        names = [n for n in zin.namelist() if not n.endswith("/")]
-        table_members: dict[str, bytes] = {n: zin.read(n) for n in names if n != "metadata.json"}
-        metadata = json.loads(zin.read("metadata.json").decode("utf-8"))
-    finally:
-        zin.close()
-    accounts_rows = json.loads(table_members["accounts.json"].decode("utf-8"))
-    accounts_rows = [r for r in accounts_rows if int(r["id"]) != prepaid.id]
-    table_members["accounts.json"] = json.dumps(
-        accounts_rows,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    tampered = _rezip_table_members_with_metadata(table_members, metadata)
+    tampered = _tamper_configuration_drop_account_ids(archive, {prepaid.id})
 
     _truncate_all_data(integration_db_url)
     with connect(integration_db_url, row_factory=dict_row) as conn, pytest.raises(
@@ -1328,23 +1432,7 @@ def test_snapshot_rejects_cheque_default_pointing_at_missing_account(
     with connect(integration_db_url, row_factory=dict_row) as conn:
         archive = export_snapshot(conn, "configuration")
 
-    # Tamper: drop the credit-default account from accounts.json so it no longer resolves.
-    zin = zipfile.ZipFile(io.BytesIO(archive))
-    try:
-        names = [n for n in zin.namelist() if not n.endswith("/")]
-        table_members: dict[str, bytes] = {n: zin.read(n) for n in names if n != "metadata.json"}
-        metadata = json.loads(zin.read("metadata.json").decode("utf-8"))
-    finally:
-        zin.close()
-    accounts_rows = json.loads(table_members["accounts.json"].decode("utf-8"))
-    accounts_rows = [r for r in accounts_rows if int(r["id"]) != cash.id]
-    table_members["accounts.json"] = json.dumps(
-        accounts_rows,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    tampered = _rezip_table_members_with_metadata(table_members, metadata)
+    tampered = _tamper_configuration_drop_account_ids(archive, {cash.id})
 
     _truncate_all_data(integration_db_url)
     with connect(integration_db_url, row_factory=dict_row) as conn, pytest.raises(
@@ -1429,24 +1517,7 @@ def test_filter_preset_with_missing_account_id_rejected_by_import(
     with connect(integration_db_url, row_factory=dict_row) as conn:
         archive = export_snapshot(conn, "configuration")
 
-    zin = zipfile.ZipFile(io.BytesIO(archive))
-    try:
-        names = [n for n in zin.namelist() if not n.endswith("/")]
-        table_members: dict[str, bytes] = {
-            n: zin.read(n) for n in names if n != "metadata.json"
-        }
-        metadata = json.loads(zin.read("metadata.json").decode("utf-8"))
-    finally:
-        zin.close()
-    accounts_rows = json.loads(table_members["accounts.json"].decode("utf-8"))
-    accounts_rows = [r for r in accounts_rows if int(r["id"]) != cash.id]
-    table_members["accounts.json"] = json.dumps(
-        accounts_rows,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    tampered = _rezip_table_members_with_metadata(table_members, metadata)
+    tampered = _tamper_configuration_drop_account_ids(archive, {cash.id})
 
     _truncate_all_data(integration_db_url)
     with connect(integration_db_url, row_factory=dict_row) as conn, pytest.raises(
@@ -1530,24 +1601,7 @@ def test_cheque_register_filter_preset_missing_account_rejected_by_import(
     with connect(integration_db_url, row_factory=dict_row) as conn:
         archive = export_snapshot(conn, "configuration")
 
-    zin = zipfile.ZipFile(io.BytesIO(archive))
-    try:
-        names = [n for n in zin.namelist() if not n.endswith("/")]
-        table_members: dict[str, bytes] = {
-            n: zin.read(n) for n in names if n != "metadata.json"
-        }
-        metadata = json.loads(zin.read("metadata.json").decode("utf-8"))
-    finally:
-        zin.close()
-    accounts_rows = json.loads(table_members["accounts.json"].decode("utf-8"))
-    accounts_rows = [r for r in accounts_rows if int(r["id"]) != cash.id]
-    table_members["accounts.json"] = json.dumps(
-        accounts_rows,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    tampered = _rezip_table_members_with_metadata(table_members, metadata)
+    tampered = _tamper_configuration_drop_account_ids(archive, {cash.id})
 
     _truncate_all_data(integration_db_url)
     with connect(integration_db_url, row_factory=dict_row) as conn, pytest.raises(
@@ -1583,9 +1637,4 @@ def test_financial_export_excludes_cheque_register_filter_presets(
     with connect(integration_db_url, row_factory=dict_row) as conn:
         archive = export_snapshot(conn, "financial")
 
-    zin = zipfile.ZipFile(io.BytesIO(archive))
-    try:
-        names = {n for n in zin.namelist() if not n.endswith("/")}
-    finally:
-        zin.close()
-    assert "cheque_register_filter_presets.json" not in names
+    assert "cheque_register_filter_presets.json" not in _archive_member_names(archive)

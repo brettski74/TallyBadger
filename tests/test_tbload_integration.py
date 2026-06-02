@@ -23,6 +23,11 @@ from psycopg.rows import dict_row
 
 import tallybadger.core.config as core_config
 from tallybadger.backup.snapshot import export_complete_snapshot, snapshot_table_counts
+
+from test_backup_snapshot_integration import (  # noqa: E402
+    _expand_archive_to_directory,
+    _repack_snapshot_for_format,
+)
 from tallybadger.db_migrations import apply_sql_migrations
 from tallybadger.ledger.models import AccountCreate, JournalEntryWrite, JournalLineIn, PartyCreate
 from tallybadger.ledger.service import LedgerService
@@ -117,11 +122,6 @@ def _find_free_port() -> int:
         return sock.getsockname()[1]
 
 
-def _expand_zip_to_directory(zip_bytes: bytes, destination: Path) -> None:
-    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as archive:
-        archive.extractall(destination)
-
-
 @pytest.fixture
 def tbload_api_base_url(integration_db_url: str, monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
     if shutil.which("curl") is None:
@@ -167,11 +167,11 @@ def test_tbload_directory_input_imports_expanded_snapshot(
 ) -> None:
     _seed_minimal_ledger(ledger_service)
     with connect(integration_db_url, row_factory=dict_row) as conn:
-        zip_bytes = export_complete_snapshot(conn)
+        legacy_zip = _repack_snapshot_for_format(export_complete_snapshot(conn), "1.8.0")
 
     expanded_dir = tmp_path / "seed"
     expanded_dir.mkdir()
-    _expand_zip_to_directory(zip_bytes, expanded_dir)
+    _expand_archive_to_directory(legacy_zip, expanded_dir)
     assert (expanded_dir / "metadata.json").is_file()
 
     _truncate_all_data(integration_db_url)

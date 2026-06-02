@@ -1,14 +1,18 @@
-"""Snapshot export/import (JSON members in a ZIP). Issues #16, #67, #68."""
+"""Snapshot export/import (ZIP legacy, tar.gz ``2.0.0``). Issues #16, #67, #68, #251."""
 
 from __future__ import annotations
 
+import gzip
 import hashlib
 import io
 import json
+import tarfile
 import zipfile
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any, Literal
+
+SnapshotContainer = Literal["zip", "gzip"]
 
 from psycopg import Connection, sql
 from psycopg import errors as pg_errors
@@ -37,6 +41,7 @@ FORMAT_VERSION_HISTORY: tuple[str, ...] = (
     "1.6.0",
     "1.7.0",
     "1.8.0",
+    "2.0.0",
 )
 
 
@@ -232,6 +237,55 @@ def attachment_blob_member_path(attachment_id: int, mime_type: str) -> str:
     return f"attachments/{attachment_id}.{ext}"
 
 
+def snapshot_uses_json_envelopes(format_version: str) -> bool:
+    """JSON table members are ``{format_version, table, rows}`` objects for ``format_version`` ≥ 2.0.0."""
+    return _format_version_tuple(format_version) >= (2, 0, 0)
+
+
+def detect_snapshot_container(data: bytes) -> SnapshotContainer:
+    """Detect ZIP vs gzip-compressed tar from leading magic bytes."""
+    if len(data) < 2:
+        raise IncompleteSnapshotError(
+            "snapshot file is empty or too small; expected a .zip or .tar.gz backup"
+        )
+    if data[:2] == b"\x1f\x8b":
+        return "gzip"
+    if data[:4] == b"PK\x03\x04" or data[:4] == b"PK\x05\x06" or data[:4] == b"PK\x07\x08":
+        return "zip"
+    raise IncompleteSnapshotError(
+        "unrecognized snapshot container (expected ZIP .zip or gzip .tar.gz); "
+        f"first bytes are {data[:4]!r}"
+    )
+
+
+def manifest_member_paths(
+    export_type: str,
+    format_version: str,
+    payloads: dict[str, bytes],
+) -> tuple[str, ...]:
+    """FK-safe tar member order for ``format_version`` ≥ 2.0.0 (``member_manifest`` order)."""
+    paths: list[str] = []
+    attachment_blobs: list[str] = []
+    for table in tables_for_import(export_type, format_version):
+        if table == "attachments":
+            paths.append("attachments.json")
+            attachment_blobs = sorted(
+                p for p in payloads if p.startswith("attachments/") and not p.endswith(".json")
+            )
+        elif table == "journal_entry_attachments":
+            paths.append("journal_entry_attachments.json")
+            paths.extend(attachment_blobs)
+        else:
+            paths.append(f"{table}.json")
+    expected_keys = set(paths)
+    if set(payloads.keys()) != expected_keys:
+        raise IncompleteSnapshotError(
+            f"internal export member set {sorted(payloads.keys())!r} "
+            f"does not match manifest paths {sorted(expected_keys)!r}"
+        )
+    return tuple(paths)
+
+
 def _sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
@@ -239,6 +293,20 @@ def _sha256_hex(data: bytes) -> str:
 def _canonical_json_bytes(rows: list[dict[str, Any]]) -> bytes:
     return json.dumps(
         rows,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=_json_default,
+    ).encode("utf-8")
+
+
+def _canonical_envelope_bytes(table: str, rows: list[dict[str, Any]], format_version: str) -> bytes:
+    return json.dumps(
+        {
+            "format_version": format_version,
+            "table": table,
+            "rows": rows,
+        },
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
@@ -403,10 +471,13 @@ def _bytea_to_bytes(value: Any) -> bytes:
 
 
 def export_snapshot(conn: Connection, export_type: ExportType) -> bytes:
-    """Build a ZIP archive (UTF-8 JSON table dumps; attachment blobs under ``attachments/`` when applicable)."""
+    """Build a gzip-compressed tar snapshot (``format_version`` 2.0.0)."""
+    fmt = export_format_version()
     tables = tables_for_export_type(export_type)
     schema_ver = current_schema_version(conn)
-    exported_at = datetime.now(timezone.utc).isoformat()
+    export_local = datetime.now().astimezone()
+    exported_at = export_local.astimezone(timezone.utc).isoformat()
+    archive_mtime = int(export_local.timestamp())
 
     payloads: dict[str, bytes] = {}
     for table in tables:
@@ -422,18 +493,19 @@ def export_snapshot(conn: Connection, export_type: ExportType) -> bytes:
                 raw_out.append(
                     {k: _cell_to_jsonable(k, v) for k, v in row.items() if k != "blob"},
                 )
-            payloads["attachments.json"] = _canonical_json_bytes(raw_out)
+            payloads["attachments.json"] = _canonical_envelope_bytes("attachments", raw_out, fmt)
         else:
             raw = _rows_jsonable(rows)
-            payloads[f"{table}.json"] = _canonical_json_bytes(raw)
+            payloads[f"{table}.json"] = _canonical_envelope_bytes(table, raw, fmt)
 
-    manifest: list[dict[str, str]] = []
-    for path in sorted(payloads.keys()):
-        manifest.append({"path": path, "sha256": _sha256_hex(payloads[path])})
+    member_paths = manifest_member_paths(export_type, fmt, payloads)
+    manifest: list[dict[str, str]] = [
+        {"path": path, "sha256": _sha256_hex(payloads[path])} for path in member_paths
+    ]
 
     metadata_obj: dict[str, Any] = {
         "export_type": export_type,
-        "format_version": export_format_version(),
+        "format_version": fmt,
         "schema_version": schema_ver,
         "app_version": app_version,
         "exported_at": exported_at,
@@ -447,16 +519,36 @@ def export_snapshot(conn: Connection, export_type: ExportType) -> bytes:
         separators=(",", ":"),
     ).encode("utf-8")
 
+    return _pack_targz(member_paths, payloads, metadata_bytes, mtime=archive_mtime)
+
+
+def _pack_targz(
+    member_paths: tuple[str, ...],
+    payloads: dict[str, bytes],
+    metadata_bytes: bytes,
+    *,
+    mtime: int | None = None,
+) -> bytes:
+    """Write data members in ``member_paths`` order, then ``metadata.json`` (gzip level 9)."""
+    member_mtime = int(datetime.now().astimezone().timestamp()) if mtime is None else mtime
     buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr("metadata.json", metadata_bytes)
-        for path in sorted(payloads.keys()):
-            zf.writestr(path, payloads[path])
+    with gzip.GzipFile(fileobj=buf, mode="wb", compresslevel=9) as gz:
+        with tarfile.open(fileobj=gz, mode="w") as tar:
+            for path in member_paths:
+                data = payloads[path]
+                info = tarfile.TarInfo(name=path)
+                info.size = len(data)
+                info.mtime = member_mtime
+                tar.addfile(info, io.BytesIO(data))
+            meta_info = tarfile.TarInfo(name="metadata.json")
+            meta_info.size = len(metadata_bytes)
+            meta_info.mtime = member_mtime
+            tar.addfile(meta_info, io.BytesIO(metadata_bytes))
     return buf.getvalue()
 
 
 def export_complete_snapshot(conn: Connection) -> bytes:
-    """Build a ZIP for ``export_type: complete`` (backward-compatible name)."""
+    """Build a complete snapshot archive (backward-compatible name)."""
     return export_snapshot(conn, "complete")
 
 
@@ -522,11 +614,122 @@ def _load_zip_members(zip_bytes: bytes) -> tuple[dict[str, Any], dict[str, bytes
     return metadata, files
 
 
-def _parse_table_file(path: str, raw: bytes) -> list[dict[str, Any]]:
+def _load_targz_members(targz_bytes: bytes) -> tuple[dict[str, Any], dict[str, bytes]]:
+    try:
+        with gzip.GzipFile(fileobj=io.BytesIO(targz_bytes), mode="rb") as gz:
+            with tarfile.open(fileobj=gz, mode="r:") as tar:
+                members_ordered: list[str] = []
+                files: dict[str, bytes] = {}
+                for member in tar:
+                    if not member.isfile():
+                        continue
+                    extracted = tar.extractfile(member)
+                    if extracted is None:
+                        raise IncompleteSnapshotError(f"could not read tar member {member.name!r}")
+                    body = extracted.read()
+                    members_ordered.append(member.name)
+                    files[member.name] = body
+    except (gzip.BadGzipFile, OSError, tarfile.TarError) as exc:
+        raise IncompleteSnapshotError("not a valid gzip-compressed tar archive") from exc
+
+    if not members_ordered:
+        raise IncompleteSnapshotError("tar.gz snapshot contains no members")
+    if members_ordered[-1] != "metadata.json":
+        raise IncompleteSnapshotError(
+            "metadata.json must be the last member in a tar.gz snapshot "
+            f"(found order ending with {members_ordered[-3:]!r})"
+        )
+
+    metadata = _parse_metadata(files["metadata.json"])
+    manifest = metadata.get("member_manifest")
+    if not isinstance(manifest, list):
+        raise IncompleteSnapshotError("metadata.member_manifest must be a list")
+
+    manifest_paths: list[str] = []
+    for item in manifest:
+        if not isinstance(item, dict):
+            raise IncompleteSnapshotError("member_manifest entries must be objects")
+        path = item.get("path")
+        digest = item.get("sha256")
+        if not isinstance(path, str) or not isinstance(digest, str):
+            raise IncompleteSnapshotError("member_manifest items need path and sha256 strings")
+        manifest_paths.append(path)
+        if path not in files:
+            raise IncompleteSnapshotError(f"tar.gz is missing member {path!r} listed in manifest")
+        body = files[path]
+        if _sha256_hex(body) != digest.lower():
+            raise SnapshotIntegrityError(
+                f"SHA-256 checksum mismatch for tar member {path!r} "
+                "(file may be corrupted or tampered with)"
+            )
+
+    names = set(files.keys())
+    expected = set(manifest_paths) | {"metadata.json"}
+    if names != expected:
+        extra = names - expected
+        missing = expected - names
+        msg_parts = []
+        if extra:
+            msg_parts.append(f"unexpected tar members: {sorted(extra)}")
+        if missing:
+            msg_parts.append(f"missing tar members: {sorted(missing)}")
+        raise SnapshotIntegrityError(
+            "; ".join(msg_parts)
+            + " — tar entries must match metadata.json member_manifest exactly "
+            "(metadata.json is last and not listed in the manifest)"
+        )
+
+    data_order = members_ordered[:-1]
+    if data_order != manifest_paths:
+        raise SnapshotIntegrityError(
+            "tar member order does not match metadata.member_manifest order "
+            f"(tar has {data_order!r}, manifest has {manifest_paths!r})"
+        )
+
+    return metadata, {n: files[n] for n in names if n != "metadata.json"}
+
+
+def _load_archive_members(archive_bytes: bytes) -> tuple[dict[str, Any], dict[str, bytes]]:
+    container = detect_snapshot_container(archive_bytes)
+    if container == "zip":
+        return _load_zip_members(archive_bytes)
+    return _load_targz_members(archive_bytes)
+
+
+def _parse_table_file(path: str, raw: bytes, *, format_version: str) -> list[dict[str, Any]]:
     try:
         data = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise IncompleteSnapshotError(f"{path} is not valid UTF-8 JSON") from exc
+
+    if snapshot_uses_json_envelopes(format_version):
+        if not isinstance(data, dict):
+            raise IncompleteSnapshotError(f"{path} must be a JSON envelope object for format 2.0.0")
+        table = data.get("table")
+        rows = data.get("rows")
+        env_fmt = data.get("format_version")
+        if not isinstance(table, str):
+            raise IncompleteSnapshotError(f"{path} envelope must include string table")
+        if not isinstance(env_fmt, str):
+            raise IncompleteSnapshotError(f"{path} envelope must include string format_version")
+        expected_table = path.removesuffix(".json")
+        if table != expected_table:
+            raise IncompleteSnapshotError(
+                f"{path} envelope table={table!r} does not match member name "
+                f"(expected {expected_table!r})"
+            )
+        if env_fmt != format_version:
+            raise IncompleteSnapshotError(
+                f"{path} envelope format_version={env_fmt!r} "
+                f"does not match metadata format_version={format_version!r}"
+            )
+        if not isinstance(rows, list):
+            raise IncompleteSnapshotError(f"{path} envelope rows must be a JSON array")
+        for i, row in enumerate(rows):
+            if not isinstance(row, dict):
+                raise IncompleteSnapshotError(f"{path} row {i} must be a JSON object")
+        return rows
+
     if not isinstance(data, list):
         raise IncompleteSnapshotError(f"{path} must be a JSON array of row objects")
     for i, row in enumerate(data):
@@ -1202,7 +1405,7 @@ def _expected_manifest_paths(
         path = "attachments.json"
         if path not in files:
             raise IncompleteSnapshotError(f"missing {path}")
-        for row in _parse_table_file(path, files[path]):
+        for row in _parse_table_file(path, files[path], format_version=format_version):
             expected.add(
                 attachment_blob_member_path(int(row["id"]), str(row["mime_type"])),
             )
@@ -1229,13 +1432,13 @@ def _assert_manifest_matches_export_type(
 
 def import_snapshot(
     conn: Connection,
-    zip_bytes: bytes,
+    archive_bytes: bytes,
     *,
     restore_mode: str = "abort",
 ) -> str | None:
     """Import a snapshot; tables loaded match ``export_type`` in metadata.
 
-    ``restore_mode`` applies only to this import and is never read from the ZIP:
+    ``restore_mode`` applies only to this import and is never read from the archive:
     ``abort`` — insert in one transaction; first PK/unique/FK/business-rule failure rolls back.
     ``overwrite`` — before insert, delete existing rows with the same primary keys as the
     snapshot (in FK-safe reverse order within the snapshot's table set).
@@ -1247,7 +1450,7 @@ def import_snapshot(
     """
     mode = _normalize_restore_mode(restore_mode)
 
-    metadata, files = _load_zip_members(zip_bytes)
+    metadata, files = _load_archive_members(archive_bytes)
 
     export_type_raw: Any = metadata.get("export_type")
     if not isinstance(export_type_raw, str):
@@ -1290,7 +1493,7 @@ def import_snapshot(
         path = f"{table}.json"
         if path not in files:
             raise IncompleteSnapshotError(f"missing {path}")
-        payloads[table] = _parse_table_file(path, files[path])
+        payloads[table] = _parse_table_file(path, files[path], format_version=fmt)
 
     _validate_payloads_for_tables(tables, payloads)
 
@@ -1352,12 +1555,12 @@ def import_snapshot(
 
 def import_complete_snapshot(
     conn: Connection,
-    zip_bytes: bytes,
+    archive_bytes: bytes,
     *,
     restore_mode: str = "abort",
 ) -> str | None:
-    """Import a snapshot (backward-compatible name; any ``export_type`` in the ZIP)."""
-    return import_snapshot(conn, zip_bytes, restore_mode=restore_mode)
+    """Import a snapshot (backward-compatible name; any ``export_type`` in the archive)."""
+    return import_snapshot(conn, archive_bytes, restore_mode=restore_mode)
 
 
 def _resync_serials(conn: Connection) -> None:

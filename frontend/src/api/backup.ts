@@ -3,7 +3,7 @@ import { ApiHttpError, readApiErrorMessage } from "./errors";
 
 export type BackupExportType = "complete" | "configuration" | "financial";
 
-/** How to handle conflicts for this restore only (sent on import; never part of the ZIP). */
+/** How to handle conflicts for this restore only (sent on import; never part of the archive). */
 export type RestoreMode = "abort" | "overwrite" | "erase-reload";
 
 /** Successful restore response fields consumed by the UI (#202). */
@@ -17,14 +17,14 @@ const BACKUP_FILENAME_STEM: Record<BackupExportType, string> = {
   financial: "tallybadger-financial",
 };
 
-/** Local-time download name, e.g. `tallybadger-complete-yyyymmdd-hhmmss.zip`. */
+/** Local-time download name, e.g. `tallybadger-complete-yyyymmdd-hhmmss.tar.gz`. */
 export function backupDownloadFilename(exportType: BackupExportType, at: Date = new Date()): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   const stamp = `${at.getFullYear()}${pad(at.getMonth() + 1)}${pad(at.getDate())}-${pad(at.getHours())}${pad(at.getMinutes())}${pad(at.getSeconds())}`;
-  return `${BACKUP_FILENAME_STEM[exportType]}-${stamp}.zip`;
+  return `${BACKUP_FILENAME_STEM[exportType]}-${stamp}.tar.gz`;
 }
 
-/** Download a backup ZIP for the given export scope. */
+/** Download a backup archive for the given export scope. */
 export async function exportBackup(exportType: BackupExportType): Promise<Blob> {
   const params = new URLSearchParams({ export_type: exportType });
   const res = await fetch(`${getApiBase()}/backup/export?${params.toString()}`, { method: "POST" });

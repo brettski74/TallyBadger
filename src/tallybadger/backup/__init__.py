@@ -1,4 +1,4 @@
-"""Backup / restore snapshot (ZIP + JSON)."""
+"""Backup / restore snapshot (tar.gz 2.0.0 export; legacy ZIP import)."""
 
 from tallybadger.backup.snapshot import (
     export_complete_snapshot,

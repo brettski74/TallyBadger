@@ -367,7 +367,7 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
         <input
           ref={restoreInputRef}
           type="file"
-          accept=".zip,application/zip"
+          accept=".zip,.tar.gz,.tgz,application/zip,application/gzip"
           hidden
           onChange={(e) => {
             const file = e.target.files?.[0];
