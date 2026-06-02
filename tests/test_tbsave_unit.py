@@ -55,7 +55,7 @@ def test_tbsave_build_base_url_env(monkeypatch: pytest.MonkeyPatch) -> None:
     assert tbsave.build_base_url(base_url=None, host="127.0.0.1", port=8080) == "http://api.example:9000"
 
 
-def test_tbsave_default_zip_filename_pattern(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_tbsave_default_archive_filename_pattern(monkeypatch: pytest.MonkeyPatch) -> None:
     class FixedDatetime:
         @classmethod
         def now(cls):
@@ -64,10 +64,10 @@ def test_tbsave_default_zip_filename_pattern(monkeypatch: pytest.MonkeyPatch) ->
             return datetime(2026, 5, 27, 14, 30, 45)
 
     monkeypatch.setattr(tbsave, "datetime", FixedDatetime)
-    assert tbsave.default_zip_filename("complete") == "tallybadger-complete-20260527-143045.zip"
-    assert tbsave.default_zip_filename("full") == "tallybadger-full-20260527-143045.zip"
-    assert tbsave.default_zip_filename("configuration") == "tallybadger-config-20260527-143045.zip"
-    assert tbsave.default_zip_filename("financial") == "tallybadger-financial-20260527-143045.zip"
+    assert tbsave.default_archive_filename("complete") == "tallybadger-complete-20260527-143045.tar.gz"
+    assert tbsave.default_archive_filename("full") == "tallybadger-full-20260527-143045.tar.gz"
+    assert tbsave.default_archive_filename("configuration") == "tallybadger-config-20260527-143045.tar.gz"
+    assert tbsave.default_archive_filename("financial") == "tallybadger-financial-20260527-143045.tar.gz"
 
 
 def test_tbsave_resolve_output_target_directory(tmp_path: Path) -> None:
@@ -82,7 +82,7 @@ def test_tbsave_resolve_output_target_directory(tmp_path: Path) -> None:
     assert target is not None
     assert target.parent == out_dir
     assert target.name.startswith("tallybadger-config-")
-    assert target.suffix == ".zip"
+    assert target.name.endswith(".tar.gz")
 
 
 def test_tbsave_resolve_output_target_rejects_missing_parent(tmp_path: Path) -> None:

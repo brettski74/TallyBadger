@@ -17,7 +17,7 @@ TallyBadger is a **double-entry accounting** backend for small rental portfolios
 | **Import rules** | Rule evaluation (including CEL), templates | [`src/tallybadger/import_rules/`](src/tallybadger/import_rules/), [`src/tallybadger/import_templates/`](src/tallybadger/import_templates/) |
 | **Persistence** | Database access, connection settings | [`src/tallybadger/db.py`](src/tallybadger/db.py), [`src/tallybadger/core/config.py`](src/tallybadger/core/config.py) |
 | **Migrations** | Versioned schema applied in filename order | [`sql/`](sql/) (`NNN_*.sql`), [`src/tallybadger/db_migrations.py`](src/tallybadger/db_migrations.py) |
-| **Backup / snapshot** | Portable ZIP of table JSON, export and import | [`src/tallybadger/backup/`](src/tallybadger/backup/), [`src/tallybadger/api/routes/backup.py`](src/tallybadger/api/routes/backup.py) |
+| **Backup / snapshot** | Portable snapshot archives (tar.gz **2.0.0** export; legacy ZIP import) | [`src/tallybadger/backup/`](src/tallybadger/backup/), [`src/tallybadger/api/routes/backup.py`](src/tallybadger/api/routes/backup.py) |
 | **Frontend** | SPA calling the API | [`frontend/`](frontend/) |
 | **Local operations** | Compose-backed DB, API, frontend lifecycle | [`src/tallybadger/tbad.py`](src/tallybadger/tbad.py), [`docker-compose.yml`](docker-compose.yml), [`Makefile`](Makefile) |
 
@@ -46,19 +46,19 @@ flowchart LR
     Svc[Domain services]
   end
   DB[(PostgreSQL)]
-  Zip[(Snapshot ZIP)]
+  Snap[(Snapshot archive)]
   UI --> Routes
   Scripts --> Routes
   Routes --> Svc
   Svc --> DB
-  Svc --> Zip
-  Zip --> Svc
+  Svc --> Snap
+  Snap --> Svc
 ```
 
 1. **Ledger operations** — UI or API client sends journal-related requests → route handlers → ledger (and related) services → PostgreSQL under a transaction where invariants require it.
 2. **Bank CSV import** — Client uploads CSV → import route validates rows, applies **templates** and optional **CEL rule sets**, then posts **journal entries** through ledger services → PostgreSQL. Rows may include **`line[]`** maps with optional **`obligation-id`** to settle accrual obligations in the same batch ([#151](https://github.com/brettski74/TallyBadger/issues/151)). Same trust rules as other HTTP input; ambiguous business cases should stay visible to the operator (README product notes).
 3. **Import rules and CEL** — Evaluation and rule-set APIs run in-process against submitted or stored definitions; details and API surface are documented under `docs/` (see links below).
-4. **Backup / restore** — Export reads the database and writes a versioned ZIP per **[docs/backup-snapshot-format.md](docs/backup-snapshot-format.md)**. Import reads the ZIP, validates metadata and members, and applies rows according to export mode and API-chosen restore behaviour. When schema or included tables change, update **snapshot code, integration tests, format documentation, and `format_version`** when the on-wire layout or semantics require it (see [STYLE.md](STYLE.md)).
+4. **Backup / restore** — Export reads the database and writes a versioned **tar.gz** snapshot (**`format_version` 2.0.0**) per **[docs/backup-snapshot-format.md](docs/backup-snapshot-format.md)**; import also accepts **legacy ZIP** archives in the supported version window. Import validates metadata and members, then applies rows according to export mode and API-chosen restore behaviour. When schema or included tables change, update **snapshot code, integration tests, format documentation, and `format_version`** when the on-wire layout or semantics require it (see [STYLE.md](STYLE.md)).
 5. **Migrations and local bootstrap** — `sql/*.sql` advances schema; local UAT loads a gitignored complete snapshot from `examples/` via **`tbload`** / **`make dbclean`** (see [STYLE.md](STYLE.md)).
 
 ## Deeper reference (do not duplicate here)
@@ -66,7 +66,7 @@ flowchart LR
 | Topic | Document |
 |-------|----------|
 | Journal / obligation / settlement / import-batch ER and unload scope | [docs/ledger-data-model.md](docs/ledger-data-model.md) |
-| Snapshot ZIP layout, `format_version`, export modes | [docs/backup-snapshot-format.md](docs/backup-snapshot-format.md) |
+| Snapshot archive layout, `format_version`, export modes | [docs/backup-snapshot-format.md](docs/backup-snapshot-format.md) |
 | Import rules engine scope and API | [docs/import-rules-engine.md](docs/import-rules-engine.md) |
 | CEL helpers and functions | [docs/cel-function-reference.md](docs/cel-function-reference.md) |
 

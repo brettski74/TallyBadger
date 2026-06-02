@@ -97,10 +97,10 @@ def resolve_export_scope(user_input: str) -> str:
     return next(iter(matches))
 
 
-def default_zip_filename(scope: str) -> str:
+def default_archive_filename(scope: str) -> str:
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     stem = FILENAME_STEMS[scope]
-    return f"{stem}-{stamp}.zip"
+    return f"{stem}-{stamp}.tar.gz"
 
 
 def preflight_health(base_url: str) -> None:
@@ -172,7 +172,7 @@ def _parse_curl_export_result(
 
 def export_snapshot_bytes(base_url: str, *, export_type: str) -> bytes:
     url = _export_url(base_url, export_type)
-    with tempfile.NamedTemporaryFile(suffix=".zip") as tmp:
+    with tempfile.NamedTemporaryFile(suffix=".tar.gz") as tmp:
         proc = run_curl(
             [
                 "-sS",
@@ -231,7 +231,7 @@ def resolve_output_target(
     path = Path(output)
     if path.exists():
         if path.is_dir():
-            return path / default_zip_filename(scope)
+            return path / default_archive_filename(scope)
         if path.is_file():
             if not force and not confirm_overwrite(path):
                 _die("export cancelled")

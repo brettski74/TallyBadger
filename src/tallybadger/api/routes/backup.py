@@ -59,10 +59,10 @@ def backup_export(
         "financial": "tallybadger-financial",
     }[canonical_export_type]
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    filename = f"{stem}-{stamp}.zip"
+    filename = f"{stem}-{stamp}.tar.gz"
     return Response(
         content=data,
-        media_type="application/zip",
+        media_type="application/gzip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 

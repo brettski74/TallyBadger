@@ -1,14 +1,37 @@
 # TallyBadger backup snapshot format
 
-This document defines the **versioned ZIP snapshot** used for database backup and restore. It stays aligned with **`format_version`** in `metadata.json` (current export: **1.8.0**; prior archives remain importable per the version window in **[STYLE.md](../STYLE.md)**).
+This document defines the **versioned snapshot archive** used for database backup and restore. It stays aligned with **`format_version`** in `metadata.json` (current export: **2.0.0**; prior archives remain importable per the version window in **[STYLE.md](../STYLE.md)**).
 
-Parent product spec: GitHub issue [#16](https://github.com/brettski74/TallyBadger/issues/16). Slice 1 ([#67](https://github.com/brettski74/TallyBadger/issues/67)) shipped **complete** export/import; slice 2 ([#68](https://github.com/brettski74/TallyBadger/issues/68)) adds **`configuration`** and **`financial`** modes with scoped validation and duplicate policies.
+Parent product spec: GitHub issue [#16](https://github.com/brettski74/TallyBadger/issues/16). Slice 1 ([#67](https://github.com/brettski74/TallyBadger/issues/67)) shipped **complete** export/import; slice 2 ([#68](https://github.com/brettski74/TallyBadger/issues/68)) adds **`configuration`** and **`financial`** modes with scoped validation and duplicate policies. Container **2.0.0** (tar.gz, envelopes, metadata-last) ships in [#251](https://github.com/brettski74/TallyBadger/issues/251) under epic [#239](https://github.com/brettski74/TallyBadger/issues/239).
 
 ## Container
 
-- One **`.zip`** file per export.
-- Table dumps are **UTF-8 JSON** at the archive root (`<table>.json`). From **`format_version` 1.1.0**, journal attachment blobs live under **`attachments/<id>.<ext>`** (extension from stored MIME; see below).
-- **`metadata.json`** is required. It is **not** listed in `member_manifest` (see [Integrity](#integrity)).
+TallyBadger supports two on-disk containers. Importers detect the container from **magic bytes** (ZIP `PK\x03\x04` / related signatures, or gzip `0x1f 0x8b`). Unknown headers are rejected with an actionable error.
+
+### Current export (`format_version` **2.0.0**)
+
+- One **`.tar.gz`** (gzip-compressed tar) per export; gzip compression level **9**.
+- HTTP export uses **`Content-Type: application/gzip`**; suggested filenames use **`.tar.gz`** (e.g. `tallybadger-complete-yyyymmdd-hhmmss.tar.gz`).
+- **Tar member order** matches **`member_manifest` array order** (FK-safe load order; see [Load order](#load-order-foreign-key-safe)). **`metadata.json` is always the last tar member** and is **not** listed in `member_manifest`.
+- Each **JSON data member** (`<table>.json` and attachment metadata JSON) is a UTF-8 JSON **envelope object** (not a bare array):
+
+```json
+{
+  "format_version": "2.0.0",
+  "table": "accounts",
+  "rows": [ ]
+}
+```
+
+- **`table`** must match the member basename (`accounts.json` → `"accounts"`). **`rows`** holds the row array that legacy ZIP members stored at the top level.
+- **Binary members** (`attachments/<id>.<ext>`) are unchanged raw bytes (no envelope).
+
+### Legacy import (`format_version` **1.6.0**–**1.8.0**)
+
+- One **`.zip`** file per archive (deflated members).
+- Table dumps are **bare JSON arrays** at the archive root (`<table>.json`). From **`format_version` 1.1.0**, journal attachment blobs live under **`attachments/<id>.<ext>`** (extension from stored MIME; see below).
+- **`metadata.json`** may appear anywhere in the ZIP; it is **not** listed in `member_manifest` (see [Integrity](#integrity)).
+- **Export** no longer produces ZIP after **2.0.0** ships; ZIP remains importable while those `format_version` values are in the support window.
 
 ## `metadata.json`
 
@@ -121,8 +144,9 @@ The application does **not** coordinate multi-step restores across requests; eac
 
 ## Integrity
 
-- For each entry in `member_manifest`, the importer recomputes **SHA-256** over the **raw bytes** of that ZIP member (UTF-8 encoded JSON for `*.json` members; binary octets for `attachments/*`) and compares to `sha256`.
-- The set of non-directory ZIP entries must be **exactly** `{ metadata.json } ∪ { path for each manifest entry }`. Extra or missing members cause a failed import. **Unknown or extra files are not ignored** — the archive must match the manifest and `export_type` exactly.
+- For each entry in `member_manifest`, the importer recomputes **SHA-256** over the **raw bytes** of that member (UTF-8 JSON for `*.json` members — including envelope objects for **2.0.0**; binary octets for `attachments/*`) and compares to `sha256`.
+- **ZIP (legacy):** the set of non-directory ZIP entries must be **exactly** `{ metadata.json } ∪ { path for each manifest entry }`.
+- **tar.gz (2.0.0):** the set of tar members must be **exactly** `{ path for each manifest entry } ∪ { metadata.json }`, with **`metadata.json` last** and tar member order **equal to** `member_manifest` order. Extra or missing members cause a failed import. **Unknown or extra files are not ignored** — the archive must match the manifest and `export_type` exactly.
 
 ## Operator notes (edge cases)
 
@@ -198,8 +222,10 @@ Integer and bigint columns export as JSON numbers; `NUMERIC` amounts export as J
 
 ## API
 
-- `POST /backup/export?export_type=complete|configuration|financial` — response body: `application/zip`. Default `export_type` is `complete`. Suggested download names: `tallybadger-complete-yyyymmdd-hhmmss.zip`, `tallybadger-config-…`, `tallybadger-financial-…` (local server time in `Content-Disposition`).
-- `POST /backup/import` — `multipart/form-data`: field **`snapshot`** (ZIP file); field **`restore_mode`**: `abort` (default), `overwrite`, or `erase-reload` (prefixes allowed; e.g. `a`, `e`, `erase-`). Rejects unrecognized values (e.g. `erase-spice-girls-music`, legacy `erase_reload`). On success the JSON body is `{"status": "imported"}` and may include **`format_deprecation_warning`** (string) when the archive’s `format_version` is supported but older than this release’s export version (#202); omitted when the archive uses the current format.
+- `POST /backup/export?export_type=complete|configuration|financial` — response body: **`application/gzip`** (tar.gz **2.0.0**). Default `export_type` is `complete`. Suggested download names: `tallybadger-complete-yyyymmdd-hhmmss.tar.gz`, `tallybadger-config-…`, `tallybadger-financial-…` (local server time in `Content-Disposition`).
+- `POST /backup/import` — `multipart/form-data`: field **`snapshot`** (**.tar.gz** or legacy **.zip**); field **`restore_mode`**: `abort` (default), `overwrite`, or `erase-reload` (prefixes allowed; e.g. `a`, `e`, `erase-`). Container is detected from file bytes, not the filename. Rejects unrecognized values (e.g. `erase-spice-girls-music`, legacy `erase_reload`). On success the JSON body is `{"status": "imported"}` and may include **`format_deprecation_warning`** (string) when the archive’s `format_version` is supported but older than this release’s export version (#202); omitted when the archive uses the current format.
+
+Streaming HTTP export/import for tar.gz is specified in [#239](https://github.com/brettski74/TallyBadger/issues/239); this release may buffer full request/response bodies while the on-disk **2.0.0** layout is in place.
 
 ## Future
 
