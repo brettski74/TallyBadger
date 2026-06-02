@@ -198,7 +198,7 @@ describe("ConfigurationSection", () => {
     const user = userEvent.setup();
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /Restore from ZIP/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /Restore from backup/i })).toBeInTheDocument();
     });
 
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
@@ -227,7 +227,7 @@ describe("ConfigurationSection", () => {
     const user = userEvent.setup();
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /Restore from ZIP/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /Restore from backup/i })).toBeInTheDocument();
     });
 
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
@@ -254,7 +254,7 @@ describe("ConfigurationSection", () => {
     const user = userEvent.setup();
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /Restore from ZIP/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /Restore from backup/i })).toBeInTheDocument();
     });
 
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;

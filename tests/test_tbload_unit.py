@@ -1,16 +1,20 @@
-"""Unit tests for standalone scripts/tbload (#206, #207)."""
+"""Unit tests for standalone scripts/tbload (#206, #207, #253)."""
 
 from __future__ import annotations
 
+import gzip
 import importlib.machinery
 import importlib.util
+import io
 import json
 import os
 import sys
+import tarfile
 import time
 import zipfile
 from io import BytesIO
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -187,6 +191,101 @@ def test_tbload_parse_curl_import_response() -> None:
     body, status = tbload.parse_curl_import_response(raw)
     assert body == '{"status":"imported"}'
     assert status == 200
+
+
+def test_tbload_collect_manifest_ordered_members_uses_manifest_order() -> None:
+    members, metadata_bytes = tbload.collect_manifest_ordered_members(
+        EXPANDED_FIXTURE,
+        input_label="seed",
+    )
+    names = [name for name, _path in members]
+    assert names == ["accounts.json", "attachments/doc.pdf"]
+    assert b"member_manifest" in metadata_bytes
+
+
+def test_tbload_collect_manifest_ordered_members_rejects_missing_file(tmp_path: Path) -> None:
+    metadata = {
+        "member_manifest": [{"path": "missing.json", "sha256": "0" * 64}],
+    }
+    (tmp_path / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+    with pytest.raises(tbload.TbloadError, match="missing.json"):
+        tbload.collect_manifest_ordered_members(tmp_path, input_label="seed")
+
+
+def test_tbload_detect_snapshot_container_magic() -> None:
+    assert tbload.detect_snapshot_container(b"\x1f\x8b\x08") == "gzip"
+    assert tbload.detect_snapshot_container(b"PK\x03\x04") == "zip"
+    with pytest.raises(tbload.TbloadError, match="unrecognized snapshot container"):
+        tbload.detect_snapshot_container(b"NOPE")
+
+
+def test_tbload_iter_pack_directory_to_targz_manifest_order_and_metadata_last() -> None:
+    chunks = list(
+        tbload.iter_pack_directory_to_targz(
+            EXPANDED_FIXTURE,
+            input_label="seed",
+            quiet=True,
+        )
+    )
+    packed = b"".join(chunks)
+    with gzip.GzipFile(fileobj=io.BytesIO(packed), mode="rb") as gz:
+        with tarfile.open(fileobj=gz, mode="r:") as archive:
+            names = archive.getnames()
+    assert names == ["accounts.json", "attachments/doc.pdf", "metadata.json"]
+
+
+def test_tbload_import_snapshot_raw_gzip_uses_query_restore_mode_and_content_type() -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(curl_args, *, stdin_data=None, chunk_iter=None):
+        captured["curl_args"] = curl_args
+        captured["chunk_iter"] = chunk_iter is not None
+        return type("Proc", (), {"returncode": 0, "stdout": b'{"status":"imported"}\n200', "stderr": b""})()
+
+    with patch.object(tbload, "_run_curl_import", side_effect=fake_run):
+        data = tbload.import_snapshot_raw_gzip(
+            "http://127.0.0.1:8080",
+            restore_mode="erase-reload",
+            input_path="/tmp/snap.tar.gz",
+        )
+    assert data["status"] == "imported"
+    args = captured["curl_args"]
+    assert "-H" in args
+    assert args[args.index("-H") + 1] == "Content-Type: application/gzip"
+    assert args[-1].endswith("backup/import?restore_mode=erase-reload")
+    assert "--data-binary" in args
+    assert "@/tmp/snap.tar.gz" in args
+
+
+def test_tbload_import_snapshot_multipart_keeps_form_fields() -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(curl_args, *, stdin_data=None, chunk_iter=None):
+        captured["curl_args"] = curl_args
+        return type("Proc", (), {"returncode": 0, "stdout": b'{"status":"imported"}\n200', "stderr": b""})()
+
+    with patch.object(tbload, "_run_curl_import", side_effect=fake_run):
+        data = tbload.import_snapshot_multipart(
+            "http://127.0.0.1:8080",
+            restore_mode="abort",
+            input_path="/tmp/snap.zip",
+        )
+    assert data["status"] == "imported"
+    args = captured["curl_args"]
+    assert "-F" in args
+    assert "restore_mode=abort" in args
+    assert "snapshot=@/tmp/snap.zip" in args
+    assert args[-1].endswith("backup/import")
+
+
+def test_tbload_iter_stdin_snapshot_chunks_yields_without_joining() -> None:
+    read_fd, write_fd = os.pipe()
+    payload = b"\x1f\x8b" + b"rest-of-gzip"
+    os.write(write_fd, payload)
+    os.close(write_fd)
+    sys.stdin = os.fdopen(read_fd, "rb", closefd=True)
+    chunks = list(tbload.iter_stdin_snapshot_chunks(timeout_seconds=1.0))
+    assert chunks == [payload]
 
 
 def test_tbload_collect_directory_zip_members_includes_json_and_attachments_only() -> None:

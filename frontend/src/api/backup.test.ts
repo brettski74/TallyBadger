@@ -3,9 +3,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   backupDownloadFilename,
   exportBackup,
+  exportBackupToDisk,
   exportCompleteBackup,
   importBackup,
   importCompleteBackup,
+  isTarGzBackupFile,
 } from "./backup";
 
 afterEach(() => {
@@ -20,15 +22,22 @@ describe("backup API", () => {
     expect(backupDownloadFilename("financial", at)).toBe("tallybadger-financial-20260503-140907.tar.gz");
   });
 
+  it("isTarGzBackupFile detects tar.gz and zip by name and type", () => {
+    expect(isTarGzBackupFile(new File(["x"], "snap.tar.gz"))).toBe(true);
+    expect(isTarGzBackupFile(new File(["x"], "snap.tgz"))).toBe(true);
+    expect(isTarGzBackupFile(new File(["x"], "snap.zip"))).toBe(false);
+    expect(isTarGzBackupFile(new File(["x"], "snap.tar.gz", { type: "application/gzip" }))).toBe(true);
+    expect(isTarGzBackupFile(new File(["x"], "snap.zip", { type: "application/zip" }))).toBe(false);
+  });
+
   it("exportBackup POSTs /backup/export with export_type and returns blob", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(new Blob(["zip-bytes"]), {
+      new Response(new Blob(["gzip-bytes"]), {
         status: 200,
         headers: { "Content-Type": "application/gzip" },
       }),
     );
     const blob = await exportBackup("configuration");
-    // jsdom/Vitest can return a Blob from another realm where `instanceof Blob` fails.
     expect(blob.size).toBeGreaterThan(0);
     expect(typeof blob.arrayBuffer).toBe("function");
     const call = (globalThis.fetch as ReturnType<typeof vi.spyOn>).mock.calls[0];
@@ -37,9 +46,50 @@ describe("backup API", () => {
     expect((call[1] as RequestInit).method).toBe("POST");
   });
 
+  it("exportBackupToDisk streams response body to File System Access API when available", async () => {
+    const pipeTo = vi.fn().mockResolvedValue(undefined);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      body: { pipeTo },
+    } as unknown as Response);
+
+    const writable = {};
+    const createWritable = vi.fn().mockResolvedValue(writable);
+    const showSaveFilePicker = vi.fn().mockResolvedValue({ createWritable });
+    Object.assign(window, { showSaveFilePicker });
+
+    await exportBackupToDisk("complete");
+
+    expect(showSaveFilePicker).toHaveBeenCalledWith(
+      expect.objectContaining({ suggestedName: expect.stringMatching(/\.tar\.gz$/) }),
+    );
+    expect(createWritable).toHaveBeenCalled();
+    expect(pipeTo).toHaveBeenCalledWith(writable);
+  });
+
+  it("exportBackupToDisk falls back to blob download when File System Access API is unavailable", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(new Blob(["fallback"]), { status: 200, headers: { "Content-Type": "application/gzip" } }),
+    );
+    const click = vi.fn();
+    const anchor = { href: "", download: "", click } as unknown as HTMLAnchorElement;
+    const createElement = vi.spyOn(document, "createElement").mockReturnValue(anchor);
+    const createObjectURL = vi.fn().mockReturnValue("blob:mock");
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal("URL", { ...URL, createObjectURL, revokeObjectURL });
+
+    await exportBackupToDisk("financial");
+
+    expect(createElement).toHaveBeenCalledWith("a");
+    expect(anchor.download).toMatch(/tallybadger-financial-.*\.tar\.gz$/);
+    expect(click).toHaveBeenCalled();
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:mock");
+  });
+
   it("exportCompleteBackup still requests complete export", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(new Blob(["z"]), { status: 200, headers: { "Content-Type": "application/zip" } }),
+      new Response(new Blob(["z"]), { status: 200, headers: { "Content-Type": "application/gzip" } }),
     );
     await exportCompleteBackup();
     const call = (globalThis.fetch as ReturnType<typeof vi.spyOn>).mock.calls[0];
@@ -61,12 +111,32 @@ describe("backup API", () => {
     expect(result.formatDeprecationWarning).toBe("Older format 1.5.0 is deprecated.");
   });
 
-  it("importBackup POSTs multipart with restore_mode", async () => {
+  it("importBackup POSTs raw gzip body with restore_mode query for tar.gz", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ status: "imported" }), { status: 200 }),
+    );
+    const file = new File(["gzip"], "snap.tar.gz", { type: "application/gzip" });
+    await importBackup(file, "overwrite");
+    const call = (globalThis.fetch as ReturnType<typeof vi.spyOn>).mock.calls[0];
+    expect(call[0]).toContain("/backup/import?");
+    expect(call[0]).toContain("restore_mode=overwrite");
+    const init = call[1] as RequestInit & { duplex?: string };
+    expect(init.method).toBe("POST");
+    expect(init.headers).toEqual({ "Content-Type": "application/gzip" });
+    if (typeof file.stream === "function") {
+      expect(init.duplex).toBe("half");
+    } else {
+      expect(init.body).toBe(file);
+    }
+  });
+
+  it("importBackup POSTs multipart with restore_mode for legacy zip", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ status: "imported" }), { status: 200 }));
     const file = new File(["x"], "snap.zip", { type: "application/zip" });
     await importBackup(file, "overwrite");
     const call = (globalThis.fetch as ReturnType<typeof vi.spyOn>).mock.calls[0];
     expect(call[0]).toContain("/backup/import");
+    expect(call[0]).not.toContain("restore_mode=");
     const init = call[1] as RequestInit;
     expect(init.method).toBe("POST");
     expect(init.body).toBeInstanceOf(FormData);

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Restore a TallyBadger snapshot ZIP via POST /backup/import (#206).
+"""Restore a TallyBadger snapshot via POST /backup/import (#206, #253).
 
 Standalone: stdlib + curl only. Copy this file anywhere Python 3.11+ and curl exist.
 Does not import the TallyBadger application package.
@@ -8,6 +8,7 @@ Does not import the TallyBadger application package.
 from __future__ import annotations
 
 import argparse
+import gzip
 import io
 import json
 import os
@@ -15,18 +16,45 @@ import select
 import shutil
 import subprocess
 import sys
+import tarfile
 import zipfile
+from collections.abc import Iterator
 from pathlib import Path
 from typing import NoReturn
-from urllib.parse import urljoin
+from urllib.parse import urlencode, urljoin
 
 CANONICAL_RESTORE_MODES: tuple[str, ...] = ("abort", "overwrite", "erase-reload")
 STDIN_READ_TIMEOUT_SECONDS = 30.0
 IMPORT_CURL_WRITE_OUT = "\n%{http_code}"
+GZIP_MAGIC = b"\x1f\x8b"
+ZIP_MAGIC = b"PK\x03\x04"
 
 
 class TbloadError(Exception):
     """User-facing tbload failure."""
+
+
+class _GzipTarChunkWriter(io.BufferedIOBase):
+    """Writable sink; gzip/tar output is drained as chunks."""
+
+    def __init__(self) -> None:
+        self._pending: list[bytes] = []
+
+    def writable(self) -> bool:
+        return True
+
+    def write(self, b: bytes) -> int:
+        if b:
+            self._pending.append(bytes(b))
+        return len(b)
+
+    def flush(self) -> None:
+        return None
+
+    def drain(self) -> list[bytes]:
+        out = self._pending
+        self._pending = []
+        return out
 
 
 def _die(message: str, *, code: int = 1) -> NoReturn:
@@ -99,8 +127,66 @@ def require_directory_metadata_file(*, input_label: str, directory: Path) -> Non
         raise TbloadError(f"expected regular file {input_label}/metadata.json")
 
 
+def detect_snapshot_container(prefix: bytes) -> str:
+    """Return ``gzip`` or ``zip`` from leading magic bytes."""
+    if prefix.startswith(GZIP_MAGIC):
+        return "gzip"
+    if prefix.startswith(ZIP_MAGIC):
+        return "zip"
+    raise TbloadError(
+        "unrecognized snapshot container magic "
+        f"(expected gzip {GZIP_MAGIC!r} or ZIP {ZIP_MAGIC!r})"
+    )
+
+
+def is_targz_path(path: str) -> bool:
+    lowered = path.lower()
+    return lowered.endswith(".tar.gz") or lowered.endswith(".tgz")
+
+
+def is_zip_path(path: str) -> bool:
+    return path.lower().endswith(".zip")
+
+
+def collect_manifest_ordered_members(
+    directory: Path,
+    *,
+    input_label: str,
+) -> tuple[list[tuple[str, Path]], bytes]:
+    """Return manifest-ordered (archive_name, source_path) pairs and metadata.json bytes."""
+    require_directory_metadata_file(input_label=input_label, directory=directory)
+    metadata_path = directory / "metadata.json"
+    metadata_bytes = metadata_path.read_bytes()
+    try:
+        metadata_obj = json.loads(metadata_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise TbloadError(f"{input_label}/metadata.json is not valid JSON") from exc
+    if not isinstance(metadata_obj, dict):
+        raise TbloadError(f"{input_label}/metadata.json must be a JSON object")
+
+    manifest = metadata_obj.get("member_manifest")
+    if not isinstance(manifest, list):
+        raise TbloadError("metadata.member_manifest must be a list")
+
+    members: list[tuple[str, Path]] = []
+    for index, entry in enumerate(manifest):
+        if not isinstance(entry, dict):
+            raise TbloadError(f"member_manifest[{index}] must be an object")
+        path = entry.get("path")
+        if not isinstance(path, str) or not path.strip():
+            raise TbloadError(f"member_manifest[{index}].path must be a non-empty string")
+        source = directory / path
+        if source.is_symlink():
+            raise TbloadError(f"refusing symlink {input_label}/{path}")
+        if not source.is_file():
+            raise TbloadError(f"expected regular file {input_label}/{path}")
+        members.append((path, source))
+
+    return members, metadata_bytes
+
+
 def collect_directory_zip_members(directory: Path) -> list[tuple[str, Path]]:
-    """Return (archive_name, source_path) pairs for expanded snapshot packing."""
+    """Return (archive_name, source_path) pairs for legacy expanded snapshot ZIP packing."""
     members: list[tuple[str, Path]] = []
 
     for entry in sorted(directory.iterdir(), key=lambda path: path.name):
@@ -121,13 +207,47 @@ def collect_directory_zip_members(directory: Path) -> list[tuple[str, Path]]:
     return members
 
 
+def iter_pack_directory_to_targz(
+    directory: Path,
+    *,
+    input_label: str,
+    quiet: bool,
+) -> Iterator[bytes]:
+    """Pack expanded snapshot directory into tar.gz chunks (manifest order, metadata last)."""
+    members, metadata_bytes = collect_manifest_ordered_members(
+        directory,
+        input_label=input_label,
+    )
+    _info(f"{input_label} is a directory (packing tar.gz)", quiet=quiet)
+
+    archive_mtime = int((directory / "metadata.json").stat().st_mtime)
+    writer = _GzipTarChunkWriter()
+    with gzip.GzipFile(fileobj=writer, mode="wb", compresslevel=9) as gz:
+        with tarfile.open(fileobj=gz, mode="w") as tar:
+            for archive_name, source_path in members:
+                _info(f"{input_label}/{archive_name}", quiet=quiet)
+                data = source_path.read_bytes()
+                info = tarfile.TarInfo(name=archive_name)
+                info.size = len(data)
+                info.mtime = archive_mtime
+                tar.addfile(info, io.BytesIO(data))
+            meta_info = tarfile.TarInfo(name="metadata.json")
+            meta_info.size = len(metadata_bytes)
+            meta_info.mtime = archive_mtime
+            tar.addfile(meta_info, io.BytesIO(metadata_bytes))
+        for part in writer.drain():
+            yield part
+    for part in writer.drain():
+        yield part
+
+
 def pack_directory_to_zip(
     directory: Path,
     *,
     input_label: str,
     quiet: bool,
 ) -> bytes:
-    """Pack expanded snapshot directory contents into an in-memory ZIP."""
+    """Pack expanded snapshot directory contents into an in-memory ZIP (legacy)."""
     require_directory_metadata_file(input_label=input_label, directory=directory)
     _info(f"{input_label} is a directory", quiet=quiet)
 
@@ -140,29 +260,38 @@ def pack_directory_to_zip(
     return buffer.getvalue()
 
 
-def read_stdin_snapshot(*, timeout_seconds: float = STDIN_READ_TIMEOUT_SECONDS) -> bytes:
-    """Read snapshot ZIP bytes from stdin, failing if no data within timeout."""
+def _stdin_fd_or_error() -> int:
     try:
-        fd = sys.stdin.fileno()
+        return sys.stdin.fileno()
     except (AttributeError, ValueError, OSError) as exc:
         raise TbloadError(
             "standard input is not available for binary read; use -i/--input PATH"
         ) from exc
 
+
+def iter_stdin_snapshot_chunks(
+    *,
+    timeout_seconds: float = STDIN_READ_TIMEOUT_SECONDS,
+) -> Iterator[bytes]:
+    """Yield snapshot bytes from stdin without concatenating into one buffer."""
+    fd = _stdin_fd_or_error()
     ready, _, _ = select.select([fd], [], [], timeout_seconds)
     if not ready:
         raise TbloadError(
             f"no input received from standard input within {int(timeout_seconds)} seconds; "
-            "pipe a ZIP file or use -i/--input PATH"
+            "pipe a tar.gz or ZIP file, or use -i/--input PATH"
         )
 
-    chunks: list[bytes] = []
     while True:
         chunk = os.read(fd, 1024 * 1024)
         if not chunk:
             break
-        chunks.append(chunk)
+        yield chunk
 
+
+def read_stdin_snapshot(*, timeout_seconds: float = STDIN_READ_TIMEOUT_SECONDS) -> bytes:
+    """Read snapshot bytes from stdin (legacy helper; prefer streaming import)."""
+    chunks = list(iter_stdin_snapshot_chunks(timeout_seconds=timeout_seconds))
     data = b"".join(chunks)
     if not data:
         raise TbloadError("empty snapshot read from standard input")
@@ -248,36 +377,73 @@ def parse_curl_import_response(raw_stdout: bytes) -> tuple[str, int]:
     return body_bytes.decode("utf-8", errors="replace"), status_code
 
 
-def import_snapshot(
+def _run_curl_import(
+    curl_args: list[str],
+    *,
+    stdin_data: bytes | None = None,
+    chunk_iter: Iterator[bytes] | None = None,
+) -> subprocess.CompletedProcess[bytes]:
+    if chunk_iter is not None:
+        proc = subprocess.Popen(  # noqa: S603
+            ["curl", *curl_args],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        assert proc.stdin is not None
+        try:
+            for chunk in chunk_iter:
+                proc.stdin.write(chunk)
+        finally:
+            proc.stdin.close()
+        stdout, stderr = proc.communicate()
+        return subprocess.CompletedProcess(
+            args=["curl", *curl_args],
+            returncode=proc.returncode if proc.returncode is not None else 0,
+            stdout=stdout,
+            stderr=stderr,
+        )
+
+    return subprocess.run(  # noqa: S603
+        ["curl", *curl_args],
+        input=stdin_data,
+        capture_output=True,
+        check=False,
+    )
+
+
+def import_snapshot_raw_gzip(
     base_url: str,
     *,
     restore_mode: str,
-    input_path: str | None,
-    snapshot_bytes: bytes | None = None,
+    input_path: str | None = None,
+    chunk_iter: Iterator[bytes] | None = None,
 ) -> dict[str, object]:
-    url = urljoin(base_url + "/", "backup/import")
+    """POST raw gzip body to /backup/import?restore_mode=… (streaming when chunk_iter set)."""
+    query = urlencode({"restore_mode": restore_mode})
+    url = urljoin(base_url + "/", f"backup/import?{query}")
     curl_args = [
         "-sS",
         "-w",
         IMPORT_CURL_WRITE_OUT,
         "-X",
         "POST",
-        "-F",
-        f"restore_mode={restore_mode}",
+        "-H",
+        "Content-Type: application/gzip",
     ]
-    if input_path is None:
-        curl_args.extend(["-F", "snapshot=@-;filename=snapshot.zip"])
-        stdin = snapshot_bytes
+    if input_path is not None:
+        curl_args.extend(["--data-binary", f"@{input_path}"])
+        stdin_data: bytes | None = None
+        stream_iter: Iterator[bytes] | None = None
+    elif chunk_iter is not None:
+        curl_args.extend(["--data-binary", "@-"])
+        stdin_data = None
+        stream_iter = chunk_iter
     else:
-        curl_args.extend(["-F", f"snapshot=@{input_path}"])
-        stdin = None
+        raise TbloadError("import_snapshot_raw_gzip requires input_path or chunk_iter")
 
-    proc = subprocess.run(  # noqa: S603
-        ["curl", *curl_args, url],
-        input=stdin,
-        capture_output=True,
-        check=False,
-    )
+    curl_args.append(url)
+    proc = _run_curl_import(curl_args, stdin_data=stdin_data, chunk_iter=stream_iter)
     if proc.returncode != 0:
         err = proc.stderr.decode("utf-8", errors="replace").strip()
         _die(f"Import request failed before a response was received: {err or proc.returncode}")
@@ -300,6 +466,84 @@ def import_snapshot(
     return data
 
 
+def import_snapshot_multipart(
+    base_url: str,
+    *,
+    restore_mode: str,
+    input_path: str | None = None,
+    chunk_iter: Iterator[bytes] | None = None,
+) -> dict[str, object]:
+    """POST legacy multipart/form-data import (ZIP)."""
+    url = urljoin(base_url + "/", "backup/import")
+    curl_args = [
+        "-sS",
+        "-w",
+        IMPORT_CURL_WRITE_OUT,
+        "-X",
+        "POST",
+        "-F",
+        f"restore_mode={restore_mode}",
+    ]
+    if input_path is not None:
+        curl_args.extend(["-F", f"snapshot=@{input_path}"])
+        stdin_data: bytes | None = None
+        stream_iter: Iterator[bytes] | None = None
+    elif chunk_iter is not None:
+        curl_args.extend(["-F", "snapshot=@-;filename=snapshot.zip"])
+        stdin_data = None
+        stream_iter = chunk_iter
+    else:
+        raise TbloadError("import_snapshot_multipart requires input_path or chunk_iter")
+
+    curl_args.append(url)
+    proc = _run_curl_import(curl_args, stdin_data=stdin_data, chunk_iter=stream_iter)
+    if proc.returncode != 0:
+        err = proc.stderr.decode("utf-8", errors="replace").strip()
+        _die(f"Import request failed before a response was received: {err or proc.returncode}")
+
+    try:
+        body_text, status_code = parse_curl_import_response(proc.stdout)
+    except TbloadError as exc:
+        _die(str(exc))
+
+    if status_code < 200 or status_code >= 300:
+        _die(format_import_http_error(status_code, body_text, restore_mode=restore_mode))
+
+    body_text = body_text.strip()
+    try:
+        data = json.loads(body_text) if body_text else {}
+    except json.JSONDecodeError as exc:
+        raise TbloadError(f"API returned non-JSON body: {body_text!r}") from exc
+    if not isinstance(data, dict):
+        raise TbloadError(f"expected JSON object from API, got {type(data).__name__}")
+    return data
+
+
+def import_snapshot(
+    base_url: str,
+    *,
+    restore_mode: str,
+    container: str,
+    input_path: str | None = None,
+    chunk_iter: Iterator[bytes] | None = None,
+) -> dict[str, object]:
+    if container == "gzip":
+        return import_snapshot_raw_gzip(
+            base_url,
+            restore_mode=restore_mode,
+            input_path=input_path,
+            chunk_iter=chunk_iter,
+        )
+    if container == "zip":
+        return import_snapshot_multipart(
+            base_url,
+            restore_mode=restore_mode,
+            input_path=input_path,
+            chunk_iter=chunk_iter,
+        )
+    raise TbloadError(f"unsupported snapshot container {container!r}")
+
+
 def report_success(data: dict[str, object]) -> None:
     print("Restore finished successfully.")
     for key in ("format_deprecation_warning",):
@@ -313,7 +557,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         prog="tbload",
         description=(
             "Restore a TallyBadger backup via POST /backup/import (curl transport). "
-            "Input may be a ZIP file, an expanded snapshot directory, or a ZIP on stdin."
+            "Input may be a tar.gz or legacy ZIP file, an expanded snapshot directory "
+            "(packed as tar.gz in metadata.member_manifest order), or a snapshot on stdin "
+            "(streamed to curl without loading the full archive into memory)."
         ),
         add_help=False,
     )
@@ -327,8 +573,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--input",
         metavar="PATH",
         help=(
-            "Snapshot ZIP file or expanded snapshot directory containing metadata.json "
-            "(default: read ZIP from stdin; stdin accepts ZIP only)"
+            "Snapshot tar.gz / legacy ZIP file, or expanded snapshot directory containing "
+            "metadata.json (default: read tar.gz or ZIP from stdin; streamed, not buffered)"
         ),
     )
     parser.add_argument(
@@ -393,26 +639,52 @@ def main(argv: list[str] | None = None) -> None:
     input_label = args.input if args.input else "standard input"
     _info(f"Using {mode} restore mode.", quiet=args.quiet)
 
-    snapshot_bytes: bytes | None = None
-    input_path: str | None = args.input
+    input_path: str | None = None
+    chunk_iter: Iterator[bytes] | None = None
+    container: str
+
     if args.input is None:
         _info(f"Reading input from {input_label}.", quiet=args.quiet)
         try:
-            snapshot_bytes = read_stdin_snapshot(timeout_seconds=timeout_seconds)
+            chunk_source = iter_stdin_snapshot_chunks(timeout_seconds=timeout_seconds)
+            first_chunk = next(chunk_source, b"")
+            if not first_chunk:
+                raise TbloadError("empty snapshot read from standard input")
+
+            container = detect_snapshot_container(first_chunk)
+
+            def chained_stdin() -> Iterator[bytes]:
+                yield first_chunk
+                yield from chunk_source
+
+            chunk_iter = chained_stdin()
         except TbloadError as exc:
             _die(str(exc))
     elif os.path.isdir(args.input):
+        directory = Path(args.input)
         try:
-            snapshot_bytes = pack_directory_to_zip(
-                Path(args.input),
+            chunk_iter = iter_pack_directory_to_targz(
+                directory,
                 input_label=args.input,
                 quiet=args.quiet,
             )
         except TbloadError as exc:
             _die(str(exc))
-        input_path = None
+        container = "gzip"
     else:
         _info(f"Reading input from {input_label}.", quiet=args.quiet)
+        input_path = args.input
+        if is_targz_path(args.input):
+            container = "gzip"
+        elif is_zip_path(args.input):
+            container = "zip"
+        else:
+            with open(args.input, "rb") as handle:
+                prefix = handle.read(4)
+            try:
+                container = detect_snapshot_container(prefix)
+            except TbloadError as exc:
+                _die(str(exc))
 
     _info(f"Connecting to {base_url}.", quiet=args.quiet)
     preflight_health(base_url)
@@ -420,8 +692,9 @@ def main(argv: list[str] | None = None) -> None:
         data = import_snapshot(
             base_url,
             restore_mode=mode,
+            container=container,
             input_path=input_path,
-            snapshot_bytes=snapshot_bytes,
+            chunk_iter=chunk_iter,
         )
     except TbloadError as exc:
         _die(str(exc))

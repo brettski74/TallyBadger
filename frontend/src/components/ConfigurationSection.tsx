@@ -4,8 +4,7 @@ import type { Account } from "../api/accounts";
 import {
   type BackupExportType,
   type RestoreMode,
-  backupDownloadFilename,
-  exportBackup,
+  exportBackupToDisk,
   importBackup,
 } from "../api/backup";
 import { getLedgerSettings, LedgerSettingsValidationError, updateLedgerSettings } from "../api/settlements";
@@ -291,7 +290,8 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
 
       <h3 className="config-subheading">Backup &amp; restore</h3>
       <p className="muted">
-        Exports a versioned ZIP of JSON table dumps. Format:{" "}
+        Exports a versioned <strong>tar.gz</strong> of JSON table dumps (legacy <strong>.zip</strong> still
+        accepted on import). Format:{" "}
         <a href="https://github.com/brettski74/TallyBadger/blob/main/docs/backup-snapshot-format.md">
           docs/backup-snapshot-format.md
         </a>
@@ -299,8 +299,9 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
         import.
       </p>
       <p className="muted">
-        Large databases can produce a big ZIP—the request may take a while with no progress bar; wait until the
-        download finishes or the server returns an error.
+        Large databases can produce a big archive—the request may take a while with no progress bar; wait until
+        the download finishes or the server returns an error. Supported browsers stream the export directly to
+        disk; others fall back to a conventional download.
       </p>
       <label className="backup-export-scope">
         Export scope
@@ -315,12 +316,12 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
         </select>
       </label>
 
-      <h3 className="config-subheading">Restore from ZIP</h3>
+      <h3 className="config-subheading">Restore from backup</h3>
       <p className="muted">
         <strong>Duplicate / conflict policy</strong> (this request only): how to merge when the database
         already has rows that collide with the snapshot (same primary keys or unique keys).{" "}
-        <strong>Financial-only</strong> ZIPs need matching configuration already in the database, unless you
-        use erase+reload after importing a <strong>complete</strong> or <strong>configuration</strong>{" "}
+        <strong>Financial-only</strong> archives need matching configuration already in the database, unless
+        you use erase+reload after importing a <strong>complete</strong> or <strong>configuration</strong>{" "}
         snapshot first.
       </p>
       <label className="backup-import-policy">
@@ -346,14 +347,8 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
               setBackupFormatWarning(null);
               setBackupBusy(true);
               try {
-                const blob = await exportBackup(backupExportType);
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement("a");
-                a.href = url;
-                a.download = backupDownloadFilename(backupExportType);
-                a.click();
-                URL.revokeObjectURL(url);
-                setBackupMessage("Backup file ready — your browser should save the download.");
+                await exportBackupToDisk(backupExportType);
+                setBackupMessage("Backup file saved.");
               } catch (err) {
                 setBackupError(err instanceof Error ? err.message : "Export failed");
               } finally {
@@ -399,7 +394,7 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
             restoreInputRef.current?.click();
           }}
         >
-          Restore from ZIP…
+          Restore from backup…
         </button>
       </div>
       {backupError && (
