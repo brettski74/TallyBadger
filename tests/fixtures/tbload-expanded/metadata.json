@@ -1,1 +1,11 @@
-{"export_type": "complete", "format_version": "1.0.0", "schema_version": "001", "exported_at": "2026-01-01T00:00:00Z", "currency_assumption": "single_currency_numeric_18_2", "member_manifest": []}
+{
+  "export_type": "complete",
+  "format_version": "2.0.0",
+  "schema_version": "001",
+  "exported_at": "2026-01-01T00:00:00Z",
+  "currency_assumption": "single_currency_numeric_18_2",
+  "member_manifest": [
+    {"path": "accounts.json", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"},
+    {"path": "attachments/doc.pdf", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"}
+  ]
+}
