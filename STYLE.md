@@ -82,9 +82,10 @@ Repeatable **phase** procedures live under repo-root **[`workflows/`](workflows/
 
 When the user’s message includes a **core instruction** of the form **`!wk-<word> #N`** (same line may have other text before or after):
 
-1. **`N`** — Numeric **GitHub issue** number for **this** repository. Resolve **owner** and **repo** from the workspace (e.g. `git remote` URL) or from explicit user context, then load issue **#N** with GitHub tools (e.g. **`user-github`** MCP **`issue_read`**) **before** planning. Use the issue for acceptance criteria, links, and (when appropriate) comments.
-2. **`<word>`** — Must match the stem of **`workflows/<word>.md`** (path is **case-sensitive** on disk; convention is lowercase stems). Read that file **in full** from the workspace and follow it for this ticket. If the file is missing, report that and stop.
-3. **Where the syntax lives:** Only **this file** defines `!wk-<word> #N`. Workflow files describe the phase only; they do **not** define chat triggers, so a workflow is discoverable when this shortcut (or an explicit “read `workflows/…`”) pulls it into context.
+1. You **MUST** read the appropriate workflow file for instructions before proceeding with anything!
+2. **`N`** — Numeric **GitHub issue** number for **this** repository. Resolve **owner** and **repo** from the workspace (e.g. `git remote` URL) or from explicit user context, then load issue **#N** with GitHub tools (e.g. **`user-github`** MCP **`issue_read`**) **before** planning. Use the issue for acceptance criteria, links, and (when appropriate) comments.
+3. **`<word>`** — Must match the stem of **`workflows/<word>.md`** (path is **case-sensitive** on disk; convention is lowercase stems). Read that file **in full** from the workspace and follow it for this ticket. If the file is missing, report that and stop.
+4. **Where the syntax lives:** Only **this file** defines `!wk-<word> #N`. Workflow files describe the phase only; they do **not** define chat triggers, so a workflow is discoverable when this shortcut (or an explicit “read `workflows/…`”) pulls it into context.
 
 **Not implied by `!wk-<word> #N` alone:** Merging pull requests, closing issues, or releasing—unless the user **also** asks explicitly or the workflow file clearly assigns that step (e.g. implement may say “open a PR”; **ship** still does **not** put merge on the assistant unless the user separately requests it).
 
