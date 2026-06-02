@@ -255,3 +255,73 @@ def test_mkmeta_resolve_retain_count() -> None:
     assert mkmeta.resolve_retain_count(mkmeta.parse_args(["-r"])) == 3
     assert mkmeta.resolve_retain_count(mkmeta.parse_args(["--retain", "5"])) == 5
     assert mkmeta.resolve_retain_count(mkmeta.parse_args([])) is None
+
+
+def test_mkmeta_should_write_output_change_only() -> None:
+    same = Path("/tmp/meta.json")
+    other = Path("/tmp/out.json")
+    assert mkmeta.should_write_output(
+        input_path=same,
+        output_path=same,
+        mismatches=[],
+        change_only=True,
+    ) is False
+    assert mkmeta.should_write_output(
+        input_path=same,
+        output_path=same,
+        mismatches=["a.json"],
+        change_only=True,
+    ) is True
+    assert mkmeta.should_write_output(
+        input_path=same,
+        output_path=other,
+        mismatches=[],
+        change_only=True,
+    ) is True
+
+
+def test_mkmeta_main_change_writes_when_output_differs_and_digests_current(
+    tmp_path: Path,
+) -> None:
+    work = tmp_path / "snap"
+    work.mkdir()
+    for rel in ("accounts.json", "attachments/blob.bin", "metadata.json"):
+        src = FIXTURE / rel
+        dest = work / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(src.read_bytes())
+
+    meta_path = work / "metadata.json"
+    mkmeta.main(["-i", str(meta_path), "-o", str(meta_path), "--quiet"])
+
+    out_path = work / "metadata-copy.json"
+    mkmeta.main(["-i", str(meta_path), "-o", str(out_path), "-c", "--quiet"])
+    assert out_path.is_file()
+    assert json.loads(out_path.read_text(encoding="utf-8")) == json.loads(
+        meta_path.read_text(encoding="utf-8")
+    )
+
+
+def test_mkmeta_main_change_skips_when_same_file_and_digests_current(tmp_path: Path) -> None:
+    work = tmp_path / "snap"
+    work.mkdir()
+    for rel in ("accounts.json", "attachments/blob.bin", "metadata.json"):
+        src = FIXTURE / rel
+        dest = work / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(src.read_bytes())
+
+    meta_path = work / "metadata.json"
+    mkmeta.main(["-i", str(meta_path), "-o", str(meta_path), "--quiet"])
+    before_mtime = meta_path.stat().st_mtime
+    backups_before = list(work.glob("metadata.json.*"))
+
+    mkmeta.main(["-i", str(meta_path), "-o", str(meta_path), "-c", "--quiet"])
+
+    assert meta_path.stat().st_mtime == before_mtime
+    assert list(work.glob("metadata.json.*")) == backups_before
+
+
+def test_mkmeta_parse_args_c_shorthand() -> None:
+    args = mkmeta.parse_args(["-c"])
+    assert args.change is True

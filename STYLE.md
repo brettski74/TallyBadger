@@ -38,10 +38,10 @@ Specific flows are free to impose stricter behaviour where it makes product sens
 
 ## Dev database bootstrap
 
-Local UAT data comes from **snapshot restore**, not a checked-in SQL seed:
+Local data comes from **snapshot restore**, not a checked-in SQL seed. Two layers:
 
-1. User can keep a complete snapshot under **`examples/tallybadger-complete-*.zip`** (gitignored; refresh from export when the model changes). No need for automatically updating these as compatibility is managed via the import format support window.
-2. With the API running, **`make dbclean`** restores the newest matching ZIP via **`tbload --mode erase-reload`** (see README).
+1. **Foundation configuration (in git):** expanded **configuration** snapshot under **`data/`** (`*.json`, `metadata.json`, generated **`seed_data.deps.mk`**). Canonical archive **`data/seed_data.tar.gz`** is gitignored; regenerate expanded files with **`make -C data regen`** (see **`data/README.md`**). Use **`make -C data upgrade`** when export shape or `format_version` changes.
+2. **Full UAT (gitignored):** keep a **complete** snapshot under **`examples/tallybadger-complete-*.tar.gz`** (see **`examples/README.md`**). With the API running, **`make dbclean`** restores the newest match via **`tbload --mode erase-reload`**.
 3. Schema changes still ship as **`sql/NNN_*.sql`** migrations; apply with **`make dbempty`** / **`tallybadger-migrate`** when you need a fresh empty schema before restore.
 
 ## Backup, snapshot, and import

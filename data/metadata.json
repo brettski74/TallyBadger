@@ -1,0 +1,42 @@
+{
+  "app_version": "0.1.0",
+  "currency_assumption": "single_currency_numeric_18_2",
+  "export_type": "configuration",
+  "exported_at": "2026-05-01T00:00:00.000000-04:00",
+  "format_version": "2.0.0",
+  "member_manifest": [
+    {
+      "path": "accounts.json",
+      "sha256": "2538b512cf13ff4bc31a86b258cb1c2103748b66bc1ea938ced0f1fe7edc67ba"
+    },
+    {
+      "path": "parties.json",
+      "sha256": "dac74da09054b437a3e0458ad4559e12c712021fb92c4f962c73861e6cc9e39b"
+    },
+    {
+      "path": "party_match_patterns.json",
+      "sha256": "46f51dddbc8c6495a5a970103b065233d69a036bc1642fe05d6e479bc3329ca8"
+    },
+    {
+      "path": "ledger_settings.json",
+      "sha256": "a3955a451fb570d65e3c3179eed7b84f7144b2fedd6693adfdbb6719340261b6"
+    },
+    {
+      "path": "cel_rule_sets.json",
+      "sha256": "03b882aecedf813f7e8adc1e0158dce79fc263800a8538daf409b9bf8437a5aa"
+    },
+    {
+      "path": "import_templates.json",
+      "sha256": "caf167e4b1ac43b379ddb3939fcb16a48edc642ad8d74a256d96521cac0794d0"
+    },
+    {
+      "path": "journal_entry_filter_presets.json",
+      "sha256": "b161983a9e885b0bc44430c3f69b09c27892653b82b3b3798d7d4a1390062a09"
+    },
+    {
+      "path": "cheque_register_filter_presets.json",
+      "sha256": "cb0714ee04010ba6b97f8aba9778210e3db173c7799739c275e4cc1cf2759067"
+    }
+  ],
+  "schema_version": "027_journal_entry_balance_deferrable"
+}
