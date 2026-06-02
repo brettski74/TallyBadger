@@ -27,7 +27,7 @@ help:
 	@echo "  make db-wait   Wait for Postgres readiness"
 	@echo "  make db-migrate Apply SQL migrations to configured DB"
 	@echo "  make dbempty   Recreate local DB volume and apply schema migrations only (dev only)"
-	@echo "  make dbclean   Restore newest examples/tallybadger-complete-*.zip via tbload (API must be running)"
+	@echo "  make dbclean   Restore newest examples/tallybadger-complete-*.tar.gz via tbload (API must be running)"
 
 venv:
 	python -m venv .venv
@@ -119,12 +119,12 @@ dbempty:
 	PYTHONPATH=src $(PYTHON) -m tallybadger.db_migrations
 
 dbclean:
-	@zip=$$(ls -t examples/tallybadger-complete-*.zip 2>/dev/null | head -n 1); \
-	if [ -z "$$zip" ]; then \
-		echo "No examples/tallybadger-complete-*.zip found. Export a complete snapshot into examples/ first."; \
+	@bkp=$$(ls -t examples/tallybadger-complete-*.tar.gz 2>/dev/null | head -n 1); \
+	if [ -z "$$bkp" ]; then \
+		echo "No examples/tallybadger-complete-*.tar.gz found. Export a complete snapshot into examples/ first."; \
 		exit 1; \
 	fi; \
-	scripts/tbload --mode erase-reload -i "$$zip"
+	scripts/tbload --mode erase-reload -i "$$bkp"
 
 backup-restore-drill-help:
 	@echo "Application snapshot restore drill: see README \"Application snapshot (ZIP)\"."

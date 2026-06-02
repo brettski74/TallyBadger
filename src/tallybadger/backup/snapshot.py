@@ -1,4 +1,4 @@
-"""Snapshot export/import (ZIP legacy, tar.gz ``2.0.0``). Issues #16, #67, #68, #251."""
+"""Snapshot export/import (ZIP legacy, tar.gz ``2.0.0``). Issues #16, #67, #68, #251, #252."""
 
 from __future__ import annotations
 
@@ -10,7 +10,8 @@ import tarfile
 import zipfile
 from datetime import date, datetime, timezone
 from decimal import Decimal
-from typing import Any, Literal
+from collections.abc import Iterator
+from typing import Any, BinaryIO, Literal
 
 SnapshotContainer = Literal["zip", "gzip"]
 
@@ -470,8 +471,34 @@ def _bytea_to_bytes(value: Any) -> bytes:
     raise TypeError(f"expected BYTEA as bytes or memoryview, got {type(value).__name__}")
 
 
-def export_snapshot(conn: Connection, export_type: ExportType) -> bytes:
-    """Build a gzip-compressed tar snapshot (``format_version`` 2.0.0)."""
+class _GzipTarChunkWriter(io.BufferedIOBase):
+    """Writable sink; gzip/tar output is drained as chunks by :func:`_iter_pack_targz`."""
+
+    def __init__(self) -> None:
+        self._pending: list[bytes] = []
+
+    def writable(self) -> bool:
+        return True
+
+    def write(self, b: bytes) -> int:
+        if b:
+            self._pending.append(bytes(b))
+        return len(b)
+
+    def flush(self) -> None:
+        return None
+
+    def drain(self) -> list[bytes]:
+        out = self._pending
+        self._pending = []
+        return out
+
+
+def _build_export_pack_inputs(
+    conn: Connection,
+    export_type: ExportType,
+) -> tuple[tuple[str, ...], dict[str, bytes], bytes, int]:
+    """Return ``member_paths``, member payloads, ``metadata.json`` bytes, and tar mtime."""
     fmt = export_format_version()
     tables = tables_for_export_type(export_type)
     schema_ver = current_schema_version(conn)
@@ -518,21 +545,20 @@ def export_snapshot(conn: Connection, export_type: ExportType) -> bytes:
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
+    return member_paths, payloads, metadata_bytes, archive_mtime
 
-    return _pack_targz(member_paths, payloads, metadata_bytes, mtime=archive_mtime)
 
-
-def _pack_targz(
+def _iter_pack_targz(
     member_paths: tuple[str, ...],
     payloads: dict[str, bytes],
     metadata_bytes: bytes,
     *,
     mtime: int | None = None,
-) -> bytes:
+) -> Iterator[bytes]:
     """Write data members in ``member_paths`` order, then ``metadata.json`` (gzip level 9)."""
     member_mtime = int(datetime.now().astimezone().timestamp()) if mtime is None else mtime
-    buf = io.BytesIO()
-    with gzip.GzipFile(fileobj=buf, mode="wb", compresslevel=9) as gz:
+    writer = _GzipTarChunkWriter()
+    with gzip.GzipFile(fileobj=writer, mode="wb", compresslevel=9) as gz:
         with tarfile.open(fileobj=gz, mode="w") as tar:
             for path in member_paths:
                 data = payloads[path]
@@ -544,7 +570,39 @@ def _pack_targz(
             meta_info.size = len(metadata_bytes)
             meta_info.mtime = member_mtime
             tar.addfile(meta_info, io.BytesIO(metadata_bytes))
-    return buf.getvalue()
+        for part in writer.drain():
+            yield part
+    for part in writer.drain():
+        yield part
+
+
+def _pack_targz(
+    member_paths: tuple[str, ...],
+    payloads: dict[str, bytes],
+    metadata_bytes: bytes,
+    *,
+    mtime: int | None = None,
+) -> bytes:
+    return b"".join(_iter_pack_targz(member_paths, payloads, metadata_bytes, mtime=mtime))
+
+
+def iter_export_snapshot(conn: Connection, export_type: ExportType) -> Iterator[bytes]:
+    """Yield gzip-compressed tar snapshot chunks (``format_version`` 2.0.0)."""
+    member_paths, payloads, metadata_bytes, archive_mtime = _build_export_pack_inputs(
+        conn,
+        export_type,
+    )
+    yield from _iter_pack_targz(
+        member_paths,
+        payloads,
+        metadata_bytes,
+        mtime=archive_mtime,
+    )
+
+
+def export_snapshot(conn: Connection, export_type: ExportType) -> bytes:
+    """Build a gzip-compressed tar snapshot (``format_version`` 2.0.0)."""
+    return b"".join(iter_export_snapshot(conn, export_type))
 
 
 def export_complete_snapshot(conn: Connection) -> bytes:
@@ -614,24 +672,28 @@ def _load_zip_members(zip_bytes: bytes) -> tuple[dict[str, Any], dict[str, bytes
     return metadata, files
 
 
-def _load_targz_members(targz_bytes: bytes) -> tuple[dict[str, Any], dict[str, bytes]]:
-    try:
-        with gzip.GzipFile(fileobj=io.BytesIO(targz_bytes), mode="rb") as gz:
-            with tarfile.open(fileobj=gz, mode="r:") as tar:
-                members_ordered: list[str] = []
-                files: dict[str, bytes] = {}
-                for member in tar:
-                    if not member.isfile():
-                        continue
-                    extracted = tar.extractfile(member)
-                    if extracted is None:
-                        raise IncompleteSnapshotError(f"could not read tar member {member.name!r}")
-                    body = extracted.read()
-                    members_ordered.append(member.name)
-                    files[member.name] = body
-    except (gzip.BadGzipFile, OSError, tarfile.TarError) as exc:
-        raise IncompleteSnapshotError("not a valid gzip-compressed tar archive") from exc
+def _read_targz_member_bodies(readable: BinaryIO) -> tuple[list[str], dict[str, bytes]]:
+    """Read all file members from a gzip-wrapped tar stream."""
+    members_ordered: list[str] = []
+    files: dict[str, bytes] = {}
+    with gzip.GzipFile(fileobj=readable, mode="rb") as gz:
+        with tarfile.open(fileobj=gz, mode="r:") as tar:
+            for member in tar:
+                if not member.isfile():
+                    continue
+                extracted = tar.extractfile(member)
+                if extracted is None:
+                    raise IncompleteSnapshotError(f"could not read tar member {member.name!r}")
+                body = extracted.read()
+                members_ordered.append(member.name)
+                files[member.name] = body
+    return members_ordered, files
 
+
+def _validate_targz_member_bodies(
+    members_ordered: list[str],
+    files: dict[str, bytes],
+) -> tuple[dict[str, Any], dict[str, bytes]]:
     if not members_ordered:
         raise IncompleteSnapshotError("tar.gz snapshot contains no members")
     if members_ordered[-1] != "metadata.json":
@@ -687,6 +749,23 @@ def _load_targz_members(targz_bytes: bytes) -> tuple[dict[str, Any], dict[str, b
         )
 
     return metadata, {n: files[n] for n in names if n != "metadata.json"}
+
+
+def _load_targz_members(targz_bytes: bytes) -> tuple[dict[str, Any], dict[str, bytes]]:
+    try:
+        members_ordered, files = _read_targz_member_bodies(io.BytesIO(targz_bytes))
+    except (gzip.BadGzipFile, OSError, tarfile.TarError) as exc:
+        raise IncompleteSnapshotError("not a valid gzip-compressed tar archive") from exc
+    return _validate_targz_member_bodies(members_ordered, files)
+
+
+def load_targz_members_from_stream(readable: BinaryIO) -> tuple[dict[str, Any], dict[str, bytes]]:
+    """Load and validate a tar.gz snapshot from a readable byte stream (#252)."""
+    try:
+        members_ordered, files = _read_targz_member_bodies(readable)
+    except (gzip.BadGzipFile, OSError, tarfile.TarError) as exc:
+        raise IncompleteSnapshotError("not a valid gzip-compressed tar archive") from exc
+    return _validate_targz_member_bodies(members_ordered, files)
 
 
 def _load_archive_members(archive_bytes: bytes) -> tuple[dict[str, Any], dict[str, bytes]]:
@@ -1430,27 +1509,15 @@ def _assert_manifest_matches_export_type(
         )
 
 
-def import_snapshot(
+def _apply_snapshot_import(
     conn: Connection,
-    archive_bytes: bytes,
+    metadata: dict[str, Any],
+    files: dict[str, bytes],
     *,
-    restore_mode: str = "abort",
+    restore_mode: str,
 ) -> str | None:
-    """Import a snapshot; tables loaded match ``export_type`` in metadata.
-
-    ``restore_mode`` applies only to this import and is never read from the archive:
-    ``abort`` — insert in one transaction; first PK/unique/FK/business-rule failure rolls back.
-    ``overwrite`` — before insert, delete existing rows with the same primary keys as the
-    snapshot (in FK-safe reverse order within the snapshot's table set).
-    ``erase-reload`` — truncate all snapshot data tables, then load (requires a
-    self-contained archive: not ``financial``-only).
-
-    Returns an optional format-deprecation warning for supported archives older than the
-    current export version (#202); ``None`` when the archive uses the current format.
-    """
+    """Insert snapshot rows after archive members are loaded and validated."""
     mode = _normalize_restore_mode(restore_mode)
-
-    metadata, files = _load_archive_members(archive_bytes)
 
     export_type_raw: Any = metadata.get("export_type")
     if not isinstance(export_type_raw, str):
@@ -1551,6 +1618,39 @@ def import_snapshot(
         _resync_serials(conn)
 
     return format_deprecation_warning(fmt)
+
+
+def import_snapshot(
+    conn: Connection,
+    archive_bytes: bytes,
+    *,
+    restore_mode: str = "abort",
+) -> str | None:
+    """Import a snapshot; tables loaded match ``export_type`` in metadata.
+
+    ``restore_mode`` applies only to this import and is never read from the archive:
+    ``abort`` — insert in one transaction; first PK/unique/FK/business-rule failure rolls back.
+    ``overwrite`` — before insert, delete existing rows with the same primary keys as the
+    snapshot (in FK-safe reverse order within the snapshot's table set).
+    ``erase-reload`` — truncate all snapshot data tables, then load (requires a
+    self-contained archive: not ``financial``-only).
+
+    Returns an optional format-deprecation warning for supported archives older than the
+    current export version (#202); ``None`` when the archive uses the current format.
+    """
+    metadata, files = _load_archive_members(archive_bytes)
+    return _apply_snapshot_import(conn, metadata, files, restore_mode=restore_mode)
+
+
+def import_snapshot_from_gzip_stream(
+    conn: Connection,
+    readable: BinaryIO,
+    *,
+    restore_mode: str = "abort",
+) -> str | None:
+    """Import a tar.gz snapshot from a byte stream without buffering the whole archive (#252)."""
+    metadata, files = load_targz_members_from_stream(readable)
+    return _apply_snapshot_import(conn, metadata, files, restore_mode=restore_mode)
 
 
 def import_complete_snapshot(

@@ -228,6 +228,27 @@ def _repack_targz_table_members(
     return _pack_targz(paths, on_wire, meta_bytes)
 
 
+def _tamper_targz_manifest_mismatch(archive_bytes: bytes, *, member_path: str) -> bytes:
+    """Change a tar member without updating ``member_manifest`` hashes (integrity failure)."""
+    members = _read_archive_members(archive_bytes)
+    meta = _archive_metadata(archive_bytes)
+    table_members = {k: v for k, v in members.items() if k != "metadata.json"}
+    table_members[member_path] = table_members[member_path] + b"\xff"
+    manifest = meta.get("member_manifest")
+    if not isinstance(manifest, list):
+        raise ValueError("member_manifest required")
+    paths = tuple(
+        item["path"] for item in manifest if isinstance(item, dict) and "path" in item
+    )
+    meta_bytes = json.dumps(
+        meta,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return _pack_targz(paths, table_members, meta_bytes)
+
+
 def _tamper_configuration_drop_account_ids(archive_bytes: bytes, account_ids: set[int]) -> bytes:
     members = _read_archive_members(archive_bytes)
     meta = _archive_metadata(archive_bytes)
@@ -1638,3 +1659,124 @@ def test_financial_export_excludes_cheque_register_filter_presets(
         archive = export_snapshot(conn, "financial")
 
     assert "cheque_register_filter_presets.json" not in _archive_member_names(archive)
+
+
+def test_backup_export_streams_chunked_body(
+    integration_db_url: str,
+    ledger_service: LedgerService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Export uses chunked streaming; response is not built as one server-side buffer (#252)."""
+    monkeypatch.setenv("TALLYBADGER_DATABASE_URL", integration_db_url)
+    core_config.get_settings.cache_clear()
+    try:
+        _seed_minimal_ledger(ledger_service)
+        client = TestClient(app)
+        with client.stream("POST", "/backup/export") as exp:
+            assert exp.status_code == 200
+            assert exp.headers["content-type"] == "application/gzip"
+            chunks = list(exp.iter_bytes())
+        assert chunks
+        archive = b"".join(chunks)
+        assert detect_snapshot_container(archive) == "gzip"
+    finally:
+        core_config.get_settings.cache_clear()
+
+
+def test_backup_import_raw_body_targz_round_trip(
+    integration_db_url: str,
+    ledger_service: LedgerService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Raw-body import with application/gzip streams tar.gz without multipart (#252)."""
+    monkeypatch.setenv("TALLYBADGER_DATABASE_URL", integration_db_url)
+    core_config.get_settings.cache_clear()
+    try:
+        _seed_minimal_ledger(ledger_service)
+        client = TestClient(app)
+        with client.stream("POST", "/backup/export") as exp:
+            archive = b"".join(exp.iter_bytes())
+
+        _truncate_all_data(integration_db_url)
+
+        imp = client.post(
+            "/backup/import?restore_mode=abort",
+            content=archive,
+            headers={"Content-Type": "application/gzip"},
+        )
+        assert imp.status_code == 200
+        assert imp.json() == {"status": "imported"}
+
+        with connect(integration_db_url, row_factory=dict_row) as conn:
+            counts = snapshot_table_counts(conn)
+        assert counts["journal_entries"] == 1
+    finally:
+        core_config.get_settings.cache_clear()
+
+
+def test_backup_import_raw_body_zip_legacy(
+    integration_db_url: str,
+    ledger_service: LedgerService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Raw-body upload buffers legacy ZIP then uses the existing ZIP loader (#252)."""
+    monkeypatch.setenv("TALLYBADGER_DATABASE_URL", integration_db_url)
+    core_config.get_settings.cache_clear()
+    try:
+        _seed_minimal_ledger(ledger_service)
+        with connect(integration_db_url, row_factory=dict_row) as conn:
+            zip_bytes = export_complete_snapshot(conn)
+        legacy_zip = _repack_snapshot_for_format(zip_bytes, "1.8.0")
+
+        _truncate_all_data(integration_db_url)
+
+        client = TestClient(app)
+        imp = client.post(
+            "/backup/import?restore_mode=erase-reload",
+            content=legacy_zip,
+            headers={"Content-Type": "application/octet-stream"},
+        )
+        assert imp.status_code == 200
+        assert imp.json()["status"] == "imported"
+        assert "format_deprecation_warning" in imp.json()
+
+        with connect(integration_db_url, row_factory=dict_row) as conn:
+            counts = snapshot_table_counts(conn)
+        assert counts["accounts"] >= 2
+    finally:
+        core_config.get_settings.cache_clear()
+
+
+def test_backup_import_raw_body_integrity_failure_rolls_back(
+    integration_db_url: str,
+    ledger_service: LedgerService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Streamed tar.gz import rolls back when metadata/manifest validation fails (#252)."""
+    monkeypatch.setenv("TALLYBADGER_DATABASE_URL", integration_db_url)
+    core_config.get_settings.cache_clear()
+    try:
+        _seed_minimal_ledger(ledger_service)
+        with connect(integration_db_url, row_factory=dict_row) as conn:
+            archive = export_snapshot(conn, "configuration")
+        tampered = _tamper_targz_manifest_mismatch(archive, member_path="accounts.json")
+
+        _truncate_all_data(integration_db_url)
+        _ensure_ledger_settings(integration_db_url)
+        with connect(integration_db_url, row_factory=dict_row) as conn:
+            before = snapshot_table_counts(conn)
+
+        client = TestClient(app)
+        imp = client.post(
+            "/backup/import",
+            content=tampered,
+            headers={"Content-Type": "application/gzip"},
+        )
+        assert imp.status_code == 400
+        assert "SHA-256" in imp.json()["detail"]
+
+        with connect(integration_db_url, row_factory=dict_row) as conn:
+            after = snapshot_table_counts(conn)
+        assert after == before
+    finally:
+        core_config.get_settings.cache_clear()

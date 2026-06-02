@@ -222,10 +222,16 @@ Integer and bigint columns export as JSON numbers; `NUMERIC` amounts export as J
 
 ## API
 
-- `POST /backup/export?export_type=complete|configuration|financial` — response body: **`application/gzip`** (tar.gz **2.0.0**). Default `export_type` is `complete`. Suggested download names: `tallybadger-complete-yyyymmdd-hhmmss.tar.gz`, `tallybadger-config-…`, `tallybadger-financial-…` (local server time in `Content-Disposition`).
-- `POST /backup/import` — `multipart/form-data`: field **`snapshot`** (**.tar.gz** or legacy **.zip**); field **`restore_mode`**: `abort` (default), `overwrite`, or `erase-reload` (prefixes allowed; e.g. `a`, `e`, `erase-`). Container is detected from file bytes, not the filename. Rejects unrecognized values (e.g. `erase-spice-girls-music`, legacy `erase_reload`). On success the JSON body is `{"status": "imported"}` and may include **`format_deprecation_warning`** (string) when the archive’s `format_version` is supported but older than this release’s export version (#202); omitted when the archive uses the current format.
+- `POST /backup/export?export_type=complete|configuration|financial` — **chunked** response body, **`Content-Type: application/gzip`** (tar.gz **2.0.0**). The server streams gzip/tar members as they are written; it does not build the full archive in memory before send. Default `export_type` is `complete`. Suggested download names: `tallybadger-complete-yyyymmdd-hhmmss.tar.gz`, `tallybadger-config-…`, `tallybadger-financial-…` (local server time in `Content-Disposition`).
+- `POST /backup/import` — two transports; **container format** (ZIP vs tar.gz) is always detected from **magic bytes** at the start of the file, not from the filename or `Content-Type`.
 
-Streaming HTTP export/import for tar.gz is specified in [#239](https://github.com/brettski74/TallyBadger/issues/239); this release may buffer full request/response bodies while the on-disk **2.0.0** layout is in place.
+  **Raw body (streaming upload, preferred for new clients):** request body is the snapshot bytes; **`restore_mode`** is a **query parameter** (`abort`, `overwrite`, `erase-reload`; prefixes allowed). `Content-Type` should be one of `application/gzip`, `application/x-gzip`, `application/octet-stream`, or `application/zip`. **tar.gz** archives are gunzip/tar-processed as a stream (one tar member buffered at a time). **Legacy ZIP** archives are read from the stream into a buffer and processed with the existing ZIP loader (full-buffer acceptable for ZIP).
+
+  **Multipart (legacy clients):** `multipart/form-data` with field **`snapshot`** and form field **`restore_mode`**. Accepts **.tar.gz** or legacy **.zip**; the server may buffer the full upload before processing.
+
+  Rejects unrecognized restore modes (e.g. `erase-spice-girls-music`, legacy `erase_reload`). On success the JSON body is `{"status": "imported"}` and may include **`format_deprecation_warning`** (string) when the archive’s `format_version` is supported but older than this release’s export version (#202); omitted when the archive uses the current format.
+
+**Reverse proxies:** large uploads/downloads may require disabling response/request buffering (e.g. nginx `proxy_request_buffering off` and appropriate `proxy_buffering` settings) so streaming is not collapsed into a single buffered body at the edge.
 
 ## Future
 
