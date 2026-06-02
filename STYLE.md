@@ -69,6 +69,7 @@ Local UAT data comes from **snapshot restore**, not a checked-in SQL seed:
 - Branches for new features should be named feature/<issue id>-kebab-case-description
 - Branches for bug fixes should be named bugfix/<issue id>-kebab-case-description
 - Branches for anything else should be named other/<issue id>-kebab-case-description
+- Branches for features, bugfixes or other work always come from main. If you're not on main when starting implementation, notify the user and seek guidance on correcting the issue before doing anything else!
 - Merge to the default branch **only through a pull request** that has gone through **human-in-the-loop review** before merge: another person reads and approves (or requests changes) on GitHub when the team has more than one contributor; on a **solo** maintainer repo, use the PR as the deliberate review surface and still avoid merging unreviewed local commits straight to `main`. Prefer **squash merge** so history stays easy to read unless the team agrees otherwise.
 - **Link GitHub issues** in the **PR body** with closing keywords when appropriate (`Fixes #42`, `Closes #42`, `Refs #42`) so links survive squash; see [GitHub linking](https://docs.github.com/en/issues/tracking-your-work-with-issues/linking-a-pull-request-to-an-issue).
 - **Features and bugs** are tracked in **GitHub Issues**; PRs should reference them for traceability.

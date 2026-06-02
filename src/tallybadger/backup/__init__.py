@@ -5,6 +5,8 @@ from tallybadger.backup.snapshot import (
     export_snapshot,
     import_complete_snapshot,
     import_snapshot,
+    import_snapshot_from_gzip_stream,
+    iter_export_snapshot,
     snapshot_table_counts,
 )
 
@@ -13,5 +15,7 @@ __all__ = [
     "export_snapshot",
     "import_complete_snapshot",
     "import_snapshot",
+    "import_snapshot_from_gzip_stream",
+    "iter_export_snapshot",
     "snapshot_table_counts",
 ]

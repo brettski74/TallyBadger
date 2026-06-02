@@ -14,9 +14,11 @@ from tallybadger.backup.errors import IncompleteSnapshotError, SnapshotIntegrity
 from tallybadger.backup.snapshot import (
     FORMAT_VERSION_HISTORY,
     _canonical_envelope_bytes,
+    _iter_pack_targz,
     _load_targz_members,
     _pack_targz,
     _parse_table_file,
+    load_targz_members_from_stream,
     configuration_tables_for_format,
     detect_snapshot_container,
     export_format_version,
@@ -84,6 +86,42 @@ def test_manifest_attachment_blobs_after_journal_entry_attachments_json() -> Non
     assert paths.index("attachments.json") < paths.index("journal_entry_attachments.json")
     assert paths.index("journal_entry_attachments.json") < paths.index("attachments/1.pdf")
     assert paths[-1] == "attachments/2.png"
+
+
+def test_iter_pack_targz_yields_multiple_chunks() -> None:
+    fmt = "2.0.0"
+    payloads = {
+        f"parties.json": _canonical_envelope_bytes("parties", [], fmt),
+        f"accounts.json": _canonical_envelope_bytes("accounts", [], fmt),
+    }
+    paths = ("accounts.json", "parties.json")
+    meta = b'{"export_type":"configuration","format_version":"2.0.0","member_manifest":[]}'
+    chunks = list(_iter_pack_targz(paths, payloads, meta))
+    assert len(chunks) > 1
+    assert _pack_targz(paths, payloads, meta) == b"".join(chunks)
+
+
+def test_load_targz_members_from_stream_matches_bytes_loader() -> None:
+    fmt = "2.0.0"
+    payloads = {
+        f"{table}.json": _canonical_envelope_bytes(table, [], fmt)
+        for table in configuration_tables_for_format(fmt)
+    }
+    paths = manifest_member_paths("configuration", fmt, payloads)
+    import hashlib
+
+    manifest = [{"path": p, "sha256": hashlib.sha256(payloads[p]).hexdigest()} for p in paths]
+    meta_obj = {
+        "export_type": "configuration",
+        "format_version": "2.0.0",
+        "schema_version": "001",
+        "member_manifest": manifest,
+    }
+    meta_bytes = json.dumps(meta_obj, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    archive = _pack_targz(paths, payloads, meta_bytes)
+    from_bytes = _load_targz_members(archive)
+    from_stream = load_targz_members_from_stream(io.BytesIO(archive))
+    assert from_stream == from_bytes
 
 
 def test_pack_targz_metadata_last_and_gzip_level_nine() -> None:
