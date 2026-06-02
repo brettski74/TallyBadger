@@ -1,0 +1,198 @@
+{
+  "format_version": "2.0.0",
+  "rows": [
+    {
+      "created_at": "2025-05-01T00:00:00-04:00",
+      "id": 1,
+      "is_active": true,
+      "name": "Accounts Receivable",
+      "type": "asset",
+      "updated_at": "2025-05-01T00:00:00-04:00"
+    },
+    {
+      "created_at": "2025-05-01T00:00:00-04:00",
+      "id": 2,
+      "is_active": true,
+      "name": "Accounts Payable",
+      "type": "liability",
+      "updated_at": "2025-05-01T00:00:00-04:00"
+    },
+    {
+      "created_at": "2025-05-01T00:00:00-04:00",
+      "id": 3,
+      "is_active": true,
+      "name": "Unearned Revenue",
+      "type": "liability",
+      "updated_at": "2025-05-01T00:00:00-04:00"
+    },
+    {
+      "created_at": "2025-05-01T00:00:00-04:00",
+      "id": 4,
+      "is_active": true,
+      "name": "Prepaid Expenses",
+      "type": "asset",
+      "updated_at": "2025-05-01T00:00:00-04:00"
+    },
+    {
+      "created_at": "2025-05-01T00:00:00-04:00",
+      "id": 5,
+      "is_active": true,
+      "name": "Unallocated Credits",
+      "type": "suspense",
+      "updated_at": "2025-05-01T00:00:00-04:00"
+    },
+    {
+      "created_at": "2025-05-01T00:00:00-04:00",
+      "id": 6,
+      "is_active": true,
+      "name": "Unallocated Debits",
+      "type": "suspense",
+      "updated_at": "2025-05-01T00:00:00-04:00"
+    },
+    {
+      "created_at": "2025-05-01T00:00:00-04:00",
+      "id": 7,
+      "is_active": true,
+      "name": "Cash",
+      "type": "asset",
+      "updated_at": "2025-05-01T00:00:00-04:00"
+    },
+    {
+      "created_at": "2025-05-01T00:00:00-04:00",
+      "id": 8,
+      "is_active": true,
+      "name": "Chequing",
+      "type": "asset",
+      "updated_at": "2025-05-01T00:00:00-04:00"
+    },
+    {
+      "created_at": "2025-05-01T00:00:00-04:00",
+      "id": 9,
+      "is_active": true,
+      "name": "Savings",
+      "type": "asset",
+      "updated_at": "2025-05-01T00:00:00-04:00"
+    },
+    {
+      "created_at": "2025-05-01T00:00:00-04:00",
+      "id": 10,
+      "is_active": true,
+      "name": "Capital",
+      "type": "equity",
+      "updated_at": "2025-05-01T00:00:00-04:00"
+    },
+    {
+      "created_at": "2025-05-01T00:00:00-04:00",
+      "id": 11,
+      "is_active": true,
+      "name": "Rent Revenue",
+      "type": "revenue",
+      "updated_at": "2025-05-01T00:00:00-04:00"
+    },
+    {
+      "created_at": "2025-05-01T00:00:00-04:00",
+      "id": 12,
+      "is_active": true,
+      "name": "Miscellaneous Revenue",
+      "type": "revenue",
+      "updated_at": "2025-05-01T00:00:00-04:00"
+    },
+    {
+      "created_at": "2025-05-01T00:00:00-04:00",
+      "id": 13,
+      "is_active": true,
+      "name": "Banking",
+      "type": "expense",
+      "updated_at": "2025-05-01T00:00:00-04:00"
+    },
+    {
+      "created_at": "2025-05-01T00:00:00-04:00",
+      "id": 14,
+      "is_active": true,
+      "name": "Deductible Interest",
+      "type": "expense",
+      "updated_at": "2025-05-01T00:00:00-04:00"
+    },
+    {
+      "created_at": "2025-05-01T00:00:00-04:00",
+      "id": 15,
+      "is_active": true,
+      "name": "Interest Expense",
+      "type": "expense",
+      "updated_at": "2025-05-01T00:00:00-04:00"
+    },
+    {
+      "created_at": "2025-05-01T00:00:00-04:00",
+      "id": 16,
+      "is_active": true,
+      "name": "Insurance",
+      "type": "expense",
+      "updated_at": "2025-05-01T00:00:00-04:00"
+    },
+    {
+      "created_at": "2025-05-01T00:00:00-04:00",
+      "id": 17,
+      "is_active": true,
+      "name": "Maintenance",
+      "type": "expense",
+      "updated_at": "2025-05-01T00:00:00-04:00"
+    },
+    {
+      "created_at": "2025-05-01T00:00:00-04:00",
+      "id": 18,
+      "is_active": true,
+      "name": "Promotions and Incentives",
+      "type": "expense",
+      "updated_at": "2025-05-01T00:00:00-04:00"
+    },
+    {
+      "created_at": "2025-05-01T00:00:00-04:00",
+      "id": 19,
+      "is_active": true,
+      "name": "Property Management",
+      "type": "expense",
+      "updated_at": "2025-05-01T00:00:00-04:00"
+    },
+    {
+      "created_at": "2025-05-01T00:00:00-04:00",
+      "id": 20,
+      "is_active": true,
+      "name": "Property Tax",
+      "type": "expense",
+      "updated_at": "2025-05-01T00:00:00-04:00"
+    },
+    {
+      "created_at": "2025-05-01T00:00:00-04:00",
+      "id": 21,
+      "is_active": true,
+      "name": "Utilities",
+      "type": "expense",
+      "updated_at": "2025-05-01T00:00:00-04:00"
+    },
+    {
+      "created_at": "2025-05-01T00:00:00-04:00",
+      "id": 22,
+      "is_active": true,
+      "name": "Credit Card",
+      "type": "liability",
+      "updated_at": "2025-05-01T00:00:00-04:00"
+    },
+    {
+      "created_at": "2025-05-01T00:00:00-04:00",
+      "id": 23,
+      "is_active": true,
+      "name": "Line of Credit",
+      "type": "liability",
+      "updated_at": "2025-05-01T00:00:00-04:00"
+    },
+    {
+      "created_at": "2025-05-01T00:00:00-04:00",
+      "id": 24,
+      "is_active": false,
+      "name": "Mortgage",
+      "type": "liability",
+      "updated_at": "2025-05-01T00:00:00-04:00"
+    }
+  ],
+  "table": "accounts"
+}
