@@ -539,7 +539,6 @@ class AccrualPlanWrite(BaseModel):
     direction: AccrualDirection
     party_id: int = Field(gt=0)
     target_account_id: int = Field(gt=0)
-    bridge_account_id: int = Field(gt=0)
     frequency: AccrualFrequency
     start_date: date
     end_date: date
@@ -590,7 +589,6 @@ class AccrualPlanOut(BaseModel):
     direction: AccrualDirection
     party_id: int
     target_account_id: int
-    bridge_account_id: int
     frequency: AccrualFrequency
     start_date: date
     end_date: date
@@ -611,7 +609,6 @@ class AccrualPlanListFilterOptions(BaseModel):
 
     party_ids: list[int] = Field(default_factory=list)
     target_account_ids: list[int] = Field(default_factory=list)
-    bridge_account_ids: list[int] = Field(default_factory=list)
 
 
 class AccrualPlanListResponse(BaseModel):

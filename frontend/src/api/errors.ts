@@ -28,7 +28,6 @@ export function parseDetailErrorsArray(data: unknown): string[] | null {
 const VALIDATION_FIELD_LABELS: Record<string, string> = {
   party_id: "Party",
   target_account_id: "Target account",
-  bridge_account_id: "Bridge account",
   name: "Plan name",
   amount: "Amount",
   start_date: "Start date",

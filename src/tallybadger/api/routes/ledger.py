@@ -185,7 +185,6 @@ def update_party(
 def list_accrual_plans(
     party_ids: Annotated[list[int] | None, Query()] = None,
     target_account_ids: Annotated[list[int] | None, Query()] = None,
-    bridge_account_ids: Annotated[list[int] | None, Query()] = None,
     from_date: date | None = None,
     to_date: date | None = None,
     name: str | None = Query(
@@ -204,7 +203,7 @@ def list_accrual_plans(
     include_filter_options: bool = Query(
         default=False,
         description=(
-            "When true, include distinct party_id / target_account_id / bridge_account_id "
+            "When true, include distinct party_id / target_account_id "
             "values from all plans (for filter dropdowns)."
         ),
     ),
@@ -214,7 +213,6 @@ def list_accrual_plans(
         return service.list_accrual_plans(
             party_ids=party_ids,
             target_account_ids=target_account_ids,
-            bridge_account_ids=bridge_account_ids,
             from_date=from_date,
             to_date=to_date,
             name=name,

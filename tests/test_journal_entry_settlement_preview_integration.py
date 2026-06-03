@@ -122,7 +122,6 @@ def _setup_rent_accrual(api_client: TestClient, *, configure_ar: bool = True) ->
             "direction": "revenue",
             "party_id": party_id,
             "target_account_id": by_name["Rent Revenue"],
-            "bridge_account_id": by_name["Accounts Receivable"],
             "frequency": "monthly_day",
             "start_date": "2026-07-01",
             "end_date": "2026-07-31",
@@ -175,7 +174,6 @@ def _setup_payment_accrual(api_client: TestClient) -> dict[str, int]:
             "direction": "expense",
             "party_id": party_id,
             "target_account_id": by_name["Repairs Expense"],
-            "bridge_account_id": by_name["Accounts Payable"],
             "frequency": "monthly_day",
             "start_date": "2026-08-01",
             "end_date": "2026-08-31",
@@ -260,8 +258,16 @@ def test_preview_gate_skip_ambiguous_cash(api_client: TestClient) -> None:
     assert preview is None
 
 
-def test_preview_gate_skip_missing_ar_config(api_client: TestClient) -> None:
-    ctx = _setup_rent_accrual(api_client, configure_ar=False)
+def test_preview_gate_skip_missing_ar_config(
+    api_client: TestClient, integration_db_url: str
+) -> None:
+    ctx = _setup_rent_accrual(api_client, configure_ar=True)
+    with connect(integration_db_url) as conn:
+        with conn.transaction():
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE ledger_settings SET accounts_receivable_account_id = NULL WHERE id = 1"
+                )
 
     preview = _preview(
         api_client,
@@ -311,7 +317,6 @@ def _setup_rent_accrual_with_unearned(api_client: TestClient) -> dict[str, int]:
             "direction": "revenue",
             "party_id": party_id,
             "target_account_id": by_name["Rent Revenue"],
-            "bridge_account_id": by_name["Accounts Receivable"],
             "frequency": "monthly_day",
             "start_date": "2026-07-01",
             "end_date": "2026-07-31",
@@ -389,7 +394,6 @@ def _setup_payment_accrual_with_prepaid(api_client: TestClient) -> dict[str, int
             "direction": "expense",
             "party_id": party_id,
             "target_account_id": by_name["Repairs Expense"],
-            "bridge_account_id": by_name["Accounts Payable"],
             "frequency": "monthly_day",
             "start_date": "2026-08-01",
             "end_date": "2026-08-31",
@@ -580,7 +584,6 @@ def test_preview_combined_receipt_and_payment_for_one_party(api_client: TestClie
             "direction": "revenue",
             "party_id": party_id,
             "target_account_id": by_name["Rent Revenue"],
-            "bridge_account_id": by_name["Accounts Receivable"],
             "frequency": "monthly_day",
             "start_date": "2026-07-01",
             "end_date": "2026-07-31",
@@ -593,7 +596,6 @@ def test_preview_combined_receipt_and_payment_for_one_party(api_client: TestClie
             "direction": "expense",
             "party_id": party_id,
             "target_account_id": by_name["Repairs Expense"],
-            "bridge_account_id": by_name["Accounts Payable"],
             "frequency": "monthly_day",
             "start_date": "2026-08-01",
             "end_date": "2026-08-31",

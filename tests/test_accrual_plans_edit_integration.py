@@ -104,7 +104,6 @@ def _plan_payload(
         "direction": "revenue",
         "party_id": ids["party_id"],
         "target_account_id": ids["rent_id"],
-        "bridge_account_id": ids["ar_id"],
         "frequency": "monthly_day",
         "start_date": "2026-01-01",
         "end_date": end_date,
@@ -148,10 +147,13 @@ def _obligation_amounts(db_url: str, plan_id: int) -> list[Decimal]:
             return [Decimal(str(row[0])) for row in cur.fetchall()]
 
 
-def test_update_accrual_plan_not_found(api_client: TestClient) -> None:
+def test_update_accrual_plan_not_found(
+    api_client: TestClient, ledger_service: LedgerService
+) -> None:
+    ids = _seed_chart(ledger_service)
     response = api_client.patch(
         "/accrual-plans/99999",
-        json=_plan_payload({"party_id": 1, "rent_id": 2, "ar_id": 3}),
+        json=_plan_payload(ids),
     )
     assert response.status_code == 404
     assert "not found" in response.json()["detail"].lower()
@@ -244,7 +246,6 @@ def test_update_accrual_plan_rejects_when_allocations_exist(
             direction="revenue",
             party_id=ids["party_id"],
             target_account_id=ids["rent_id"],
-            bridge_account_id=ids["ar_id"],
             frequency="monthly_day",
             start_date=date(2026, 1, 1),
             end_date=date(2026, 1, 31),

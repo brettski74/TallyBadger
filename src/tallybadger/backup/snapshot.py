@@ -43,6 +43,7 @@ FORMAT_VERSION_HISTORY: tuple[str, ...] = (
     "1.7.0",
     "1.8.0",
     "2.0.0",
+    "2.1.0",
 )
 
 
@@ -851,8 +852,10 @@ def _coerce_cell(column: str, value: Any) -> Any:
 
 
 def _prepare_row(table: str, row: dict[str, Any]) -> dict[str, Any]:
-    _ = table
-    return {k: _coerce_cell(k, v) for k, v in row.items()}
+    out = {k: _coerce_cell(k, v) for k, v in row.items()}
+    if table == "accrual_plans":
+        out.pop("bridge_account_id", None)
+    return out
 
 
 def _validate_journal(lines: list[dict[str, Any]]) -> None:
@@ -991,11 +994,6 @@ def _validate_configuration_fks(
         if int(row["target_account_id"]) not in acct:
             raise SnapshotValidationError(
                 f"accrual_plans[{i}] target_account_id={row['target_account_id']} "
-                "has no matching row in accounts.json"
-            )
-        if int(row["bridge_account_id"]) not in acct:
-            raise SnapshotValidationError(
-                f"accrual_plans[{i}] bridge_account_id={row['bridge_account_id']} "
                 "has no matching row in accounts.json"
             )
 
@@ -1315,11 +1313,6 @@ def _validate_financial_fks(
             if int(row["target_account_id"]) not in acct_db:
                 raise SnapshotValidationError(
                     f"accrual_plans[{i}] target_account_id={row['target_account_id']} "
-                    "not found in target database."
-                )
-            if int(row["bridge_account_id"]) not in acct_db:
-                raise SnapshotValidationError(
-                    f"accrual_plans[{i}] bridge_account_id={row['bridge_account_id']} "
                     "not found in target database."
                 )
     plan_db = plan_snap | _existing_ids(conn, "accrual_plans")

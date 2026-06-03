@@ -5,12 +5,12 @@ import tallybadger.backup.snapshot as snapshot
 
 def test_supported_import_default_history() -> None:
     assert snapshot.supported_import_format_versions() == frozenset(
-        {"1.6.0", "1.7.0", "1.8.0", "2.0.0"}
+        {"1.7.0", "1.8.0", "2.0.0", "2.1.0"}
     )
 
 
-def test_export_format_version_is_two_zero_zero() -> None:
-    assert snapshot.export_format_version() == "2.0.0"
+def test_export_format_version_is_two_one_zero() -> None:
+    assert snapshot.export_format_version() == "2.1.0"
 
 
 def test_configuration_tables_for_format_gates_preset_table() -> None:

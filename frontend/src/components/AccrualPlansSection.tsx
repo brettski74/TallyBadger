@@ -54,7 +54,6 @@ type AccrualPlanCreateFormSnapshot = {
   direction: AccrualDirection;
   partyId: string;
   targetAccountId: string;
-  bridgeAccountId: string;
   frequency: AccrualFrequency;
   dayOfWeek: string;
   dayOfMonth: string;
@@ -88,14 +87,12 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
   const [settlementStatus, setSettlementStatus] = useState<AccrualPlanSettlementStatus>("open");
   const [selectedPartyIds, setSelectedPartyIds] = useState<number[]>([]);
   const [selectedTargetAccountIds, setSelectedTargetAccountIds] = useState<number[]>([]);
-  const [selectedBridgeAccountIds, setSelectedBridgeAccountIds] = useState<number[]>([]);
   const [filterName, setFilterName] = useState("");
   const [filterFromDate, setFilterFromDate] = useState("");
   const [filterToDate, setFilterToDate] = useState("");
 
   const [filterPartyIds, setFilterPartyIds] = useState<number[]>([]);
   const [filterTargetAccountIds, setFilterTargetAccountIds] = useState<number[]>([]);
-  const [filterBridgeAccountIds, setFilterBridgeAccountIds] = useState<number[]>([]);
 
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [createDialogView, setCreateDialogView] = useState<"form" | "preview">("form");
@@ -119,7 +116,6 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
   const [direction, setDirection] = useState<AccrualDirection>("revenue");
   const [partyId, setPartyId] = useState("");
   const [targetAccountId, setTargetAccountId] = useState("");
-  const [bridgeAccountId, setBridgeAccountId] = useState("");
   const [frequency, setFrequency] = useState<AccrualFrequency>("monthly_day");
   const [dayOfWeek, setDayOfWeek] = useState("0");
   const [dayOfMonth, setDayOfMonth] = useState("1");
@@ -155,9 +151,6 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
     if (selectedTargetAccountIds.length > 0) {
       params.target_account_ids = selectedTargetAccountIds;
     }
-    if (selectedBridgeAccountIds.length > 0) {
-      params.bridge_account_ids = selectedBridgeAccountIds;
-    }
     if (filterFromDate) {
       params.from_date = filterFromDate;
     }
@@ -172,7 +165,6 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
     settlementStatus,
     selectedPartyIds,
     selectedTargetAccountIds,
-    selectedBridgeAccountIds,
     filterFromDate,
     filterToDate,
     filterName,
@@ -187,7 +179,6 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
       if (body.filter_options) {
         setFilterPartyIds(body.filter_options.party_ids);
         setFilterTargetAccountIds(body.filter_options.target_account_ids);
-        setFilterBridgeAccountIds(body.filter_options.bridge_account_ids);
       }
     } catch (err) {
       setListError(err instanceof Error ? err.message : "Failed to load plans");
@@ -264,11 +255,6 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
     () => accounts.filter((a) => (direction === "revenue" ? a.type === "revenue" : a.type === "expense")),
     [accounts, direction],
   );
-  const bridgeAccountOptions = useMemo(
-    () => accounts.filter((a) => (direction === "revenue" ? a.type === "asset" : a.type === "liability")),
-    [accounts, direction],
-  );
-
   function partyFilterOptions(): Party[] {
     const ids = new Set(filterPartyIds);
     return parties.filter((p) => ids.has(p.id)).sort((a, b) => a.name.localeCompare(b.name));
@@ -286,7 +272,6 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
       direction: "revenue",
       partyId: "",
       targetAccountId: "",
-      bridgeAccountId: "",
       frequency: "monthly_day",
       dayOfWeek: "0",
       dayOfMonth: "1",
@@ -309,7 +294,6 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
       direction: plan.direction,
       partyId: String(plan.party_id),
       targetAccountId: String(plan.target_account_id),
-      bridgeAccountId: String(plan.bridge_account_id),
       frequency: plan.frequency,
       dayOfWeek: plan.day_of_week != null ? String(plan.day_of_week) : "0",
       dayOfMonth: plan.day_of_month != null ? String(plan.day_of_month) : "1",
@@ -332,7 +316,6 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
     setDirection(snapshot.direction);
     setPartyId(snapshot.partyId);
     setTargetAccountId(snapshot.targetAccountId);
-    setBridgeAccountId(snapshot.bridgeAccountId);
     setFrequency(snapshot.frequency);
     setDayOfWeek(snapshot.dayOfWeek);
     setDayOfMonth(snapshot.dayOfMonth);
@@ -362,7 +345,6 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
     setDirection(plan.direction);
     setPartyId(String(plan.party_id));
     setTargetAccountId(String(plan.target_account_id));
-    setBridgeAccountId(String(plan.bridge_account_id));
     setFrequency(plan.frequency);
     setDayOfWeek(plan.day_of_week != null ? String(plan.day_of_week) : "0");
     setDayOfMonth(plan.day_of_month != null ? String(plan.day_of_month) : "1");
@@ -478,9 +460,6 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
     if (!targetAccountId) {
       return "Select a target account.";
     }
-    if (!bridgeAccountId) {
-      return "Select a bridge account.";
-    }
     if (!summaryTemplate.trim()) {
       return "Enter a summary template.";
     }
@@ -489,24 +468,15 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
 
   function validateAccountGuardrail(): string | null {
     const target = accounts.find((a) => String(a.id) === targetAccountId);
-    const bridge = accounts.find((a) => String(a.id) === bridgeAccountId);
-    if (!target || !bridge) {
-      return "Select both a target and bridge account.";
+    if (!target) {
+      return "Select a target account.";
     }
     if (direction === "revenue") {
       if (target.type !== "revenue") {
         return "Revenue plans require a revenue target account.";
       }
-      if (bridge.type !== "asset") {
-        return "Revenue plans require an asset bridge account (A/R).";
-      }
-    } else {
-      if (target.type !== "expense") {
-        return "Expense plans require an expense target account.";
-      }
-      if (bridge.type !== "liability") {
-        return "Expense plans require a liability bridge account (A/P).";
-      }
+    } else if (target.type !== "expense") {
+      return "Expense plans require an expense target account.";
     }
     return null;
   }
@@ -517,7 +487,6 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
       direction,
       party_id: Number(partyId),
       target_account_id: Number(targetAccountId),
-      bridge_account_id: Number(bridgeAccountId),
       frequency,
       start_date: startDate,
       end_date: endDate,
@@ -901,22 +870,6 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
               ))}
             </select>
           </label>
-          <label>
-            Bridge account
-            <select
-              aria-label="Plan bridge account"
-              value={bridgeAccountId}
-              onChange={(e) => setBridgeAccountId(e.target.value)}
-              required
-            >
-              <option value="">Select bridge account</option>
-              {bridgeAccountOptions.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
-                </option>
-              ))}
-            </select>
-          </label>
         </div>
         <div className="cheque-form-col">
           <label>
@@ -1015,11 +968,6 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
             <strong>Target account</strong>
             <br />
             {accountNameById.get(plan.target_account_id) ?? `#${plan.target_account_id}`}
-          </p>
-          <p>
-            <strong>Bridge account</strong>
-            <br />
-            {accountNameById.get(plan.bridge_account_id) ?? `#${plan.bridge_account_id}`}
           </p>
           <p>
             <strong>Amount</strong>
@@ -1171,16 +1119,6 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
             selectedIds={selectedTargetAccountIds}
             onIdsChange={setSelectedTargetAccountIds}
           />
-          <JournalFilterMultiDropdown
-            label="Bridge account"
-            ariaFilterLabel="Filter accrual plans by bridge account"
-            options={accountFilterOptions(filterBridgeAccountIds).map((a) => ({
-              id: a.id,
-              name: a.name,
-            }))}
-            selectedIds={selectedBridgeAccountIds}
-            onIdsChange={setSelectedBridgeAccountIds}
-          />
           <label>
             Name
             <input
@@ -1221,7 +1159,6 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
                 <th>Name</th>
                 <th>Party</th>
                 <th>Target</th>
-                <th>Bridge</th>
                 <th>Range</th>
                 <th>Amount</th>
                 <th>Direction</th>
@@ -1232,13 +1169,13 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
         >
               {listLoading && plans.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="muted">
+                  <td colSpan={8} className="muted">
                     Loading…
                   </td>
                 </tr>
               ) : plans.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="muted">
+                  <td colSpan={8} className="muted">
                     No plans for this filter.
                   </td>
                 </tr>
@@ -1248,7 +1185,6 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
                     <td>{p.name}</td>
                     <td>{partyNameById.get(p.party_id) ?? `#${p.party_id}`}</td>
                     <td>{accountNameById.get(p.target_account_id) ?? `#${p.target_account_id}`}</td>
-                    <td>{accountNameById.get(p.bridge_account_id) ?? `#${p.bridge_account_id}`}</td>
                     <td>
                       {p.start_date} – {p.end_date}
                     </td>

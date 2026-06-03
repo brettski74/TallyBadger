@@ -24,7 +24,11 @@ from tallybadger.ledger.balance_sheet_report import (
 )
 from tallybadger.ledger.schedule import DateIncrement, generate_schedule, roll_forward_weekend, safe_day
 from tallybadger.ledger.journal_settlement_preview import build_journal_entry_settlement_preview
-from tallybadger.ledger.settlement_utils import payment_bridge_account_id, receipt_bridge_account_id
+from tallybadger.ledger.settlement_utils import (
+    accrual_plan_bridge_account_id,
+    payment_bridge_account_id,
+    receipt_bridge_account_id,
+)
 from tallybadger.scanner.backend import ScanBackend, ScanSettings, get_scan_backend
 from tallybadger.scanner.errors import ScannerError
 from tallybadger.scanner.filename import build_journal_entry_scan_filename
@@ -33,6 +37,7 @@ from tallybadger.ledger.models import (
     AccountOut,
     AccountLedgerLineOut,
     AccountUpdate,
+    AccrualDirection,
     AccrualObligationOut,
     AccrualPlanCreate,
     AccrualPlanDetailResponse,
@@ -818,16 +823,20 @@ class LedgerService:
             )
         cur.execute(
             """
-            SELECT 1 FROM accrual_plans
-            WHERE target_account_id = %s OR bridge_account_id = %s
+            SELECT 1 FROM accrual_plans WHERE target_account_id = %s
+            UNION ALL
+            SELECT 1
+            FROM journal_lines jl
+            INNER JOIN journal_entries je ON je.id = jl.entry_id
+            WHERE jl.account_id = %s AND je.accrual_plan_id IS NOT NULL
             LIMIT 1
             """,
             (account_id, account_id),
         )
         if cur.fetchone():
             raise LedgerConflictError(
-                "Cannot change account type: an accrual plan targets or bridges through this account "
-                "(the schedule won't let you swap lanes).",
+                "Cannot change account type: an accrual plan targets this account or a posted "
+                "accrual journal entry uses it (the schedule won't let you swap lanes).",
             )
         cur.execute(
             "SELECT 1 FROM import_templates WHERE default_import_account_id = %s LIMIT 1",
@@ -966,7 +975,7 @@ class LedgerService:
         return AccountOut.model_validate(row)
 
     _ACCRUAL_PLAN_SELECT = """
-        SELECT ap.id, ap.name, ap.direction, ap.party_id, ap.target_account_id, ap.bridge_account_id,
+        SELECT ap.id, ap.name, ap.direction, ap.party_id, ap.target_account_id,
                ap.frequency, ap.start_date, ap.end_date, ap.amount, ap.summary_template,
                ap.description_template, ap.day_of_week, ap.day_of_month, ap.month_of_year,
                ap.business_day_adjust, ap.created_at, ap.updated_at
@@ -974,7 +983,7 @@ class LedgerService:
     """
 
     _ACCRUAL_PLAN_LIST_SELECT = """
-        SELECT ap.id, ap.name, ap.direction, ap.party_id, ap.target_account_id, ap.bridge_account_id,
+        SELECT ap.id, ap.name, ap.direction, ap.party_id, ap.target_account_id,
                ap.frequency, ap.start_date, ap.end_date, ap.amount, ap.summary_template,
                ap.description_template, ap.day_of_week, ap.day_of_month, ap.month_of_year,
                ap.business_day_adjust, ap.created_at, ap.updated_at,
@@ -1043,7 +1052,6 @@ class LedgerService:
         *,
         party_ids: list[int] | None = None,
         target_account_ids: list[int] | None = None,
-        bridge_account_ids: list[int] | None = None,
         from_date: date | None = None,
         to_date: date | None = None,
         name: str | None = None,
@@ -1062,9 +1070,6 @@ class LedgerService:
         if target_account_ids:
             conditions.append("ap.target_account_id = ANY(%s)")
             params.append(list(target_account_ids))
-        if bridge_account_ids:
-            conditions.append("ap.bridge_account_id = ANY(%s)")
-            params.append(list(bridge_account_ids))
         if from_date is not None:
             conditions.append("ap.end_date >= %s")
             params.append(from_date)
@@ -1118,12 +1123,7 @@ class LedgerService:
                             ARRAY_AGG(DISTINCT target_account_id ORDER BY target_account_id)
                               FILTER (WHERE target_account_id IS NOT NULL),
                             ARRAY[]::BIGINT[]
-                          ) AS target_account_ids,
-                          COALESCE(
-                            ARRAY_AGG(DISTINCT bridge_account_id ORDER BY bridge_account_id)
-                              FILTER (WHERE bridge_account_id IS NOT NULL),
-                            ARRAY[]::BIGINT[]
-                          ) AS bridge_account_ids
+                          ) AS target_account_ids
                         FROM accrual_plans
                         """
                     )
@@ -1132,7 +1132,6 @@ class LedgerService:
                     filter_options = AccrualPlanListFilterOptions(
                         party_ids=[int(x) for x in opt_row["party_ids"]],
                         target_account_ids=[int(x) for x in opt_row["target_account_ids"]],
-                        bridge_account_ids=[int(x) for x in opt_row["bridge_account_ids"]],
                     )
 
         return AccrualPlanListResponse(
@@ -1217,8 +1216,12 @@ class LedgerService:
     def preview_accrual_plan(
         self, payload: AccrualPlanCreate
     ) -> list[AccrualPreviewItem]:
+        with self._connection_factory() as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                bridge_id = self._resolve_accrual_plan_bridge(cur, payload.direction)
+                self._assert_accrual_plan_write_valid(cur, payload, bridge_id)
         dates = self._build_frequency_dates(payload)
-        return [self._preview_item_from_payload(payload, dt) for dt in dates]
+        return [self._preview_item_from_payload(payload, dt, bridge_id) for dt in dates]
 
     def create_accrual_plan(self, payload: AccrualPlanCreate) -> AccrualPlanOut:
         preview = self.preview_accrual_plan(payload)
@@ -1232,16 +1235,17 @@ class LedgerService:
             with self._connection_factory() as conn:
                 with conn.transaction():
                     with conn.cursor(row_factory=dict_row) as cur:
-                        self._assert_accrual_plan_write_valid(cur, payload)
+                        bridge_id = self._resolve_accrual_plan_bridge(cur, payload.direction)
+                        self._assert_accrual_plan_write_valid(cur, payload, bridge_id)
                         cur.execute(
                             """
                             INSERT INTO accrual_plans (
-                                name, direction, party_id, target_account_id, bridge_account_id,
+                                name, direction, party_id, target_account_id,
                                 frequency, start_date, end_date, amount, summary_template, description_template,
                                 day_of_week, day_of_month, month_of_year, business_day_adjust
                             )
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                            RETURNING id, name, direction, party_id, target_account_id, bridge_account_id,
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            RETURNING id, name, direction, party_id, target_account_id,
                                       frequency, start_date, end_date, amount, summary_template, description_template,
                                       day_of_week, day_of_month, month_of_year, business_day_adjust,
                                       created_at, updated_at
@@ -1250,7 +1254,7 @@ class LedgerService:
                         )
                         plan_row = cur.fetchone()
                         self._insert_accrual_plan_schedule(
-                            cur, plan_row["id"], payload, preview
+                            cur, plan_row["id"], payload, preview, bridge_id
                         )
         except (errors.RaiseException, errors.ForeignKeyViolation) as exc:
             _reraise_ledger_journal_db_error(exc)
@@ -1282,7 +1286,8 @@ class LedgerService:
                             cur, plan_id, existing_name
                         )
                         try:
-                            self._assert_accrual_plan_write_valid(cur, payload)
+                            bridge_id = self._resolve_accrual_plan_bridge(cur, payload.direction)
+                            self._assert_accrual_plan_write_valid(cur, payload, bridge_id)
                         except LedgerValidationError as exc:
                             raise LedgerValidationError(
                                 f'accrual plan "{existing_name}" (id={plan_id}): {exc}'
@@ -1300,12 +1305,12 @@ class LedgerService:
                             """
                             UPDATE accrual_plans
                             SET name = %s, direction = %s, party_id = %s, target_account_id = %s,
-                                bridge_account_id = %s, frequency = %s, start_date = %s, end_date = %s,
+                                frequency = %s, start_date = %s, end_date = %s,
                                 amount = %s, summary_template = %s, description_template = %s,
                                 day_of_week = %s, day_of_month = %s, month_of_year = %s,
                                 business_day_adjust = %s, updated_at = NOW()
                             WHERE id = %s
-                            RETURNING id, name, direction, party_id, target_account_id, bridge_account_id,
+                            RETURNING id, name, direction, party_id, target_account_id,
                                       frequency, start_date, end_date, amount, summary_template, description_template,
                                       day_of_week, day_of_month, month_of_year, business_day_adjust,
                                       created_at, updated_at
@@ -1313,7 +1318,9 @@ class LedgerService:
                             (*self._accrual_plan_row_params(payload), plan_id),
                         )
                         plan_row = cur.fetchone()
-                        self._insert_accrual_plan_schedule(cur, plan_id, payload, preview)
+                        self._insert_accrual_plan_schedule(
+                            cur, plan_id, payload, preview, bridge_id
+                        )
         except (errors.RaiseException, errors.ForeignKeyViolation) as exc:
             _reraise_ledger_journal_db_error(exc)
         return AccrualPlanOut.model_validate(plan_row)
@@ -5461,18 +5468,18 @@ class LedgerService:
         )
 
     def _preview_item_from_payload(
-        self, payload: AccrualPlanCreate, entry_date: date
+        self, payload: AccrualPlanCreate, entry_date: date, bridge_account_id: int
     ) -> AccrualPreviewItem:
         amount = payload.amount
         if payload.direction == "revenue":
             lines = [
-                {"account_id": payload.bridge_account_id, "party_id": payload.party_id, "amount": amount},
+                {"account_id": bridge_account_id, "party_id": payload.party_id, "amount": amount},
                 {"account_id": payload.target_account_id, "party_id": payload.party_id, "amount": -amount},
             ]
         else:
             lines = [
                 {"account_id": payload.target_account_id, "party_id": payload.party_id, "amount": amount},
-                {"account_id": payload.bridge_account_id, "party_id": payload.party_id, "amount": -amount},
+                {"account_id": bridge_account_id, "party_id": payload.party_id, "amount": -amount},
             ]
 
         description = None
@@ -5487,46 +5494,59 @@ class LedgerService:
         )
 
     @staticmethod
+    def _resolve_accrual_plan_bridge(cur, direction: AccrualDirection) -> int:
+        settings = LedgerService._fetch_settings_row(cur)
+        bridge_id = accrual_plan_bridge_account_id(
+            direction,
+            accounts_receivable_account_id=settings["accounts_receivable_account_id"],
+            accounts_payable_account_id=settings["accounts_payable_account_id"],
+        )
+        if bridge_id is None:
+            if direction == "revenue":
+                raise LedgerValidationError(
+                    "configure accounts receivable account in ledger settings first"
+                )
+            raise LedgerValidationError(
+                "configure accounts payable account in ledger settings first"
+            )
+        return int(bridge_id)
+
+    @staticmethod
     def _assert_all_plan_references_exist(cur, payload: AccrualPlanCreate) -> None:
         cur.execute("SELECT id FROM parties WHERE id = %s", (payload.party_id,))
         if not cur.fetchone():
             raise LedgerValidationError("plan references unknown party")
         cur.execute(
-            "SELECT id FROM accounts WHERE id = ANY(%s)",
-            ([payload.target_account_id, payload.bridge_account_id],),
+            "SELECT id FROM accounts WHERE id = %s",
+            (payload.target_account_id,),
         )
-        found = {row["id"] for row in cur.fetchall()}
-        if payload.target_account_id not in found or payload.bridge_account_id not in found:
+        if not cur.fetchone():
             raise LedgerValidationError("plan references unknown account")
 
     @staticmethod
-    def _assert_plan_account_direction_rules(cur, payload: AccrualPlanCreate) -> None:
+    def _assert_plan_target_account_rules(cur, payload: AccrualPlanCreate) -> None:
         cur.execute(
-            "SELECT id, type FROM accounts WHERE id = ANY(%s)",
-            ([payload.target_account_id, payload.bridge_account_id],),
+            "SELECT type FROM accounts WHERE id = %s",
+            (payload.target_account_id,),
         )
-        by_id = {row["id"]: row["type"] for row in cur.fetchall()}
-        bridge_type = by_id.get(payload.bridge_account_id)
-        target_type = by_id.get(payload.target_account_id)
-        if bridge_type is None or target_type is None:
+        row = cur.fetchone()
+        if not row:
             raise LedgerValidationError("plan references unknown account")
+        target_type = row["type"]
         if payload.direction == "revenue":
             if target_type != "revenue":
                 raise LedgerValidationError("revenue plan target account must be type revenue")
-            if bridge_type != "asset":
-                raise LedgerValidationError("revenue plan bridge account must be type asset (A/R)")
-        else:
-            if target_type != "expense":
-                raise LedgerValidationError("expense plan target account must be type expense")
-            if bridge_type != "liability":
-                raise LedgerValidationError("expense plan bridge account must be type liability (A/P)")
+        elif target_type != "expense":
+            raise LedgerValidationError("expense plan target account must be type expense")
 
-    def _assert_accrual_plan_write_valid(self, cur, payload: AccrualPlanCreate) -> None:
+    def _assert_accrual_plan_write_valid(
+        self, cur, payload: AccrualPlanCreate, bridge_account_id: int
+    ) -> None:
         self._assert_all_plan_references_exist(cur, payload)
-        self._assert_plan_account_direction_rules(cur, payload)
+        self._assert_plan_target_account_rules(cur, payload)
         self._assert_party_active(cur, payload.party_id)
         self._assert_account_active(cur, payload.target_account_id)
-        self._assert_account_active(cur, payload.bridge_account_id)
+        self._assert_account_active(cur, bridge_account_id)
 
     @staticmethod
     def _accrual_plan_row_params(payload: AccrualPlanCreate) -> tuple[object, ...]:
@@ -5535,7 +5555,6 @@ class LedgerService:
             payload.direction,
             payload.party_id,
             payload.target_account_id,
-            payload.bridge_account_id,
             payload.frequency,
             payload.start_date,
             payload.end_date,
@@ -5554,6 +5573,7 @@ class LedgerService:
         plan_id: int,
         payload: AccrualPlanCreate,
         preview: list[AccrualPreviewItem],
+        bridge_account_id: int,
     ) -> None:
         for item in preview:
             cur.execute(
@@ -5577,7 +5597,7 @@ class LedgerService:
                     (entry_id, line.account_id, line.party_id, line.amount),
                 )
                 line_id = cur.fetchone()["id"]
-                if line.account_id == payload.bridge_account_id:
+                if line.account_id == bridge_account_id:
                     bridge_line_id = line_id
                     bridge_amount = abs(Decimal(line.amount))
             if bridge_line_id is not None:

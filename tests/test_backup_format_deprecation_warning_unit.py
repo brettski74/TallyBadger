@@ -4,7 +4,7 @@ import tallybadger.backup.snapshot as snapshot
 
 
 def test_oldest_supported_import_format_version() -> None:
-    assert snapshot.oldest_supported_import_format_version() == "1.6.0"
+    assert snapshot.oldest_supported_import_format_version() == "1.7.0"
 
 
 def test_format_deprecation_warning_none_for_current_export() -> None:
