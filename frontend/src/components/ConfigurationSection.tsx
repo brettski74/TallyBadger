@@ -34,6 +34,12 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
   const [unallocDrBaseline, setUnallocDrBaseline] = useState("");
   const [unallocCrId, setUnallocCrId] = useState("");
   const [unallocCrBaseline, setUnallocCrBaseline] = useState("");
+  const [scannerDeviceUri, setScannerDeviceUri] = useState("");
+  const [scannerDeviceUriBaseline, setScannerDeviceUriBaseline] = useState("");
+  const [maxScannedPages, setMaxScannedPages] = useState("50");
+  const [maxScannedPagesBaseline, setMaxScannedPagesBaseline] = useState("50");
+  const [scanDpi, setScanDpi] = useState("300");
+  const [scanDpiBaseline, setScanDpiBaseline] = useState("300");
   const [settingsErrors, setSettingsErrors] = useState<string[]>([]);
   const [savedMessage, setSavedMessage] = useState<string | null>(null);
   const [backupError, setBackupError] = useState<string | null>(null);
@@ -53,6 +59,9 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
     setPrepaidId(prepaidBaseline);
     setUnallocDrId(unallocDrBaseline);
     setUnallocCrId(unallocCrBaseline);
+    setScannerDeviceUri(scannerDeviceUriBaseline);
+    setMaxScannedPages(maxScannedPagesBaseline);
+    setScanDpi(scanDpiBaseline);
     setSettingsErrors([]);
     setSavedMessage(null);
   }
@@ -75,7 +84,7 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
     };
     document.addEventListener("keydown", onKeyDown, true);
     return () => document.removeEventListener("keydown", onKeyDown, true);
-  }, [arBaseline, apBaseline, urBaseline, prepaidBaseline, unallocDrBaseline, unallocCrBaseline]);
+  }, [arBaseline, apBaseline, urBaseline, prepaidBaseline, unallocDrBaseline, unallocCrBaseline, maxScannedPagesBaseline, scanDpiBaseline, scannerDeviceUriBaseline]);
 
   useEffect(() => {
     async function loadSettings() {
@@ -105,6 +114,15 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
         setUnallocDrBaseline(udr);
         setUnallocCrId(ucr);
         setUnallocCrBaseline(ucr);
+        const deviceUri = settings.scanner_device_uri ?? "";
+        setScannerDeviceUri(deviceUri);
+        setScannerDeviceUriBaseline(deviceUri);
+        const pages = String(settings.max_scanned_pages);
+        setMaxScannedPages(pages);
+        setMaxScannedPagesBaseline(pages);
+        const dpi = String(settings.scan_dpi);
+        setScanDpi(dpi);
+        setScanDpiBaseline(dpi);
       } catch (err) {
         setSettingsErrors([
           err instanceof Error ? err.message : "Failed to load ledger settings",
@@ -126,6 +144,9 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
         prepaid_expenses_account_id: prepaidId ? Number(prepaidId) : null,
         unallocated_debits_account_id: unallocDrId ? Number(unallocDrId) : null,
         unallocated_credits_account_id: unallocCrId ? Number(unallocCrId) : null,
+        scanner_device_uri: scannerDeviceUri.trim() === "" ? null : scannerDeviceUri.trim(),
+        max_scanned_pages: maxScannedPages.trim() === "" ? undefined : Number(maxScannedPages),
+        scan_dpi: scanDpi.trim() === "" ? undefined : Number(scanDpi),
       });
       const ar = settings.accounts_receivable_account_id ? String(settings.accounts_receivable_account_id) : "";
       const ap = settings.accounts_payable_account_id ? String(settings.accounts_payable_account_id) : "";
@@ -151,6 +172,15 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
       setUnallocDrBaseline(udr);
       setUnallocCrId(ucr);
       setUnallocCrBaseline(ucr);
+      const deviceUri = settings.scanner_device_uri ?? "";
+      setScannerDeviceUri(deviceUri);
+      setScannerDeviceUriBaseline(deviceUri);
+      const pages = String(settings.max_scanned_pages);
+      setMaxScannedPages(pages);
+      setMaxScannedPagesBaseline(pages);
+      const dpi = String(settings.scan_dpi);
+      setScanDpi(dpi);
+      setScanDpiBaseline(dpi);
       setSavedMessage("Settings saved.");
     } catch (err) {
       if (err instanceof LedgerSettingsValidationError) {
@@ -254,6 +284,34 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
               </option>
             ))}
           </select>
+        </label>
+
+        <h3 className="config-subheading">Scanner (flatbed)</h3>
+        <p className="muted">
+          Server-side flatbed scan via SANE/HPLIP on the host running the API. Containerised API scanning is
+          not supported yet.
+        </p>
+        <label>
+          Scanner device URI
+          <input
+            value={scannerDeviceUri}
+            onChange={(e) => setScannerDeviceUri(e.target.value)}
+            placeholder="hpaio:/net/HP_LaserJet_MFP_M227-M231?ip=192.168.12.105"
+            spellCheck={false}
+          />
+        </label>
+        <label>
+          Max scanned pages (session guard)
+          <input
+            type="number"
+            min={1}
+            value={maxScannedPages}
+            onChange={(e) => setMaxScannedPages(e.target.value)}
+          />
+        </label>
+        <label>
+          Scan DPI
+          <input type="number" min={1} value={scanDpi} onChange={(e) => setScanDpi(e.target.value)} />
         </label>
 
         <div className="form-actions-inline">

@@ -1,19 +1,40 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { FileScan } from "lucide-react";
 
+import { getJournalEntry, type JournalLineOut } from "../api/journalEntries";
 import {
   attachmentMimeSupportsInlinePreview,
   fetchJournalEntryAttachmentBlob,
   listJournalEntryAttachments,
+  scanJournalEntryAttachment,
   unlinkJournalEntryAttachment,
   uploadJournalEntryAttachment,
   type JournalEntryAttachmentOut,
 } from "../api/journalEntryAttachments";
+import { ScanDialog } from "./ScanDialog";
 
 const UNLINK_CONFIRM =
   "Remove this attachment from the journal entry? The file may be deleted from storage if nothing else references it.";
 
 function isPdfMime(mimeType: string): boolean {
   return (mimeType.toLowerCase().split(";")[0]?.trim() ?? "") === "application/pdf";
+}
+
+function scanPartyBlockedReason(lines: JournalLineOut[]): string | null {
+  const parties = new Map<number, string>();
+  for (const line of lines) {
+    if (line.party_id != null) {
+      const name = line.party_name?.trim() || `party #${line.party_id}`;
+      parties.set(line.party_id, name);
+    }
+  }
+  if (parties.size === 0) {
+    return "This journal entry has no party on its lines. Add a party before scanning a bill.";
+  }
+  if (parties.size > 1) {
+    return `This journal entry has multiple parties (${[...parties.values()].join(", ")}). Scanning requires a single party.`;
+  }
+  return null;
 }
 
 export interface JournalEntryAttachmentsDialogProps {
@@ -34,6 +55,10 @@ export function JournalEntryAttachmentsDialog({ entryId, onDismiss }: JournalEnt
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+
+  const [scanOpen, setScanOpen] = useState(false);
+  const [scanPartyBlock, setScanPartyBlock] = useState<string | null>(null);
+  const [entrySubtitle, setEntrySubtitle] = useState<string | null>(null);
 
   const [preview, setPreview] = useState<{
     attachment: JournalEntryAttachmentOut;
@@ -69,6 +94,17 @@ export function JournalEntryAttachmentsDialog({ entryId, onDismiss }: JournalEnt
     }
   }, []);
 
+  const loadEntryContext = useCallback(async (id: number) => {
+    try {
+      const entry = await getJournalEntry(id);
+      setScanPartyBlock(scanPartyBlockedReason(entry.lines));
+      setEntrySubtitle(`Journal entry #${id} · ${entry.entry_date} · ${entry.summary}`);
+    } catch (err) {
+      setScanPartyBlock(err instanceof Error ? err.message : "Failed to load journal entry");
+      setEntrySubtitle(`Journal entry #${id}`);
+    }
+  }, []);
+
   useEffect(() => {
     const el = dialogRef.current;
     if (entryId == null) {
@@ -80,6 +116,9 @@ export function JournalEntryAttachmentsDialog({ entryId, onDismiss }: JournalEnt
       setUploadExternalRef("");
       setUploadFile(null);
       setUploadError(null);
+      setScanOpen(false);
+      setScanPartyBlock(null);
+      setEntrySubtitle(null);
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
@@ -87,7 +126,8 @@ export function JournalEntryAttachmentsDialog({ entryId, onDismiss }: JournalEnt
     }
     el?.showModal();
     void loadList(entryId);
-  }, [entryId, loadList, revokePreview]);
+    void loadEntryContext(entryId);
+  }, [entryId, loadEntryContext, loadList, revokePreview]);
 
   function handleDialogClose() {
     revokePreview();
@@ -124,6 +164,14 @@ export function JournalEntryAttachmentsDialog({ entryId, onDismiss }: JournalEnt
     } finally {
       setUploading(false);
     }
+  }
+
+  async function handleScan(params: { summary: string; externalReference: string | null }) {
+    if (entryId == null) {
+      return;
+    }
+    await scanJournalEntryAttachment(entryId, params);
+    await loadList(entryId);
   }
 
   async function handleDownload(att: JournalEntryAttachmentOut) {
@@ -185,185 +233,208 @@ export function JournalEntryAttachmentsDialog({ entryId, onDismiss }: JournalEnt
   }
 
   return (
-    <dialog
-      ref={dialogRef}
-      className={preview ? "attachments-dialog attachments-dialog-preview-open" : "attachments-dialog"}
-      onClose={handleDialogClose}
-      onCancel={(e) => {
-        e.preventDefault();
-        if (previewRef.current) {
-          revokePreview();
-          return;
-        }
-        dialogRef.current?.close();
-      }}
-    >
-      {preview ? (
-        <div
-          className="attachments-preview-fullscreen"
-          role="document"
-          aria-label={`Preview: ${preview.attachment.summary}`}
-        >
-          <header className="attachments-preview-fullscreen-bar">
-            <p className="attachments-preview-fullscreen-title" title={preview.attachment.summary}>
-              {preview.attachment.summary}
-            </p>
-            <button
-              type="button"
-              className="attachments-preview-close-x"
-              onClick={revokePreview}
-              aria-label="Close preview"
-            >
-              <svg
-                className="attachments-preview-close-x-icon"
-                width="22"
-                height="22"
-                viewBox="0 0 24 24"
-                aria-hidden
-                focusable="false"
+    <>
+      <ScanDialog
+        open={scanOpen}
+        subtitle={entrySubtitle ?? undefined}
+        partyBlockedReason={scanPartyBlock}
+        onDismiss={() => setScanOpen(false)}
+        onScan={handleScan}
+      />
+      <dialog
+        ref={dialogRef}
+        className={preview ? "attachments-dialog attachments-dialog-preview-open" : "attachments-dialog"}
+        onClose={handleDialogClose}
+        onCancel={(e) => {
+          e.preventDefault();
+          if (previewRef.current) {
+            revokePreview();
+            return;
+          }
+          dialogRef.current?.close();
+        }}
+      >
+        {preview ? (
+          <div
+            className="attachments-preview-fullscreen"
+            role="document"
+            aria-label={`Preview: ${preview.attachment.summary}`}
+          >
+            <header className="attachments-preview-fullscreen-bar">
+              <p className="attachments-preview-fullscreen-title" title={preview.attachment.summary}>
+                {preview.attachment.summary}
+              </p>
+              <button
+                type="button"
+                className="attachments-preview-close-x"
+                onClick={revokePreview}
+                aria-label="Close preview"
               >
-                <path
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  d="M18 6L6 18M6 6l12 12"
+                <svg
+                  className="attachments-preview-close-x-icon"
+                  width="22"
+                  height="22"
+                  viewBox="0 0 24 24"
+                  aria-hidden
+                  focusable="false"
+                >
+                  <path
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    d="M18 6L6 18M6 6l12 12"
+                  />
+                </svg>
+              </button>
+            </header>
+            <div className="attachments-preview-fullscreen-body">
+              {isPdfMime(preview.attachment.mime_type) ? (
+                <iframe
+                  className="attachments-preview-fullscreen-iframe"
+                  title={`Preview ${preview.attachment.summary}`}
+                  src={preview.url}
                 />
-              </svg>
-            </button>
-          </header>
-          <div className="attachments-preview-fullscreen-body">
-            {isPdfMime(preview.attachment.mime_type) ? (
-              <iframe
-                className="attachments-preview-fullscreen-iframe"
-                title={`Preview ${preview.attachment.summary}`}
-                src={preview.url}
-              />
-            ) : (
-              <img
-                className="attachments-preview-fullscreen-img"
-                src={preview.url}
-                alt={preview.attachment.summary}
-              />
-            )}
+              ) : (
+                <img
+                  className="attachments-preview-fullscreen-img"
+                  src={preview.url}
+                  alt={preview.attachment.summary}
+                />
+              )}
+            </div>
           </div>
-        </div>
-      ) : (
-        <div className="attachments-dialog-inner">
-          <div className="attachments-dialog-header">
-            <h2 id="attachments-dialog-title">Attachments</h2>
-            <button type="button" className="button-secondary" onClick={() => dialogRef.current?.close()}>
-              Close
-            </button>
-          </div>
-          <p className="muted attachments-dialog-subtitle">Journal entry #{entryId}</p>
+        ) : (
+          <div className="attachments-dialog-inner">
+            <div className="attachments-dialog-header">
+              <h2 id="attachments-dialog-title">Attachments</h2>
+              <button type="button" className="button-secondary" onClick={() => dialogRef.current?.close()}>
+                Close
+              </button>
+            </div>
+            <p className="muted attachments-dialog-subtitle">Journal entry #{entryId}</p>
 
-          {previewError && (
-            <p className="error" role="alert">
-              {previewError}
-            </p>
-          )}
-
-          <form className="attachments-upload-form" onSubmit={(e) => void handleUpload(e)}>
-            <h3 className="attachments-section-title">Upload</h3>
-            <label>
-              File
-              <input
-                ref={fileInputRef}
-                type="file"
-                onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)}
-                disabled={uploading}
-              />
-            </label>
-            <label>
-              Summary (required)
-              <input
-                aria-label="Attachment summary"
-                value={uploadSummary}
-                onChange={(e) => setUploadSummary(e.target.value)}
-                maxLength={500}
-                disabled={uploading}
-              />
-            </label>
-            <label>
-              External reference (optional)
-              <input
-                aria-label="External reference"
-                value={uploadExternalRef}
-                onChange={(e) => setUploadExternalRef(e.target.value)}
-                maxLength={500}
-                disabled={uploading}
-              />
-            </label>
-            {uploadError && (
+            {previewError && (
               <p className="error" role="alert">
-                {uploadError}
+                {previewError}
               </p>
             )}
-            <button type="submit" disabled={uploading || !uploadFile}>
-              {uploading ? "Uploading…" : "Upload"}
-            </button>
-          </form>
 
-          <h3 className="attachments-section-title">Attached files</h3>
-          {listLoading && items === null && <p>Loading…</p>}
-          {listError && (
-            <p className="error" role="alert">
-              {listError}
-            </p>
-          )}
-          {!listLoading && items && items.length === 0 && !listError && (
-            <p className="muted">No attachments yet.</p>
-          )}
-          {items && items.length > 0 && (
-            <table className="attachments-table">
-              <thead>
-                <tr>
-                  <th>Summary</th>
-                  <th>File / type</th>
-                  <th aria-label="actions" />
-                </tr>
-              </thead>
-              <tbody>
-                {items.map((att) => (
-                  <tr key={att.id}>
-                    <td>{att.summary}</td>
-                    <td>
-                      <span className="attachments-meta">
-                        {att.original_filename ?? "—"}
-                        <span className="muted"> · {att.mime_type}</span>
-                      </span>
-                      {att.external_reference && (
-                        <span className="muted attachments-external-ref">Ref: {att.external_reference}</span>
-                      )}
-                    </td>
-                    <td>
-                      <div className="attachments-row-actions">
-                        <button type="button" className="button-link" onClick={() => void handleDownload(att)}>
-                          Download
-                        </button>
-                        {attachmentMimeSupportsInlinePreview(att.mime_type) && (
-                          <button
-                            type="button"
-                            className="button-link"
-                            disabled={previewLoadingId === att.id}
-                            onClick={() => void handleView(att)}
-                          >
-                            {previewLoadingId === att.id ? "Loading…" : "View"}
-                          </button>
-                        )}
-                        <button type="button" className="button-link" onClick={() => handleRemoveClick(att)}>
-                          Remove
-                        </button>
-                      </div>
-                    </td>
+            <div className="attachments-add-actions">
+              <h3 className="attachments-section-title">Add attachment</h3>
+              <button
+                type="button"
+                className="button-secondary attachments-scan-button"
+                onClick={() => setScanOpen(true)}
+                disabled={uploading}
+                aria-label="Scan from flatbed"
+              >
+                <FileScan aria-hidden size={18} />
+                Scan
+              </button>
+            </div>
+
+            <form className="attachments-upload-form" onSubmit={(e) => void handleUpload(e)}>
+              <h3 className="attachments-section-title">Upload</h3>
+              <label>
+                File
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)}
+                  disabled={uploading}
+                />
+              </label>
+              <label>
+                Summary (required)
+                <input
+                  aria-label="Attachment summary"
+                  value={uploadSummary}
+                  onChange={(e) => setUploadSummary(e.target.value)}
+                  maxLength={500}
+                  disabled={uploading}
+                />
+              </label>
+              <label>
+                External reference (optional)
+                <input
+                  aria-label="External reference"
+                  value={uploadExternalRef}
+                  onChange={(e) => setUploadExternalRef(e.target.value)}
+                  maxLength={500}
+                  disabled={uploading}
+                />
+              </label>
+              {uploadError && (
+                <p className="error" role="alert">
+                  {uploadError}
+                </p>
+              )}
+              <button type="submit" disabled={uploading || !uploadFile}>
+                {uploading ? "Uploading…" : "Upload"}
+              </button>
+            </form>
+
+            <h3 className="attachments-section-title">Attached files</h3>
+            {listLoading && items === null && <p>Loading…</p>}
+            {listError && (
+              <p className="error" role="alert">
+                {listError}
+              </p>
+            )}
+            {!listLoading && items && items.length === 0 && !listError && (
+              <p className="muted">No attachments yet.</p>
+            )}
+            {items && items.length > 0 && (
+              <table className="attachments-table">
+                <thead>
+                  <tr>
+                    <th>Summary</th>
+                    <th>File / type</th>
+                    <th aria-label="actions" />
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      )}
-    </dialog>
+                </thead>
+                <tbody>
+                  {items.map((att) => (
+                    <tr key={att.id}>
+                      <td>{att.summary}</td>
+                      <td>
+                        <span className="attachments-meta">
+                          {att.original_filename ?? "—"}
+                          <span className="muted"> · {att.mime_type}</span>
+                        </span>
+                        {att.external_reference && (
+                          <span className="muted attachments-external-ref">Ref: {att.external_reference}</span>
+                        )}
+                      </td>
+                      <td>
+                        <div className="attachments-row-actions">
+                          <button type="button" className="button-link" onClick={() => void handleDownload(att)}>
+                            Download
+                          </button>
+                          {attachmentMimeSupportsInlinePreview(att.mime_type) && (
+                            <button
+                              type="button"
+                              className="button-link"
+                              disabled={previewLoadingId === att.id}
+                              onClick={() => void handleView(att)}
+                            >
+                              {previewLoadingId === att.id ? "Loading…" : "View"}
+                            </button>
+                          )}
+                          <button type="button" className="button-link" onClick={() => handleRemoveClick(att)}>
+                            Remove
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
+      </dialog>
+    </>
   );
 }

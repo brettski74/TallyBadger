@@ -12,6 +12,7 @@ from psycopg import errors
 from psycopg.rows import dict_row
 
 from tallybadger.attachments.mime_detect import detect_attachment_mime
+from tallybadger.core.config import get_settings
 from tallybadger.db import get_connection
 from tallybadger.ledger.income_expense_report import (
     INCOME_EXPENSE_CURRENCY_LABEL,
@@ -24,6 +25,9 @@ from tallybadger.ledger.balance_sheet_report import (
 from tallybadger.ledger.schedule import DateIncrement, generate_schedule, roll_forward_weekend, safe_day
 from tallybadger.ledger.journal_settlement_preview import build_journal_entry_settlement_preview
 from tallybadger.ledger.settlement_utils import payment_bridge_account_id, receipt_bridge_account_id
+from tallybadger.scanner.backend import ScanBackend, ScanSettings, get_scan_backend
+from tallybadger.scanner.errors import ScannerError
+from tallybadger.scanner.filename import build_scan_filename
 from tallybadger.ledger.models import (
     AccountCreate,
     AccountOut,
@@ -116,6 +120,10 @@ class LedgerSettingsValidationError(LedgerValidationError):
     def __init__(self, errors: list[str]) -> None:
         self.errors = errors
         super().__init__("; ".join(errors))
+
+
+class ScannerIntegrationError(LedgerError):
+    """Raised when server-side scanning fails."""
 
 
 def _coerce_new_review_messages(payload: JournalEntryWrite) -> list[str]:
@@ -1359,6 +1367,7 @@ class LedgerService:
                            unallocated_debits_account_id, unallocated_credits_account_id,
                            default_cheque_credit_account_id, default_cheque_debit_account_id,
                            max_attachment_upload_bytes, max_cheque_series_count,
+                           scanner_device_uri, max_scanned_pages, scan_dpi, scan_color_mode,
                            updated_at
                     FROM ledger_settings
                     WHERE id = 1
@@ -1411,6 +1420,10 @@ class LedgerService:
                             max_attachment_upload_bytes = COALESCE(
                                 %s, max_attachment_upload_bytes
                             ),
+                            scanner_device_uri = COALESCE(%s, scanner_device_uri),
+                            max_scanned_pages = COALESCE(%s, max_scanned_pages),
+                            scan_dpi = COALESCE(%s, scan_dpi),
+                            scan_color_mode = COALESCE(%s, scan_color_mode),
                             updated_at = NOW()
                         WHERE id = 1
                         RETURNING accounts_receivable_account_id, accounts_payable_account_id,
@@ -1420,6 +1433,7 @@ class LedgerService:
                                   default_cheque_debit_account_id,
                                   max_attachment_upload_bytes,
                                   max_cheque_series_count,
+                                  scanner_device_uri, max_scanned_pages, scan_dpi, scan_color_mode,
                                   updated_at
                         """,
                         (
@@ -1432,6 +1446,10 @@ class LedgerService:
                             payload.default_cheque_credit_account_id,
                             payload.default_cheque_debit_account_id,
                             payload.max_attachment_upload_bytes,
+                            payload.scanner_device_uri,
+                            payload.max_scanned_pages,
+                            payload.scan_dpi,
+                            payload.scan_color_mode,
                         ),
                     )
                     row = cur.fetchone()
@@ -5635,6 +5653,7 @@ class LedgerService:
         upload_filename: str | None,
         summary: str,
         external_reference: str | None,
+        enforce_upload_limit: bool = True,
     ) -> JournalEntryAttachmentOut:
         summary_clean = summary.strip()
         if not summary_clean:
@@ -5660,42 +5679,139 @@ class LedgerService:
                     )
                     if not cur.fetchone():
                         raise LedgerNotFoundError(f"journal entry {entry_id} not found")
-                    cur.execute(
-                        "SELECT max_attachment_upload_bytes FROM ledger_settings WHERE id = 1",
-                    )
-                    lim_row = cur.fetchone()
-                    if not lim_row:
-                        raise LedgerValidationError("ledger settings row is missing")
-                    max_b = int(lim_row["max_attachment_upload_bytes"])
-                    if len(file_bytes) > max_b:
-                        raise LedgerValidationError(
-                            f"attachment exceeds maximum size of {max_b} bytes",
-                        )
-                    cur.execute(
-                        """
-                        INSERT INTO attachments (
-                          blob, summary, external_reference, mime_type, original_filename
-                        )
-                        VALUES (%s, %s, %s, %s, %s)
-                        RETURNING id, summary, external_reference, mime_type,
-                                  original_filename, created_at, updated_at
-                        """,
-                        (file_bytes, summary_clean, ext_ref, mime, original_name),
-                    )
-                    att = cur.fetchone()
-                    assert att is not None
-                    try:
+                    if enforce_upload_limit:
                         cur.execute(
-                            """
-                            INSERT INTO journal_entry_attachments (journal_entry_id, attachment_id)
-                            VALUES (%s, %s)
-                            """,
-                            (entry_id, att["id"]),
+                            "SELECT max_attachment_upload_bytes FROM ledger_settings WHERE id = 1",
                         )
-                    except errors.UniqueViolation as exc:
-                        raise LedgerConflictError(
-                            "this attachment is already linked to the journal entry",
-                        ) from exc
+                        lim_row = cur.fetchone()
+                        if not lim_row:
+                            raise LedgerValidationError("ledger settings row is missing")
+                        max_b = int(lim_row["max_attachment_upload_bytes"])
+                        if len(file_bytes) > max_b:
+                            raise LedgerValidationError(
+                                f"attachment exceeds maximum size of {max_b} bytes",
+                            )
+                    return self._insert_journal_entry_attachment_row(
+                        cur,
+                        entry_id=entry_id,
+                        file_bytes=file_bytes,
+                        summary_clean=summary_clean,
+                        ext_ref=ext_ref,
+                        mime=mime,
+                        original_name=original_name,
+                    )
+
+    def scan_flatbed_jpeg(self, scan_backend: ScanBackend | None = None) -> bytes:
+        backend = scan_backend or get_scan_backend()
+        settings = self._scan_settings()
+        try:
+            return backend.scan_flatbed(settings)
+        except ScannerError as exc:
+            raise ScannerIntegrationError(str(exc)) from exc
+
+    def scan_and_attach_journal_entry(
+        self,
+        entry_id: int,
+        *,
+        summary: str,
+        external_reference: str | None,
+        scan_backend: ScanBackend | None = None,
+    ) -> JournalEntryAttachmentOut:
+        entry_date, party_name = self._journal_entry_scan_party(entry_id)
+        jpeg_bytes = self.scan_flatbed_jpeg(scan_backend=scan_backend)
+        filename = build_scan_filename(
+            entry_date=entry_date,
+            party_name=party_name,
+            summary=summary,
+        )
+        return self.add_journal_entry_attachment(
+            entry_id,
+            file_bytes=jpeg_bytes,
+            upload_filename=filename,
+            summary=summary,
+            external_reference=external_reference,
+            enforce_upload_limit=False,
+        )
+
+    def _scan_settings(self) -> ScanSettings:
+        ledger = self.get_ledger_settings()
+        app_settings = get_settings()
+        return ScanSettings(
+            device_uri=ledger.scanner_device_uri,
+            dpi=ledger.scan_dpi,
+            color_mode=ledger.scan_color_mode,
+            env_device_uri=app_settings.scanner_device_uri,
+        )
+
+    def _journal_entry_scan_party(self, entry_id: int) -> tuple[date, str]:
+        with self._connection_factory() as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(
+                    "SELECT id, entry_date FROM journal_entries WHERE id = %s",
+                    (entry_id,),
+                )
+                entry = cur.fetchone()
+                if not entry:
+                    raise LedgerNotFoundError(f"journal entry {entry_id} not found")
+                cur.execute(
+                    """
+                    SELECT DISTINCT jl.party_id, p.name AS party_name
+                    FROM journal_lines jl
+                    INNER JOIN parties p ON p.id = jl.party_id
+                    WHERE jl.entry_id = %s AND jl.party_id IS NOT NULL
+                    ORDER BY jl.party_id
+                    """,
+                    (entry_id,),
+                )
+                parties = cur.fetchall()
+        if not parties:
+            raise LedgerValidationError(
+                "journal entry must have exactly one party on its lines before scanning a bill",
+            )
+        if len(parties) > 1:
+            names = ", ".join(str(row["party_name"]) for row in parties)
+            raise LedgerValidationError(
+                "journal entry has multiple parties on its lines "
+                f"({names}); scanning requires a single party",
+            )
+        return entry["entry_date"], str(parties[0]["party_name"])
+
+    @staticmethod
+    def _insert_journal_entry_attachment_row(
+        cur,
+        *,
+        entry_id: int,
+        file_bytes: bytes,
+        summary_clean: str,
+        ext_ref: str | None,
+        mime: str,
+        original_name: str | None,
+    ) -> JournalEntryAttachmentOut:
+        cur.execute(
+            """
+            INSERT INTO attachments (
+              blob, summary, external_reference, mime_type, original_filename
+            )
+            VALUES (%s, %s, %s, %s, %s)
+            RETURNING id, summary, external_reference, mime_type,
+                      original_filename, created_at, updated_at
+            """,
+            (file_bytes, summary_clean, ext_ref, mime, original_name),
+        )
+        att = cur.fetchone()
+        assert att is not None
+        try:
+            cur.execute(
+                """
+                INSERT INTO journal_entry_attachments (journal_entry_id, attachment_id)
+                VALUES (%s, %s)
+                """,
+                (entry_id, att["id"]),
+            )
+        except errors.UniqueViolation as exc:
+            raise LedgerConflictError(
+                "this attachment is already linked to the journal entry",
+            ) from exc
         return JournalEntryAttachmentOut.model_validate(att)
 
     def get_journal_entry_attachment_download(

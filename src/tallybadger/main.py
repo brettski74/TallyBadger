@@ -20,6 +20,7 @@ from tallybadger.api.routes import (
     journal_entry_filter_presets,
     ledger,
     reports,
+    scanner,
 )
 from tallybadger.core.config import get_settings
 
@@ -50,6 +51,7 @@ app.include_router(import_csv.router)
 app.include_router(journal_entry_filter_presets.router)
 app.include_router(ledger.router)
 app.include_router(reports.router)
+app.include_router(scanner.router)
 
 
 @app.get("/")

@@ -656,6 +656,10 @@ class LedgerSettingsUpdate(BaseModel):
         default=None,
         gt=0,
     )
+    scanner_device_uri: str | None = Field(default=None, max_length=500)
+    max_scanned_pages: int | None = Field(default=None, gt=0)
+    scan_dpi: int | None = Field(default=None, gt=0)
+    scan_color_mode: Literal["greyscale"] | None = None
 
 
 class LedgerSettingsOut(BaseModel):
@@ -671,7 +675,16 @@ class LedgerSettingsOut(BaseModel):
     default_cheque_debit_account_id: int | None
     max_attachment_upload_bytes: int
     max_cheque_series_count: int
+    scanner_device_uri: str | None
+    max_scanned_pages: int
+    scan_dpi: int
+    scan_color_mode: str
     updated_at: datetime
+
+
+class JournalEntryScanAttach(BaseModel):
+    summary: str = Field(min_length=1, max_length=200)
+    external_reference: str | None = Field(default=None, max_length=500)
 
 
 class JournalEntryAttachmentOut(BaseModel):

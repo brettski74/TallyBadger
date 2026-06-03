@@ -1041,6 +1041,29 @@ th.table-row-actions-heading {
   font-size: 1rem;
 }
 
+.attachments-add-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.attachments-add-actions .attachments-section-title {
+  margin: 0;
+}
+
+.attachments-scan-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  width: auto;
+}
+
+.scan-dialog-title-icon {
+  vertical-align: middle;
+  margin-right: 0.35rem;
+}
+
 .attachments-upload-form {
   margin-bottom: 0.5rem;
 }

@@ -27,6 +27,14 @@ export interface LedgerSettings {
   max_attachment_upload_bytes: number;
   /** Maximum cheques in one post-dated series (#141). */
   max_cheque_series_count: number;
+  /** SANE/HPLIP device URI for flatbed scanning (#258). */
+  scanner_device_uri: string | null;
+  /** Guard for future multi-page scan sessions (#258). */
+  max_scanned_pages: number;
+  /** Flatbed scan resolution in dpi (#258). */
+  scan_dpi: number;
+  /** Flatbed scan colour mode (#258; v1 greyscale only). */
+  scan_color_mode: string;
   updated_at: string;
 }
 

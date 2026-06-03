@@ -58,6 +58,26 @@ export async function uploadJournalEntryAttachment(
   return response.json();
 }
 
+export async function scanJournalEntryAttachment(
+  entryId: number,
+  params: { summary: string; externalReference?: string | null },
+): Promise<JournalEntryAttachmentOut> {
+  const body: { summary: string; external_reference?: string } = { summary: params.summary };
+  const ext = params.externalReference?.trim();
+  if (ext) {
+    body.external_reference = ext;
+  }
+  const response = await fetch(`${getApiBase()}/journal-entries/${entryId}/attachments/scan`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw new Error(await readApiErrorMessage(response));
+  }
+  return response.json();
+}
+
 export async function fetchJournalEntryAttachmentBlob(
   entryId: number,
   attachmentId: number,
