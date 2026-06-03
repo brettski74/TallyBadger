@@ -146,7 +146,6 @@ def _setup_rent_accrual(import_api_client: TestClient) -> tuple[int, int, int, i
             "direction": "revenue",
             "party_id": party_id,
             "target_account_id": rent_id,
-            "bridge_account_id": ar_id,
             "frequency": "monthly_day",
             "start_date": "2026-07-01",
             "end_date": "2026-07-31",

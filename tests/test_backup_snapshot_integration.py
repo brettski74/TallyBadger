@@ -59,6 +59,7 @@ from tallybadger.ledger.models import (
     AccountCreate,
     JournalEntryWrite,
     JournalLineIn,
+    LedgerSettingsUpdate,
     PartyCreate,
 )
 from tallybadger.ledger.service import LedgerService
@@ -391,13 +392,15 @@ def _seed_ledger_with_accrual_plan(ledger_service: LedgerService) -> None:
     party = ledger_service.create_party(
         PartyCreate(name="Tenant A", role="customer", is_active=True),
     )
+    ledger_service.update_ledger_settings(
+        LedgerSettingsUpdate(accounts_receivable_account_id=ar.id),
+    )
     ledger_service.create_accrual_plan(
         AccrualPlanCreate(
             name="Rent Plan 2026",
             direction="revenue",
             party_id=party.id,
             target_account_id=rent.id,
-            bridge_account_id=ar.id,
             frequency="monthly_day",
             start_date=date(2026, 1, 1),
             end_date=date(2026, 2, 28),

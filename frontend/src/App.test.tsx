@@ -134,7 +134,7 @@ describe("App", () => {
         new Response(
           JSON.stringify({
             plans: [],
-            filter_options: { party_ids: [], target_account_ids: [], bridge_account_ids: [] },
+            filter_options: { party_ids: [], target_account_ids: [] },
           }),
           { status: 200 },
         ),

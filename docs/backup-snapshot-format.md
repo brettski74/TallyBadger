@@ -1,6 +1,6 @@
 # TallyBadger backup snapshot format
 
-This document defines the **versioned snapshot archive** used for database backup and restore. It stays aligned with **`format_version`** in `metadata.json` (current export: **2.0.0**; prior archives remain importable per the version window in **[STYLE.md](../STYLE.md)**).
+This document defines the **versioned snapshot archive** used for database backup and restore. It stays aligned with **`format_version`** in `metadata.json` (current export: **2.1.0**; prior archives remain importable per the version window in **[STYLE.md](../STYLE.md)**).
 
 Parent product spec: GitHub issue [#16](https://github.com/brettski74/TallyBadger/issues/16). Slice 1 ([#67](https://github.com/brettski74/TallyBadger/issues/67)) shipped **complete** export/import; slice 2 ([#68](https://github.com/brettski74/TallyBadger/issues/68)) adds **`configuration`** and **`financial`** modes with scoped validation and duplicate policies. Container **2.0.0** (tar.gz, envelopes, metadata-last) ships in [#251](https://github.com/brettski74/TallyBadger/issues/251) under epic [#239](https://github.com/brettski74/TallyBadger/issues/239).
 
@@ -8,7 +8,7 @@ Parent product spec: GitHub issue [#16](https://github.com/brettski74/TallyBadge
 
 TallyBadger supports two on-disk containers. Importers detect the container from **magic bytes** (ZIP `PK\x03\x04` / related signatures, or gzip `0x1f 0x8b`). Unknown headers are rejected with an actionable error.
 
-### Current export (`format_version` **2.0.0**)
+### Current export (`format_version` **2.1.0**)
 
 - One **`.tar.gz`** (gzip-compressed tar) per export; gzip compression level **9**.
 - HTTP export uses **`Content-Type: application/gzip`**; suggested filenames use **`.tar.gz`** (e.g. `tallybadger-complete-yyyymmdd-hhmmss.tar.gz`).
@@ -17,7 +17,7 @@ TallyBadger supports two on-disk containers. Importers detect the container from
 
 ```json
 {
-  "format_version": "2.0.0",
+  "format_version": "2.1.0",
   "table": "accounts",
   "rows": [ ]
 }
@@ -209,6 +209,8 @@ settlement_allocations.json
 **`export_type: configuration`**, **`format_version` 1.8.0** — same members as **1.7.0** `configuration`, plus **`cheque_register_filter_presets.json`**.
 
 **`export_type: complete`**, **1.8.0** — union of **1.8.0** `financial` members (same as **1.7.0** `financial`) and **1.8.0** `configuration` members (including `journal_entry_filter_presets.json` and `cheque_register_filter_presets.json`).
+
+**`format_version` 2.1.0** — same members and container as **2.0.0** (tar.gz envelopes). **`accrual_plans.json`** rows no longer include **`bridge_account_id`** ([#235](https://github.com/brettski74/TallyBadger/issues/235)); the accrual bridge is on **`journal_lines`** (and obligations reference that line). Importers **strip** `bridge_account_id` from older archives when present.
 
 Example `accounts.json` snippet:
 

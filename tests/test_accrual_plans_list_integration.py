@@ -98,7 +98,6 @@ def _seed_filter_fixtures(ledger_service: LedgerService) -> dict[str, int]:
             direction="revenue",
             party_id=party_a.id,
             target_account_id=rent.id,
-            bridge_account_id=ar.id,
             frequency="monthly_day",
             start_date=date(2026, 1, 1),
             end_date=date(2026, 1, 31),
@@ -114,7 +113,6 @@ def _seed_filter_fixtures(ledger_service: LedgerService) -> dict[str, int]:
             direction="revenue",
             party_id=party_b.id,
             target_account_id=rent.id,
-            bridge_account_id=ar.id,
             frequency="monthly_day",
             start_date=date(2026, 2, 1),
             end_date=date(2026, 3, 31),
@@ -144,7 +142,6 @@ def _seed_filter_fixtures(ledger_service: LedgerService) -> dict[str, int]:
             direction="revenue",
             party_id=party_a.id,
             target_account_id=rent.id,
-            bridge_account_id=ar.id,
             frequency="monthly_day",
             start_date=date(2025, 6, 1),
             end_date=date(2025, 6, 30),
@@ -304,4 +301,3 @@ def test_list_accrual_plans_include_filter_options(
     opts = response.json()["filter_options"]
     assert set(opts["party_ids"]) == {ids["party_a_id"], ids["party_b_id"]}
     assert opts["target_account_ids"] == [ids["rent_id"]]
-    assert opts["bridge_account_ids"] == [ids["ar_id"]]

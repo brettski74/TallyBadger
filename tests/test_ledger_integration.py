@@ -594,13 +594,15 @@ def test_accrual_plan_create_and_update_regenerates_entries(ledger_service: Ledg
     party = ledger_service.create_party(
         PartyCreate(name="Acme Yard Maintenance", role="customer", is_active=True)
     )
+    ledger_service.update_ledger_settings(
+        LedgerSettingsUpdate(accounts_receivable_account_id=ar.id),
+    )
     plan = ledger_service.create_accrual_plan(
         AccrualPlanCreate(
             name="Rent Plan 2026",
             direction="revenue",
             party_id=party.id,
             target_account_id=rent.id,
-            bridge_account_id=ar.id,
             frequency="monthly_day",
             start_date=date(2026, 1, 1),
             end_date=date(2026, 2, 28),
@@ -622,7 +624,6 @@ def test_accrual_plan_create_and_update_regenerates_entries(ledger_service: Ledg
             direction="revenue",
             party_id=party.id,
             target_account_id=rent.id,
-            bridge_account_id=ar.id,
             frequency="monthly_day",
             start_date=date(2026, 1, 1),
             end_date=date(2026, 3, 31),
@@ -668,7 +669,6 @@ def test_early_receipt_settlement_reclasses_accrual_ar_to_unearned(
             direction="revenue",
             party_id=party.id,
             target_account_id=rent.id,
-            bridge_account_id=ar.id,
             frequency="monthly_day",
             start_date=date(2026, 7, 1),
             end_date=date(2026, 7, 31),
@@ -736,7 +736,6 @@ def test_partial_early_receipt_splits_accrual_bridge_between_ur_and_ar(
             direction="revenue",
             party_id=party.id,
             target_account_id=rent.id,
-            bridge_account_id=ar.id,
             frequency="monthly_day",
             start_date=date(2026, 7, 1),
             end_date=date(2026, 7, 31),
@@ -813,7 +812,6 @@ def test_same_day_full_receipt_collapses_into_accrual_entry(
             direction="revenue",
             party_id=party.id,
             target_account_id=rent.id,
-            bridge_account_id=ar.id,
             frequency="monthly_day",
             start_date=date(2026, 7, 1),
             end_date=date(2026, 7, 31),
@@ -879,7 +877,6 @@ def test_same_day_partial_receipt_adds_cash_on_accrual_entry(
             direction="revenue",
             party_id=party.id,
             target_account_id=rent.id,
-            bridge_account_id=ar.id,
             frequency="monthly_day",
             start_date=date(2026, 7, 1),
             end_date=date(2026, 7, 31),
@@ -942,7 +939,6 @@ def test_same_day_overpayment_adds_cash_and_unearned_on_accrual_entry(
             direction="revenue",
             party_id=party.id,
             target_account_id=rent.id,
-            bridge_account_id=ar.id,
             frequency="monthly_day",
             start_date=date(2026, 7, 1),
             end_date=date(2026, 7, 31),
@@ -1005,7 +1001,6 @@ def test_early_payment_settlement_reclasses_accrual_ap_to_prepaid(
             direction="expense",
             party_id=party.id,
             target_account_id=repairs.id,
-            bridge_account_id=ap.id,
             frequency="monthly_day",
             start_date=date(2026, 8, 1),
             end_date=date(2026, 8, 31),
@@ -1069,7 +1064,6 @@ def test_partial_early_payment_splits_accrual_bridge_between_prepaid_and_ap(
             direction="expense",
             party_id=party.id,
             target_account_id=repairs.id,
-            bridge_account_id=ap.id,
             frequency="monthly_day",
             start_date=date(2026, 8, 1),
             end_date=date(2026, 8, 31),
@@ -1140,7 +1134,6 @@ def test_partial_early_payment_on_future_accrual_keeps_entry_balanced(
             direction="expense",
             party_id=party.id,
             target_account_id=maintenance.id,
-            bridge_account_id=ap.id,
             frequency="monthly_day",
             start_date=date(2025, 12, 1),
             end_date=date(2026, 1, 31),
@@ -1210,7 +1203,6 @@ def test_same_day_full_payment_collapses_into_accrual_entry(
             direction="expense",
             party_id=party.id,
             target_account_id=repairs.id,
-            bridge_account_id=ap.id,
             frequency="monthly_day",
             start_date=date(2026, 8, 1),
             end_date=date(2026, 8, 31),
@@ -1275,7 +1267,6 @@ def test_same_day_overpayment_adds_cash_and_prepaid_on_accrual_entry(
             direction="expense",
             party_id=party.id,
             target_account_id=repairs.id,
-            bridge_account_id=ap.id,
             frequency="monthly_day",
             start_date=date(2026, 8, 1),
             end_date=date(2026, 8, 31),
@@ -1334,7 +1325,6 @@ def test_early_payment_without_prepaid_account_rejected(
             direction="expense",
             party_id=party.id,
             target_account_id=repairs.id,
-            bridge_account_id=ap.id,
             frequency="monthly_day",
             start_date=date(2026, 8, 1),
             end_date=date(2026, 8, 31),
@@ -1787,9 +1777,13 @@ def test_balance_sheet_keeps_inactive_account_with_nonzero_balance(
 
 def test_create_accrual_plan_rejects_inactive_party_or_accounts(
     ledger_service: LedgerService,
+    integration_db_url: str,
 ) -> None:
     ar = ledger_service.create_account(AccountCreate(name="AR", type="asset"))
     rent = ledger_service.create_account(AccountCreate(name="Rent", type="revenue"))
+    ledger_service.update_ledger_settings(
+        LedgerSettingsUpdate(accounts_receivable_account_id=ar.id),
+    )
     party = ledger_service.create_party(PartyCreate(name="Inactive Tenant", role="customer", is_active=True))
     ledger_service.update_party(party.id, PartyUpdate(is_active=False))
     with pytest.raises(LedgerValidationError, match="inactive"):
@@ -1799,7 +1793,6 @@ def test_create_accrual_plan_rejects_inactive_party_or_accounts(
                 direction="revenue",
                 party_id=party.id,
                 target_account_id=rent.id,
-                bridge_account_id=ar.id,
                 frequency="monthly_day",
                 start_date=date(2026, 8, 1),
                 end_date=date(2026, 8, 31),
@@ -1810,16 +1803,22 @@ def test_create_accrual_plan_rejects_inactive_party_or_accounts(
         )
 
     party2 = ledger_service.create_party(PartyCreate(name="Active Tenant", role="customer", is_active=True))
-    bad_bridge = ledger_service.create_account(AccountCreate(name="Bad AR", type="asset"))
-    ledger_service.update_account(bad_bridge.id, AccountUpdate(is_active=False))
+    inactive_ar = ledger_service.create_account(AccountCreate(name="Inactive AR", type="asset"))
+    ledger_service.update_account(inactive_ar.id, AccountUpdate(is_active=False))
+    with connect(integration_db_url) as conn:
+        with conn.transaction():
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE ledger_settings SET accounts_receivable_account_id = %s WHERE id = 1",
+                    (inactive_ar.id,),
+                )
     with pytest.raises(LedgerValidationError, match="deactivated"):
         ledger_service.create_accrual_plan(
             AccrualPlanCreate(
-                name="Bad bridge",
+                name="Inactive AR bridge",
                 direction="revenue",
                 party_id=party2.id,
                 target_account_id=rent.id,
-                bridge_account_id=bad_bridge.id,
                 frequency="monthly_day",
                 start_date=date(2026, 8, 1),
                 end_date=date(2026, 8, 31),

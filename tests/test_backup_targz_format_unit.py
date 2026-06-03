@@ -29,13 +29,13 @@ from tallybadger.backup.snapshot import (
 )
 
 
-def test_export_format_version_is_two_zero_zero() -> None:
-    assert export_format_version() == "2.0.0"
-    assert FORMAT_VERSION_HISTORY[-1] == "2.0.0"
+def test_export_format_version_is_two_one_zero() -> None:
+    assert export_format_version() == "2.1.0"
+    assert FORMAT_VERSION_HISTORY[-1] == "2.1.0"
 
 
-def test_supported_import_window_after_two_zero_zero() -> None:
-    assert supported_import_format_versions() == frozenset({"1.6.0", "1.7.0", "1.8.0", "2.0.0"})
+def test_supported_import_window_after_two_one_zero() -> None:
+    assert supported_import_format_versions() == frozenset({"1.7.0", "1.8.0", "2.0.0", "2.1.0"})
 
 
 def test_snapshot_uses_json_envelopes_from_two_zero_zero() -> None:

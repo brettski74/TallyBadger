@@ -51,7 +51,6 @@ erDiagram
         bigint id PK
         text direction "revenue | expense"
         bigint party_id FK
-        bigint bridge_account_id FK "A/R or A/P"
         bigint target_account_id FK
     }
 
@@ -124,7 +123,7 @@ flowchart TB
 
 | Origin | Typical `journal_entries` marker | Creates `accrual_obligations`? |
 |--------|----------------------------------|--------------------------------|
-| **Accrual plan** (`create_accrual_plan`) | `accrual_plan_id` | **Yes** — one per scheduled accrual on the bridge (A/R or A/P) line. |
+| **Accrual plan** (`create_accrual_plan`) | `accrual_plan_id` | **Yes** — one per scheduled accrual on the bridge line (ledger **A/R** for `revenue` plans, **A/P** for `expense` plans from settings at post time; [#235](https://github.com/brettski74/TallyBadger/issues/235)). |
 | **CSV import** (`create_import_batch_with_entries`) | `import_batch_id` | **No** for plain cash/expense/revenue rows. **Yes** when **`line[]`** includes **`obligation-id`** — see [#151](https://github.com/brettski74/TallyBadger/issues/151). |
 
 An obligation belongs to the **accrual subledger** (`accrual_obligations` + its `source_entry_id` accrual JE). A batch is only the set of journal entries tagged with that batch's `import_batch_id`.
@@ -212,11 +211,11 @@ The list endpoint returns `{ "plans": [...], "filter_options": null | {...} }`. 
 
 | Parameter | Behaviour |
 |-----------|-----------|
-| `party_ids`, `target_account_ids`, `bridge_account_ids` | Multi-value exact match on the plan row |
+| `party_ids`, `target_account_ids` | Multi-value exact match on the plan row |
 | `from_date`, `to_date` | Plan `[start_date, end_date]` overlaps the filter range (inclusive) |
 | `name` | Case-insensitive POSIX regex (`~*`) on plan `name`; invalid pattern → **422** |
 | `settlement_status` | `any` \| `unsettled` \| `open` \| `partially_settled` \| `settled` — plan-level buckets per [#159](https://github.com/brettski74/TallyBadger/issues/159). **Omitted = no filter** (same as `any`). The register UI defaults to `open` on first load. |
-| `include_filter_options` | When `true`, adds `filter_options` with distinct `party_ids`, `target_account_ids`, and `bridge_account_ids` from **all** plans (for filter dropdowns), independent of the current filter. |
+| `include_filter_options` | When `true`, adds `filter_options` with distinct `party_ids` and `target_account_ids` from **all** plans (for filter dropdowns), independent of the current filter. |
 
 **Settlement buckets (plan level):**
 

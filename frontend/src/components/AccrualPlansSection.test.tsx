@@ -40,7 +40,7 @@ const parties: Party[] = [
 
 const emptyListBody = {
   plans: [],
-  filter_options: { party_ids: [], target_account_ids: [], bridge_account_ids: [] },
+  filter_options: { party_ids: [], target_account_ids: [] },
 };
 
 function listPlansResponse(plans: unknown[] = [], filterOptions?: Partial<typeof emptyListBody.filter_options>) {
@@ -50,7 +50,6 @@ function listPlansResponse(plans: unknown[] = [], filterOptions?: Partial<typeof
       filter_options: {
         party_ids: plans.length ? [1, 2] : [],
         target_account_ids: plans.length ? [2, 4] : [],
-        bridge_account_ids: plans.length ? [1, 3] : [],
         ...filterOptions,
       },
     }),
@@ -108,7 +107,7 @@ describe("AccrualPlansSection register", () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValue(
-        listPlansResponse([], { party_ids: [1, 2], target_account_ids: [2, 4], bridge_account_ids: [1, 3] }),
+        listPlansResponse([], { party_ids: [1, 2], target_account_ids: [2, 4] }),
       );
 
     render(<AccrualPlansSection accounts={accounts} parties={parties} />);
@@ -197,7 +196,6 @@ describe("AccrualPlansSection register", () => {
           direction: "revenue",
           party_id: 1,
           target_account_id: 2,
-          bridge_account_id: 1,
           frequency: "monthly_day",
           start_date: "2026-01-01",
           end_date: "2026-12-31",
@@ -233,7 +231,6 @@ describe("AccrualPlansSection view modal", () => {
       direction: "revenue",
       party_id: 1,
       target_account_id: 2,
-      bridge_account_id: 1,
       frequency: "monthly_day",
       start_date: "2026-01-01",
       end_date: "2026-03-31",
@@ -298,7 +295,6 @@ describe("AccrualPlansSection view modal", () => {
           direction: "revenue",
           party_id: 1,
           target_account_id: 2,
-          bridge_account_id: 1,
           frequency: "monthly_day",
           start_date: "2026-01-01",
           end_date: "2026-12-31",
@@ -331,7 +327,6 @@ describe("AccrualPlansSection view modal", () => {
             direction: "revenue",
             party_id: 1,
             target_account_id: 2,
-            bridge_account_id: 1,
             frequency: "monthly_day",
             start_date: "2026-01-01",
             end_date: "2026-03-31",
@@ -391,7 +386,6 @@ describe("AccrualPlansSection view modal", () => {
             direction: "expense",
             party_id: 1,
             target_account_id: 3,
-            bridge_account_id: 2,
             frequency: "monthly_day",
             start_date: "2026-01-01",
             end_date: "2026-03-31",
@@ -432,7 +426,6 @@ describe("AccrualPlansSection view modal", () => {
             direction: "revenue",
             party_id: 1,
             target_account_id: 2,
-            bridge_account_id: 1,
             frequency: "monthly_day",
             start_date: "2026-01-01",
             end_date: "2026-03-31",
@@ -497,7 +490,6 @@ describe("AccrualPlansSection create flow", () => {
             direction: "revenue",
             party_id: 1,
             target_account_id: 2,
-            bridge_account_id: 1,
             frequency: "monthly_day",
             start_date: "2026-01-01",
             end_date: "2026-01-31",
@@ -522,7 +514,6 @@ describe("AccrualPlansSection create flow", () => {
             direction: "revenue",
             party_id: 1,
             target_account_id: 2,
-            bridge_account_id: 1,
             frequency: "monthly_day",
             start_date: "2026-01-01",
             end_date: "2026-01-31",
@@ -547,7 +538,6 @@ describe("AccrualPlansSection create flow", () => {
     await user.type(screen.getByLabelText("Plan name"), "Rent Plan");
     await user.selectOptions(screen.getByLabelText("Plan party"), "1");
     await user.selectOptions(screen.getByLabelText("Plan target account"), "2");
-    await user.selectOptions(screen.getByLabelText("Plan bridge account"), "1");
     await user.clear(screen.getByLabelText("Plan amount"));
     await user.type(screen.getByLabelText("Plan amount"), "100.00");
     await user.click(screen.getByRole("button", { name: /Preview entries/i }));
@@ -594,7 +584,6 @@ describe("AccrualPlansSection create flow", () => {
     await user.type(screen.getByLabelText("Plan name"), "Rent Plan");
     await user.selectOptions(screen.getByLabelText("Plan party"), "1");
     await user.selectOptions(screen.getByLabelText("Plan target account"), "2");
-    await user.selectOptions(screen.getByLabelText("Plan bridge account"), "1");
     await user.click(screen.getByRole("button", { name: /Preview entries/i }));
     expect(await screen.findByRole("heading", { name: "Preview accrual entries" })).toBeInTheDocument();
 
@@ -615,7 +604,6 @@ describe("AccrualPlansSection create flow", () => {
     await openCreateDialog(user);
     await user.type(screen.getByLabelText("Plan name"), "Rent Plan");
     await user.selectOptions(screen.getByLabelText("Plan target account"), "2");
-    await user.selectOptions(screen.getByLabelText("Plan bridge account"), "1");
     await user.click(screen.getByRole("button", { name: /Preview entries/i }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Select a party.");
@@ -633,7 +621,6 @@ describe("AccrualPlansSection create flow", () => {
     await user.type(screen.getByLabelText("Plan name"), "Bad Revenue Plan");
     await user.selectOptions(screen.getByLabelText("Plan party"), "1");
     await user.selectOptions(screen.getByLabelText("Plan target account"), "2");
-    await user.selectOptions(screen.getByLabelText("Plan bridge account"), "1");
     await user.selectOptions(screen.getByLabelText("Plan direction"), "expense");
     await user.click(screen.getByRole("button", { name: /Preview entries/i }));
 
@@ -685,7 +672,6 @@ describe("AccrualPlansSection create flow", () => {
     await user.type(screen.getByLabelText("Plan name"), "Rent Plan");
     await user.selectOptions(screen.getByLabelText("Plan party"), "1");
     await user.selectOptions(screen.getByLabelText("Plan target account"), "2");
-    await user.selectOptions(screen.getByLabelText("Plan bridge account"), "1");
     await user.click(screen.getByRole("button", { name: /Preview entries/i }));
     expect(await screen.findByRole("heading", { name: "Preview accrual entries" })).toBeInTheDocument();
 
@@ -725,7 +711,6 @@ describe("AccrualPlansSection create flow", () => {
     await user.type(screen.getByLabelText("Plan name"), "Rent Plan");
     await user.selectOptions(screen.getByLabelText("Plan party"), "1");
     await user.selectOptions(screen.getByLabelText("Plan target account"), "2");
-    await user.selectOptions(screen.getByLabelText("Plan bridge account"), "1");
     await user.click(screen.getByRole("button", { name: /Preview entries/i }));
     expect(await screen.findByRole("heading", { name: "Preview accrual entries" })).toBeInTheDocument();
 
@@ -769,7 +754,6 @@ const unsettledPlanRow = {
   direction: "revenue" as const,
   party_id: 1,
   target_account_id: 2,
-  bridge_account_id: 1,
   frequency: "monthly_day" as const,
   start_date: "2026-01-01",
   end_date: "2026-12-31",

@@ -16,7 +16,6 @@ export interface AccrualPlan {
   direction: AccrualDirection;
   party_id: number;
   target_account_id: number;
-  bridge_account_id: number;
   frequency: AccrualFrequency;
   start_date: string;
   end_date: string;
@@ -70,7 +69,6 @@ export interface AccrualPlanWrite {
   direction: AccrualDirection;
   party_id: number;
   target_account_id: number;
-  bridge_account_id: number;
   frequency: AccrualFrequency;
   start_date: string;
   end_date: string;
@@ -93,7 +91,6 @@ export interface AccrualPreviewItem {
 export interface AccrualPlanListFilterOptions {
   party_ids: number[];
   target_account_ids: number[];
-  bridge_account_ids: number[];
 }
 
 export interface AccrualPlanListResponse {
@@ -104,7 +101,6 @@ export interface AccrualPlanListResponse {
 export interface AccrualPlanListParams {
   party_ids?: number[];
   target_account_ids?: number[];
-  bridge_account_ids?: number[];
   from_date?: string;
   to_date?: string;
   name?: string;
@@ -127,7 +123,6 @@ export async function listAccrualPlans(
   const search = new URLSearchParams();
   appendIdList(search, "party_ids", params.party_ids);
   appendIdList(search, "target_account_ids", params.target_account_ids);
-  appendIdList(search, "bridge_account_ids", params.bridge_account_ids);
   if (params.from_date) {
     search.set("from_date", params.from_date);
   }

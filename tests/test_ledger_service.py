@@ -196,14 +196,38 @@ def test_journal_list_labels_reject_blank_account_name() -> None:
         labels_and_amount_for_journal_list_lines([(Decimal("1.00"), "   ")])
 
 
+def _settings_row_for_accrual_preview(*, ar_id: int = 1, ap_id: int = 3) -> dict[str, int]:
+    return {
+        "accounts_receivable_account_id": ar_id,
+        "accounts_payable_account_id": ap_id,
+    }
+
+
+def _preview_validation_fetchone_side_effect(
+    *,
+    target_type: str = "revenue",
+    ar_id: int = 1,
+    ap_id: int = 3,
+) -> list[object]:
+    return [
+        _settings_row_for_accrual_preview(ar_id=ar_id, ap_id=ap_id),
+        {"id": 10},
+        {"id": 2},
+        {"type": target_type},
+        {"is_active": True},
+        {"is_active": True},
+        {"is_active": True},
+    ]
+
+
 def test_preview_accrual_plan_monthly_generates_balanced_lines() -> None:
-    service, _conn, _cur = _build_service_with_mocks()
+    service, _conn, cur = _build_service_with_mocks()
+    cur.fetchone.side_effect = _preview_validation_fetchone_side_effect()
     payload = AccrualPlanCreate(
         name="Rent 2026",
         direction="revenue",
         party_id=10,
         target_account_id=2,
-        bridge_account_id=1,
         frequency="monthly_day",
         start_date=date(2026, 1, 1),
         end_date=date(2026, 3, 31),
@@ -219,13 +243,13 @@ def test_preview_accrual_plan_monthly_generates_balanced_lines() -> None:
 
 
 def test_preview_accrual_plan_monthly_business_day_adjust_rolls_weekend_forward() -> None:
-    service, _conn, _cur = _build_service_with_mocks()
+    service, _conn, cur = _build_service_with_mocks()
+    cur.fetchone.side_effect = _preview_validation_fetchone_side_effect()
     payload = AccrualPlanCreate(
         name="Rent 2026",
         direction="revenue",
         party_id=10,
         target_account_id=2,
-        bridge_account_id=1,
         frequency="monthly_day",
         start_date=date(2026, 8, 1),
         end_date=date(2026, 8, 31),
@@ -239,13 +263,13 @@ def test_preview_accrual_plan_monthly_business_day_adjust_rolls_weekend_forward(
 
 
 def test_preview_accrual_plan_yearly_business_day_adjust_rolls_weekend_forward() -> None:
-    service, _conn, _cur = _build_service_with_mocks()
+    service, _conn, cur = _build_service_with_mocks()
+    cur.fetchone.side_effect = _preview_validation_fetchone_side_effect(target_type="expense")
     payload = AccrualPlanCreate(
         name="Annual plan",
         direction="expense",
         party_id=10,
         target_account_id=2,
-        bridge_account_id=1,
         frequency="yearly",
         start_date=date(2027, 7, 1),
         end_date=date(2027, 7, 31),
@@ -266,7 +290,6 @@ def test_weekly_rejects_business_day_adjust() -> None:
             direction="revenue",
             party_id=1,
             target_account_id=2,
-            bridge_account_id=3,
             frequency="weekly",
             start_date=date(2026, 1, 1),
             end_date=date(2026, 1, 31),
@@ -279,16 +302,12 @@ def test_weekly_rejects_business_day_adjust() -> None:
 
 def test_expense_plan_target_account_must_be_expense() -> None:
     service, _conn, cur = _build_service_with_mocks()
-    cur.fetchall.return_value = [
-        {"id": 10, "type": "asset"},
-        {"id": 11, "type": "liability"},
-    ]
+    cur.fetchone.return_value = {"type": "asset"}
     payload = AccrualPlanCreate(
         name="Expense Plan",
         direction="expense",
         party_id=1,
         target_account_id=10,
-        bridge_account_id=11,
         frequency="monthly_day",
         start_date=date(2026, 1, 1),
         end_date=date(2026, 1, 31),
@@ -297,7 +316,29 @@ def test_expense_plan_target_account_must_be_expense() -> None:
         day_of_month=1,
     )
     with pytest.raises(LedgerValidationError, match="type expense"):
-        service._assert_plan_account_direction_rules(cur, payload)
+        service._assert_plan_target_account_rules(cur, payload)
+
+
+def test_preview_accrual_plan_requires_ledger_receivable() -> None:
+    service, _conn, cur = _build_service_with_mocks()
+    cur.fetchone.return_value = {
+        "accounts_receivable_account_id": None,
+        "accounts_payable_account_id": 3,
+    }
+    payload = AccrualPlanCreate(
+        name="Rent",
+        direction="revenue",
+        party_id=1,
+        target_account_id=2,
+        frequency="monthly_day",
+        start_date=date(2026, 1, 1),
+        end_date=date(2026, 1, 31),
+        amount=Decimal("10.00"),
+        summary_template="{plan}",
+        day_of_month=1,
+    )
+    with pytest.raises(LedgerValidationError, match="accounts receivable"):
+        service.preview_accrual_plan(payload)
 
 
 def test_settlement_journal_summary_uses_earliest_allocated_accrual() -> None:
