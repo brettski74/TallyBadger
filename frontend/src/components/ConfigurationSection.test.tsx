@@ -81,6 +81,9 @@ describe("ConfigurationSection", () => {
       prepaid_expenses_account_id: 5,
       unallocated_debits_account_id: 10,
       unallocated_credits_account_id: 11,
+      scanner_device_uri: null,
+      max_scanned_pages: null,
+      scan_dpi: null,
     });
   });
 

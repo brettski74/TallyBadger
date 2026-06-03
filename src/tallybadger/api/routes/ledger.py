@@ -33,6 +33,7 @@ from tallybadger.ledger.models import (
     JournalEntryAttachmentOut,
     JournalEntryListItem,
     JournalEntryOut,
+    JournalEntryScanAttach,
     JournalEntrySettlementPreviewOut,
     JournalEntryWrite,
     SettlementOut,
@@ -44,8 +45,10 @@ from tallybadger.ledger.service import (
     LedgerService,
     LedgerSettingsValidationError,
     LedgerValidationError,
+    ScannerIntegrationError,
     read_upload_file_limited,
 )
+from tallybadger.scanner.backend import ScanBackend, get_scan_backend_for_settings
 
 router = APIRouter(prefix="", tags=["ledger"])
 
@@ -59,6 +62,12 @@ def _attachment_content_disposition(filename: str) -> str:
 @lru_cache
 def get_ledger_service() -> LedgerService:
     return LedgerService()
+
+
+def get_scan_backend_dep(
+    service: LedgerService = Depends(get_ledger_service),
+) -> ScanBackend:
+    return get_scan_backend_for_settings(service._scan_settings())
 
 
 @router.get("/accounts", response_model=list[AccountOut])
@@ -554,6 +563,37 @@ def upload_journal_entry_attachment(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except LedgerValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except LedgerConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post(
+    "/journal-entries/{entry_id}/attachments/scan",
+    response_model=JournalEntryAttachmentOut,
+    status_code=status.HTTP_201_CREATED,
+)
+def scan_journal_entry_attachment(
+    entry_id: int,
+    payload: JournalEntryScanAttach,
+    service: LedgerService = Depends(get_ledger_service),
+    scan_backend: ScanBackend = Depends(get_scan_backend_dep),
+) -> JournalEntryAttachmentOut:
+    try:
+        return service.scan_and_attach_journal_entry(
+            entry_id,
+            summary=payload.summary,
+            external_reference=payload.external_reference,
+            scan_backend=scan_backend,
+        )
+    except LedgerNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except LedgerValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ScannerIntegrationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
     except LedgerConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 

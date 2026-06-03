@@ -23,5 +23,6 @@ export const DEV_SERVER_API_PROXY_PREFIXES = [
   "obligations",
   "parties",
   "reports",
+  "scanner",
   "settlements",
 ] as const;

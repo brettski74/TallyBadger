@@ -1,6 +1,9 @@
 from functools import lru_cache
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+ScanBackendKind = Literal["stub", "hplip"]
 
 
 class Settings(BaseSettings):
@@ -16,6 +19,8 @@ class Settings(BaseSettings):
     frontend_host: str = "127.0.0.1"
     frontend_port: int = 5173
     cors_allowed_origins: list[str] = []
+    scan_backend: ScanBackendKind = "stub"
+    scanner_device_uri: str | None = None
 
     def resolved_cors_allowed_origins(self) -> list[str]:
         if self.cors_allowed_origins:
