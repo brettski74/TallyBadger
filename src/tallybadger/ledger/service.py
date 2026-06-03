@@ -27,7 +27,7 @@ from tallybadger.ledger.journal_settlement_preview import build_journal_entry_se
 from tallybadger.ledger.settlement_utils import payment_bridge_account_id, receipt_bridge_account_id
 from tallybadger.scanner.backend import ScanBackend, ScanSettings, get_scan_backend
 from tallybadger.scanner.errors import ScannerError
-from tallybadger.scanner.filename import build_scan_filename
+from tallybadger.scanner.filename import build_journal_entry_scan_filename
 from tallybadger.ledger.models import (
     AccountCreate,
     AccountOut,
@@ -5717,12 +5717,12 @@ class LedgerService:
         external_reference: str | None,
         scan_backend: ScanBackend | None = None,
     ) -> JournalEntryAttachmentOut:
-        entry_date, party_name = self._journal_entry_scan_party(entry_id)
+        entry_date, party_name = self._journal_entry_scan_filename_context(entry_id)
         jpeg_bytes = self.scan_flatbed_jpeg(scan_backend=scan_backend)
-        filename = build_scan_filename(
+        filename = build_journal_entry_scan_filename(
             entry_date=entry_date,
-            party_name=party_name,
             summary=summary,
+            party_name=party_name,
         )
         return self.add_journal_entry_attachment(
             entry_id,
@@ -5743,11 +5743,11 @@ class LedgerService:
             env_device_uri=app_settings.scanner_device_uri,
         )
 
-    def _journal_entry_scan_party(self, entry_id: int) -> tuple[date, str]:
+    def _journal_entry_scan_filename_context(self, entry_id: int) -> tuple[date, str | None]:
         with self._connection_factory() as conn:
             with conn.cursor(row_factory=dict_row) as cur:
                 cur.execute(
-                    "SELECT id, entry_date FROM journal_entries WHERE id = %s",
+                    "SELECT entry_date FROM journal_entries WHERE id = %s",
                     (entry_id,),
                 )
                 entry = cur.fetchone()
@@ -5755,26 +5755,47 @@ class LedgerService:
                     raise LedgerNotFoundError(f"journal entry {entry_id} not found")
                 cur.execute(
                     """
-                    SELECT DISTINCT jl.party_id, p.name AS party_name
+                    SELECT 1
                     FROM journal_lines jl
-                    INNER JOIN parties p ON p.id = jl.party_id
                     WHERE jl.entry_id = %s AND jl.party_id IS NOT NULL
-                    ORDER BY jl.party_id
+                    LIMIT 1
                     """,
                     (entry_id,),
                 )
-                parties = cur.fetchall()
-        if not parties:
-            raise LedgerValidationError(
-                "journal entry must have exactly one party on its lines before scanning a bill",
-            )
-        if len(parties) > 1:
-            names = ", ".join(str(row["party_name"]) for row in parties)
-            raise LedgerValidationError(
-                "journal entry has multiple parties on its lines "
-                f"({names}); scanning requires a single party",
-            )
-        return entry["entry_date"], str(parties[0]["party_name"])
+                if cur.fetchone() is None:
+                    return entry["entry_date"], None
+                cur.execute(
+                    """
+                    SELECT p.name AS party_name
+                    FROM journal_lines jl
+                    INNER JOIN accounts a ON a.id = jl.account_id
+                    INNER JOIN parties p ON p.id = jl.party_id
+                    WHERE jl.entry_id = %s
+                      AND jl.party_id IS NOT NULL
+                      AND a.type IN ('revenue', 'expense')
+                    ORDER BY ABS(jl.amount) DESC, jl.id ASC
+                    LIMIT 1
+                    """,
+                    (entry_id,),
+                )
+                pl_row = cur.fetchone()
+                if pl_row is not None:
+                    return entry["entry_date"], str(pl_row["party_name"])
+                cur.execute(
+                    """
+                    SELECT p.name AS party_name
+                    FROM journal_lines jl
+                    INNER JOIN parties p ON p.id = jl.party_id
+                    WHERE jl.entry_id = %s AND jl.party_id IS NOT NULL
+                    ORDER BY ABS(jl.amount) DESC, jl.id ASC
+                    LIMIT 1
+                    """,
+                    (entry_id,),
+                )
+                fallback = cur.fetchone()
+        if fallback is None:
+            return entry["entry_date"], None
+        return entry["entry_date"], str(fallback["party_name"])
 
     @staticmethod
     def _insert_journal_entry_attachment_row(

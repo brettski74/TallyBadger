@@ -5,7 +5,7 @@ import io
 from fastapi import APIRouter, Depends, HTTPException, status
 from starlette.responses import StreamingResponse
 
-from tallybadger.api.deps import get_scan_backend_dep
+from tallybadger.api.routes.ledger import get_scan_backend_dep
 from tallybadger.api.routes.ledger import get_ledger_service
 from tallybadger.ledger.service import LedgerService, ScannerIntegrationError
 from tallybadger.scanner.backend import ScanBackend

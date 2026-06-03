@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FileScan } from "lucide-react";
 
-import { getJournalEntry, type JournalLineOut } from "../api/journalEntries";
+import { getJournalEntry } from "../api/journalEntries";
 import {
   attachmentMimeSupportsInlinePreview,
   fetchJournalEntryAttachmentBlob,
@@ -18,23 +18,6 @@ const UNLINK_CONFIRM =
 
 function isPdfMime(mimeType: string): boolean {
   return (mimeType.toLowerCase().split(";")[0]?.trim() ?? "") === "application/pdf";
-}
-
-function scanPartyBlockedReason(lines: JournalLineOut[]): string | null {
-  const parties = new Map<number, string>();
-  for (const line of lines) {
-    if (line.party_id != null) {
-      const name = line.party_name?.trim() || `party #${line.party_id}`;
-      parties.set(line.party_id, name);
-    }
-  }
-  if (parties.size === 0) {
-    return "This journal entry has no party on its lines. Add a party before scanning a bill.";
-  }
-  if (parties.size > 1) {
-    return `This journal entry has multiple parties (${[...parties.values()].join(", ")}). Scanning requires a single party.`;
-  }
-  return null;
 }
 
 export interface JournalEntryAttachmentsDialogProps {
@@ -57,7 +40,6 @@ export function JournalEntryAttachmentsDialog({ entryId, onDismiss }: JournalEnt
   const [uploadError, setUploadError] = useState<string | null>(null);
 
   const [scanOpen, setScanOpen] = useState(false);
-  const [scanPartyBlock, setScanPartyBlock] = useState<string | null>(null);
   const [entrySubtitle, setEntrySubtitle] = useState<string | null>(null);
 
   const [preview, setPreview] = useState<{
@@ -97,10 +79,8 @@ export function JournalEntryAttachmentsDialog({ entryId, onDismiss }: JournalEnt
   const loadEntryContext = useCallback(async (id: number) => {
     try {
       const entry = await getJournalEntry(id);
-      setScanPartyBlock(scanPartyBlockedReason(entry.lines));
       setEntrySubtitle(`Journal entry #${id} · ${entry.entry_date} · ${entry.summary}`);
     } catch (err) {
-      setScanPartyBlock(err instanceof Error ? err.message : "Failed to load journal entry");
       setEntrySubtitle(`Journal entry #${id}`);
     }
   }, []);
@@ -117,7 +97,6 @@ export function JournalEntryAttachmentsDialog({ entryId, onDismiss }: JournalEnt
       setUploadFile(null);
       setUploadError(null);
       setScanOpen(false);
-      setScanPartyBlock(null);
       setEntrySubtitle(null);
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
@@ -237,7 +216,6 @@ export function JournalEntryAttachmentsDialog({ entryId, onDismiss }: JournalEnt
       <ScanDialog
         open={scanOpen}
         subtitle={entrySubtitle ?? undefined}
-        partyBlockedReason={scanPartyBlock}
         onDismiss={() => setScanOpen(false)}
         onScan={handleScan}
       />

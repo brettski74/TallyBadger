@@ -288,15 +288,16 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
 
         <h3 className="config-subheading">Scanner (flatbed)</h3>
         <p className="muted">
-          Server-side flatbed scan via SANE/HPLIP on the host running the API. Containerised API scanning is
-          not supported yet.
+          Server-side flatbed scan via SANE/HPLIP on the host running the API. Saving a device URI here
+          enables real hardware scanning (no separate backend toggle). Containerised API scanning is not
+          supported yet.
         </p>
         <label>
           Scanner device URI
           <input
             value={scannerDeviceUri}
             onChange={(e) => setScannerDeviceUri(e.target.value)}
-            placeholder="hpaio:/net/HP_LaserJet_MFP_M227-M231?ip=192.168.12.105"
+            placeholder="hpaio:/net/HP_LaserJet_MFP_M227-M231?ip=192.168.1.1"
             spellCheck={false}
           />
         </label>

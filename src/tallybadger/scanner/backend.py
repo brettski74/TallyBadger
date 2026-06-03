@@ -29,11 +29,33 @@ class ScanBackend(Protocol):
 ScanBackendKind = Literal["stub", "hplip"]
 
 
-def get_scan_backend(kind: ScanBackendKind | None = None) -> ScanBackend:
+def resolve_scan_backend_kind(settings: ScanSettings | None = None) -> ScanBackendKind:
+    """Pick stub vs HPLIP for this request.
+
+    Explicit ``TALLYBADGER_SCAN_BACKEND`` (including via ``.env``) always wins.
+    Otherwise use HPLIP when a device URI is configured in ledger settings or env.
+    """
+    app = get_settings()
+    if "scan_backend" in app.model_fields_set:
+        return app.scan_backend
+    if settings and settings.resolved_device_uri():
+        return "hplip"
+    return "stub"
+
+
+def get_scan_backend_for_settings(
+    settings: ScanSettings | None = None,
+    *,
+    kind: ScanBackendKind | None = None,
+) -> ScanBackend:
     from tallybadger.scanner.hplip import HplipScanBackend
     from tallybadger.scanner.stub import StubScanBackend
 
-    resolved = kind or get_settings().scan_backend
+    resolved = kind or resolve_scan_backend_kind(settings)
     if resolved == "hplip":
         return HplipScanBackend()
     return StubScanBackend()
+
+
+def get_scan_backend(kind: ScanBackendKind | None = None) -> ScanBackend:
+    return get_scan_backend_for_settings(None, kind=kind)

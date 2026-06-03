@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from psycopg import connect
 from psycopg.rows import dict_row
 
-from tallybadger.api.deps import get_scan_backend_dep
+from tallybadger.api.routes.ledger import get_scan_backend_dep
 from tallybadger.api.routes.ledger import get_ledger_service
 from tallybadger.main import app
 from tallybadger.ledger.models import (
@@ -20,7 +20,7 @@ from tallybadger.ledger.models import (
     LedgerSettingsUpdate,
     PartyCreate,
 )
-from tallybadger.ledger.service import LedgerService, LedgerValidationError
+from tallybadger.ledger.service import LedgerService
 from tallybadger.scanner.stub import StubScanBackend, minimal_jpeg_bytes
 
 pytestmark = pytest.mark.integration
@@ -135,29 +135,54 @@ def test_scan_attach_uses_stub_and_skips_upload_limit(ledger_service: LedgerServ
         )
 
 
-def test_scan_attach_requires_single_party(ledger_service: LedgerService) -> None:
+def test_scan_attach_without_party_on_lines(ledger_service: LedgerService) -> None:
     cash = ledger_service.create_account(AccountCreate(name="Cash", type="asset"))
     expense = ledger_service.create_account(AccountCreate(name="Expense", type="expense"))
-    p1 = ledger_service.create_party(PartyCreate(name="Alpha", role="vendor", is_active=True))
-    p2 = ledger_service.create_party(PartyCreate(name="Beta", role="vendor", is_active=True))
     entry = ledger_service.create_entry(
         JournalEntryWrite(
             entry_date=date(2026, 5, 30),
-            summary="mixed",
+            summary="internal transfer",
             description=None,
             lines=[
-                JournalLineIn(account_id=expense.id, party_id=p1.id, amount=Decimal("50")),
-                JournalLineIn(account_id=cash.id, party_id=p2.id, amount=Decimal("-50")),
+                JournalLineIn(account_id=expense.id, amount=Decimal("50")),
+                JournalLineIn(account_id=cash.id, amount=Decimal("-50")),
             ],
         ),
     )
-    with pytest.raises(LedgerValidationError, match="multiple parties"):
-        ledger_service.scan_and_attach_journal_entry(
-            entry.id,
-            summary="Invoice",
-            external_reference=None,
-            scan_backend=StubScanBackend(),
-        )
+    att = ledger_service.scan_and_attach_journal_entry(
+        entry.id,
+        summary="Supporting doc",
+        external_reference=None,
+        scan_backend=StubScanBackend(),
+    )
+    assert att.original_filename == "20260530.supporting-doc.jpg"
+
+
+def test_scan_attach_picks_party_on_largest_pl_line(ledger_service: LedgerService) -> None:
+    cash = ledger_service.create_account(AccountCreate(name="Cash", type="asset"))
+    expense_a = ledger_service.create_account(AccountCreate(name="Expense A", type="expense"))
+    expense_b = ledger_service.create_account(AccountCreate(name="Expense B", type="expense"))
+    alpha = ledger_service.create_party(PartyCreate(name="Alpha Vendor", role="vendor", is_active=True))
+    beta = ledger_service.create_party(PartyCreate(name="Beta Vendor", role="vendor", is_active=True))
+    entry = ledger_service.create_entry(
+        JournalEntryWrite(
+            entry_date=date(2026, 6, 2),
+            summary="split bill",
+            description=None,
+            lines=[
+                JournalLineIn(account_id=expense_a.id, party_id=alpha.id, amount=Decimal("10")),
+                JournalLineIn(account_id=expense_b.id, party_id=beta.id, amount=Decimal("90")),
+                JournalLineIn(account_id=cash.id, party_id=alpha.id, amount=Decimal("-100")),
+            ],
+        ),
+    )
+    att = ledger_service.scan_and_attach_journal_entry(
+        entry.id,
+        summary="Big line bill",
+        external_reference=None,
+        scan_backend=StubScanBackend(),
+    )
+    assert att.original_filename == "20260602.beta-vendor.big-line-bill.jpg"
 
 
 def test_api_scan_attach_route(integration_db_url: str) -> None:

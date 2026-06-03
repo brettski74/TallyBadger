@@ -48,8 +48,7 @@ from tallybadger.ledger.service import (
     ScannerIntegrationError,
     read_upload_file_limited,
 )
-from tallybadger.scanner.backend import ScanBackend, get_scan_backend
-from tallybadger.api.deps import get_scan_backend_dep
+from tallybadger.scanner.backend import ScanBackend, get_scan_backend_for_settings
 
 router = APIRouter(prefix="", tags=["ledger"])
 
@@ -63,6 +62,12 @@ def _attachment_content_disposition(filename: str) -> str:
 @lru_cache
 def get_ledger_service() -> LedgerService:
     return LedgerService()
+
+
+def get_scan_backend_dep(
+    service: LedgerService = Depends(get_ledger_service),
+) -> ScanBackend:
+    return get_scan_backend_for_settings(service._scan_settings())
 
 
 @router.get("/accounts", response_model=list[AccountOut])

@@ -51,20 +51,26 @@ def _mock_open_import_batch(
     return posting
 
 
-def _blank_ledger_settings() -> LedgerSettingsOut:
-    return LedgerSettingsOut(
-        accounts_receivable_account_id=None,
-        accounts_payable_account_id=None,
-        unearned_revenue_account_id=None,
-        prepaid_expenses_account_id=None,
-        unallocated_debits_account_id=None,
-        unallocated_credits_account_id=None,
-        default_cheque_credit_account_id=None,
-        default_cheque_debit_account_id=None,
-        max_attachment_upload_bytes=5242880,
-        max_cheque_series_count=60,
-        updated_at=datetime.now(tz=timezone.utc),
-    )
+def _blank_ledger_settings(**overrides: object) -> LedgerSettingsOut:
+    data: dict[str, object] = {
+        "accounts_receivable_account_id": None,
+        "accounts_payable_account_id": None,
+        "unearned_revenue_account_id": None,
+        "prepaid_expenses_account_id": None,
+        "unallocated_debits_account_id": None,
+        "unallocated_credits_account_id": None,
+        "default_cheque_credit_account_id": None,
+        "default_cheque_debit_account_id": None,
+        "max_attachment_upload_bytes": 5242880,
+        "max_cheque_series_count": 60,
+        "scanner_device_uri": None,
+        "max_scanned_pages": 50,
+        "scan_dpi": 300,
+        "scan_color_mode": "greyscale",
+        "updated_at": datetime.now(tz=timezone.utc),
+    }
+    data.update(overrides)
+    return LedgerSettingsOut(**data)  # type: ignore[arg-type]
 
 
 @pytest.fixture
@@ -306,19 +312,7 @@ def test_execute_csv_debug_only_on_entries_that_used_debug() -> None:
     ledger.list_accounts.return_value = [cash, rent]
     ledger.list_parties.return_value = []
     ledger.list_cheques.return_value = []
-    ledger.get_ledger_settings.return_value = LedgerSettingsOut(
-        accounts_receivable_account_id=None,
-        accounts_payable_account_id=None,
-        unearned_revenue_account_id=None,
-        prepaid_expenses_account_id=None,
-        unallocated_debits_account_id=None,
-        unallocated_credits_account_id=None,
-        default_cheque_credit_account_id=None,
-        default_cheque_debit_account_id=None,
-        max_attachment_upload_bytes=5242880,
-        max_cheque_series_count=60,
-        updated_at=now,
-    )
+    ledger.get_ledger_settings.return_value = _blank_ledger_settings(updated_at=now)
     expr = (
         '(attributes["summary"] == "A") ? '
         '{"set":{"dr-account":"Cash", "cr-account":"Rent Income", "amount": debug(100)}} : '
@@ -658,17 +652,8 @@ def test_check_auto_settlement_preconditions_reports_each_failure() -> None:
     cash = AccountOut(id=1, name="Cash", type="asset", is_active=True, created_at=now, updated_at=now)
     rent = AccountOut(id=2, name="Rent Revenue", type="revenue", is_active=True, created_at=now, updated_at=now)
     ar = AccountOut(id=3, name="Accounts Receivable", type="asset", is_active=True, created_at=now, updated_at=now)
-    settings = LedgerSettingsOut(
+    settings = _blank_ledger_settings(
         accounts_receivable_account_id=3,
-        accounts_payable_account_id=None,
-        unearned_revenue_account_id=None,
-        prepaid_expenses_account_id=None,
-        unallocated_debits_account_id=None,
-        unallocated_credits_account_id=None,
-        default_cheque_credit_account_id=None,
-        default_cheque_debit_account_id=None,
-        max_attachment_upload_bytes=5242880,
-        max_cheque_series_count=60,
         updated_at=now,
     )
     bag = {
@@ -699,17 +684,8 @@ def test_check_auto_settlement_preconditions_cash_account_type() -> None:
     )
     rent = AccountOut(id=2, name="Rent Revenue", type="revenue", is_active=True, created_at=now, updated_at=now)
     ar = AccountOut(id=3, name="Accounts Receivable", type="asset", is_active=True, created_at=now, updated_at=now)
-    settings = LedgerSettingsOut(
+    settings = _blank_ledger_settings(
         accounts_receivable_account_id=3,
-        accounts_payable_account_id=None,
-        unearned_revenue_account_id=None,
-        prepaid_expenses_account_id=None,
-        unallocated_debits_account_id=None,
-        unallocated_credits_account_id=None,
-        default_cheque_credit_account_id=None,
-        default_cheque_debit_account_id=None,
-        max_attachment_upload_bytes=5242880,
-        max_cheque_series_count=60,
         updated_at=now,
     )
     bag = {
@@ -737,17 +713,8 @@ def test_maybe_apply_auto_settlement_rejects_line_array() -> None:
     cash = AccountOut(id=1, name="Cash", type="asset", is_active=True, created_at=now, updated_at=now)
     rent = AccountOut(id=2, name="Rent Revenue", type="revenue", is_active=True, created_at=now, updated_at=now)
     ar = AccountOut(id=3, name="Accounts Receivable", type="asset", is_active=True, created_at=now, updated_at=now)
-    settings = LedgerSettingsOut(
+    settings = _blank_ledger_settings(
         accounts_receivable_account_id=3,
-        accounts_payable_account_id=None,
-        unearned_revenue_account_id=None,
-        prepaid_expenses_account_id=None,
-        unallocated_debits_account_id=None,
-        unallocated_credits_account_id=None,
-        default_cheque_credit_account_id=None,
-        default_cheque_debit_account_id=None,
-        max_attachment_upload_bytes=5242880,
-        max_cheque_series_count=60,
         updated_at=now,
     )
     bag = {
