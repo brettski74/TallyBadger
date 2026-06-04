@@ -39,11 +39,8 @@ function parseImportBackupResponse(data: unknown): ImportBackupResult {
   return warning !== undefined ? { formatDeprecationWarning: warning } : {};
 }
 
-/** Body for raw import — uses streaming when the runtime supports `File.stream()`. */
+/** Raw import body — pass the ``File`` itself, not ``file.stream()``. Browsers stream ``File``/``Blob`` bodies efficiently; ``ReadableStream`` + ``duplex: half`` breaks behind the Vite dev proxy (body becomes ``[object ReadableStream]``). */
 function snapshotUploadBody(file: File): BodyInit {
-  if (typeof file.stream === "function") {
-    return file.stream();
-  }
   return file;
 }
 
@@ -136,16 +133,11 @@ export async function importBackup(
   restoreMode: RestoreMode = "abort",
 ): Promise<ImportBackupResult> {
   const params = new URLSearchParams({ restore_mode: restoreMode });
-  const uploadBody = snapshotUploadBody(file);
-  const init: RequestInit & { duplex?: "half" } = {
+  const res = await fetch(`${getApiBase()}/backup/import?${params.toString()}`, {
     method: "POST",
     headers: { "Content-Type": snapshotImportContentType(file) },
-    body: uploadBody,
-  };
-  if (typeof file.stream === "function") {
-    init.duplex = "half";
-  }
-  const res = await fetch(`${getApiBase()}/backup/import?${params.toString()}`, init);
+    body: snapshotUploadBody(file),
+  });
   if (!res.ok) {
     throw new ApiHttpError(res.status, await readApiErrorMessage(res));
   }

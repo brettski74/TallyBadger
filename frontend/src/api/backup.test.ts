@@ -120,14 +120,10 @@ describe("backup API", () => {
     const call = (globalThis.fetch as ReturnType<typeof vi.spyOn>).mock.calls[0];
     expect(call[0]).toContain("/backup/import?");
     expect(call[0]).toContain("restore_mode=overwrite");
-    const init = call[1] as RequestInit & { duplex?: string };
+    const init = call[1] as RequestInit;
     expect(init.method).toBe("POST");
     expect(init.headers).toEqual({ "Content-Type": "application/gzip" });
-    if (typeof file.stream === "function") {
-      expect(init.duplex).toBe("half");
-    } else {
-      expect(init.body).toBe(file);
-    }
+    expect(init.body).toBe(file);
   });
 
   it("importBackup POSTs raw zip body with restore_mode query for legacy zip", async () => {
@@ -137,14 +133,10 @@ describe("backup API", () => {
     const call = (globalThis.fetch as ReturnType<typeof vi.spyOn>).mock.calls[0];
     expect(call[0]).toContain("/backup/import?");
     expect(call[0]).toContain("restore_mode=overwrite");
-    const init = call[1] as RequestInit & { duplex?: string };
+    const init = call[1] as RequestInit;
     expect(init.method).toBe("POST");
     expect(init.headers).toEqual({ "Content-Type": "application/zip" });
-    if (typeof file.stream === "function") {
-      expect(init.duplex).toBe("half");
-    } else {
-      expect(init.body).toBe(file);
-    }
+    expect(init.body).toBe(file);
   });
 
   it("importCompleteBackup defaults restore_mode to abort", async () => {
