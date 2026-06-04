@@ -1469,7 +1469,7 @@ def test_journal_entry_attachment_round_trip(
             assert int(cur.fetchone()["c"]) == 0
 
 
-def test_attachment_oversize_rejected(ledger_service: LedgerService) -> None:
+def test_attachment_oversize_rejected_at_http(ledger_service: LedgerService) -> None:
     try:
         ledger_service.update_ledger_settings(LedgerSettingsUpdate(max_attachment_upload_bytes=10))
         cash = ledger_service.create_account(AccountCreate(name="Cash", type="asset"))
@@ -1484,14 +1484,46 @@ def test_attachment_oversize_rejected(ledger_service: LedgerService) -> None:
                 ],
             ),
         )
-        with pytest.raises(LedgerValidationError, match="exceeds maximum"):
-            ledger_service.add_journal_entry_attachment(
-                entry.id,
-                file_bytes=b"x" * 20,
-                upload_filename="big.bin",
-                summary="too big",
-                external_reference=None,
-            )
+        client = TestClient(app)
+        response = client.post(
+            f"/journal-entries/{entry.id}/attachments",
+            files={"file": ("big.bin", b"x" * 20, "application/octet-stream")},
+            data={"summary": "too big"},
+        )
+        assert response.status_code == 413
+        assert "10" in response.json()["detail"]
+    finally:
+        ledger_service.update_ledger_settings(
+            LedgerSettingsUpdate(max_attachment_upload_bytes=5242880),
+        )
+
+
+def test_add_journal_entry_attachment_does_not_enforce_upload_limit(
+    ledger_service: LedgerService,
+) -> None:
+    """Size policy is HTTP-only; domain service persists caller-supplied bytes (#263)."""
+    try:
+        ledger_service.update_ledger_settings(LedgerSettingsUpdate(max_attachment_upload_bytes=10))
+        cash = ledger_service.create_account(AccountCreate(name="Cash", type="asset"))
+        entry = ledger_service.create_entry(
+            JournalEntryWrite(
+                entry_date=date(2026, 5, 5),
+                summary="entry",
+                description=None,
+                lines=[
+                    JournalLineIn(account_id=cash.id, amount=Decimal("1")),
+                    JournalLineIn(account_id=cash.id, amount=Decimal("-1")),
+                ],
+            ),
+        )
+        att = ledger_service.add_journal_entry_attachment(
+            entry.id,
+            file_bytes=b"x" * 20,
+            upload_filename="big.bin",
+            summary="doc",
+            external_reference=None,
+        )
+        assert att.id > 0
     finally:
         ledger_service.update_ledger_settings(
             LedgerSettingsUpdate(max_attachment_upload_bytes=5242880),

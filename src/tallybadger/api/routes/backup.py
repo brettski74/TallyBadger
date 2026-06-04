@@ -256,27 +256,21 @@ async def backup_import(request: Request) -> dict[str, str]:
     content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
 
     if content_type.startswith("multipart/"):
-        form = await request.form()
-        upload = form.get("snapshot")
-        if upload is None or not hasattr(upload, "read"):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="multipart import requires a snapshot file field",
-            )
-        mode_raw = str(form.get("restore_mode", "abort"))
-        try:
-            canonical_mode = resolve_restore_mode(mode_raw)
-        except RestoreModeError as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-        raw = await upload.read()
-        return _run_import_bytes(raw, canonical_mode)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "multipart/form-data import is no longer supported; POST the snapshot as a raw "
+                f"body with Content-Type one of {sorted(_RAW_IMPORT_MEDIA_TYPES)} and "
+                "restore_mode as a query parameter"
+            ),
+        )
 
     if content_type not in _RAW_IMPORT_MEDIA_TYPES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
-                "import requires multipart/form-data (legacy) or a raw snapshot body with "
-                f"Content-Type one of {sorted(_RAW_IMPORT_MEDIA_TYPES)}"
+                "import requires a raw snapshot body with Content-Type one of "
+                f"{sorted(_RAW_IMPORT_MEDIA_TYPES)} and restore_mode as a query parameter"
             ),
         )
 

@@ -412,14 +412,15 @@ def _run_curl_import(
     )
 
 
-def import_snapshot_raw_gzip(
+def import_snapshot_raw(
     base_url: str,
     *,
     restore_mode: str,
+    content_type: str,
     input_path: str | None = None,
     chunk_iter: Iterator[bytes] | None = None,
 ) -> dict[str, object]:
-    """POST raw gzip body to /backup/import?restore_mode=… (streaming when chunk_iter set)."""
+    """POST raw snapshot body to /backup/import?restore_mode=… (streaming when chunk_iter set)."""
     query = urlencode({"restore_mode": restore_mode})
     url = urljoin(base_url + "/", f"backup/import?{query}")
     curl_args = [
@@ -429,7 +430,7 @@ def import_snapshot_raw_gzip(
         "-X",
         "POST",
         "-H",
-        "Content-Type: application/gzip",
+        f"Content-Type: {content_type}",
     ]
     if input_path is not None:
         curl_args.extend(["--data-binary", f"@{input_path}"])
@@ -440,7 +441,7 @@ def import_snapshot_raw_gzip(
         stdin_data = None
         stream_iter = chunk_iter
     else:
-        raise TbloadError("import_snapshot_raw_gzip requires input_path or chunk_iter")
+        raise TbloadError("import_snapshot_raw requires input_path or chunk_iter")
 
     curl_args.append(url)
     proc = _run_curl_import(curl_args, stdin_data=stdin_data, chunk_iter=stream_iter)
@@ -466,57 +467,21 @@ def import_snapshot_raw_gzip(
     return data
 
 
-def import_snapshot_multipart(
+def import_snapshot_raw_gzip(
     base_url: str,
     *,
     restore_mode: str,
     input_path: str | None = None,
     chunk_iter: Iterator[bytes] | None = None,
 ) -> dict[str, object]:
-    """POST legacy multipart/form-data import (ZIP)."""
-    url = urljoin(base_url + "/", "backup/import")
-    curl_args = [
-        "-sS",
-        "-w",
-        IMPORT_CURL_WRITE_OUT,
-        "-X",
-        "POST",
-        "-F",
-        f"restore_mode={restore_mode}",
-    ]
-    if input_path is not None:
-        curl_args.extend(["-F", f"snapshot=@{input_path}"])
-        stdin_data: bytes | None = None
-        stream_iter: Iterator[bytes] | None = None
-    elif chunk_iter is not None:
-        curl_args.extend(["-F", "snapshot=@-;filename=snapshot.zip"])
-        stdin_data = None
-        stream_iter = chunk_iter
-    else:
-        raise TbloadError("import_snapshot_multipart requires input_path or chunk_iter")
-
-    curl_args.append(url)
-    proc = _run_curl_import(curl_args, stdin_data=stdin_data, chunk_iter=stream_iter)
-    if proc.returncode != 0:
-        err = proc.stderr.decode("utf-8", errors="replace").strip()
-        _die(f"Import request failed before a response was received: {err or proc.returncode}")
-
-    try:
-        body_text, status_code = parse_curl_import_response(proc.stdout)
-    except TbloadError as exc:
-        _die(str(exc))
-
-    if status_code < 200 or status_code >= 300:
-        _die(format_import_http_error(status_code, body_text, restore_mode=restore_mode))
-
-    body_text = body_text.strip()
-    try:
-        data = json.loads(body_text) if body_text else {}
-    except json.JSONDecodeError as exc:
-        raise TbloadError(f"API returned non-JSON body: {body_text!r}") from exc
-    if not isinstance(data, dict):
-        raise TbloadError(f"expected JSON object from API, got {type(data).__name__}")
-    return data
+    """POST raw tar.gz body (Content-Type: application/gzip)."""
+    return import_snapshot_raw(
+        base_url,
+        restore_mode=restore_mode,
+        content_type="application/gzip",
+        input_path=input_path,
+        chunk_iter=chunk_iter,
+    )
 
 
 def import_snapshot(
@@ -535,9 +500,10 @@ def import_snapshot(
             chunk_iter=chunk_iter,
         )
     if container == "zip":
-        return import_snapshot_multipart(
+        return import_snapshot_raw(
             base_url,
             restore_mode=restore_mode,
+            content_type="application/zip",
             input_path=input_path,
             chunk_iter=chunk_iter,
         )

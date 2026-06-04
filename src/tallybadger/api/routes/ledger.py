@@ -7,8 +7,14 @@ import pendulum
 from typing import Annotated, Literal
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from starlette.responses import StreamingResponse
+
+from tallybadger.api.upload_limits import (
+    UploadTooLargeError,
+    read_upload_part_limited,
+    reject_oversize_content_length,
+)
 
 from tallybadger.core.timezone import application_timezone_name
 from tallybadger.ledger.date_range_math import DateRangeMathError, parse_optional_entry_date_expression
@@ -46,7 +52,6 @@ from tallybadger.ledger.service import (
     LedgerSettingsValidationError,
     LedgerValidationError,
     ScannerIntegrationError,
-    read_upload_file_limited,
 )
 from tallybadger.scanner.backend import ScanBackend, get_scan_backend_for_settings
 
@@ -540,23 +545,45 @@ def list_journal_entry_attachments(
     response_model=JournalEntryAttachmentOut,
     status_code=status.HTTP_201_CREATED,
 )
-def upload_journal_entry_attachment(
+async def upload_journal_entry_attachment(
     entry_id: int,
+    request: Request,
     service: LedgerService = Depends(get_ledger_service),
-    file: UploadFile = File(...),
-    summary: str = Form(...),
-    external_reference: str | None = Form(default=None),
 ) -> JournalEntryAttachmentOut:
     try:
         settings = service.get_ledger_settings()
-        raw = read_upload_file_limited(file.file, settings.max_attachment_upload_bytes)
+        max_bytes = settings.max_attachment_upload_bytes
+        reject_oversize_content_length(request, max_bytes)
+        form = await request.form(max_part_size=max_bytes)
+        upload = form.get("file")
+        if upload is None or not hasattr(upload, "read"):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="attachment file field is required",
+            )
+        summary_raw = form.get("summary")
+        if summary_raw is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="summary field is required",
+            )
+        summary = str(summary_raw)
+        ext_raw = form.get("external_reference")
+        external_reference = str(ext_raw) if ext_raw is not None else None
+        raw = read_upload_part_limited(upload.file, max_bytes)
+        filename = getattr(upload, "filename", None)
         return service.add_journal_entry_attachment(
             entry_id,
             file_bytes=raw,
-            upload_filename=file.filename,
+            upload_filename=filename,
             summary=summary,
             external_reference=external_reference,
         )
+    except UploadTooLargeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=exc.detail,
+        ) from exc
     except LedgerNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except LedgerValidationError as exc:

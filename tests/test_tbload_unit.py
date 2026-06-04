@@ -257,7 +257,7 @@ def test_tbload_import_snapshot_raw_gzip_uses_query_restore_mode_and_content_typ
     assert "@/tmp/snap.tar.gz" in args
 
 
-def test_tbload_import_snapshot_multipart_keeps_form_fields() -> None:
+def test_tbload_import_snapshot_raw_zip_uses_query_restore_mode_and_content_type() -> None:
     captured: dict[str, object] = {}
 
     def fake_run(curl_args, *, stdin_data=None, chunk_iter=None):
@@ -265,17 +265,19 @@ def test_tbload_import_snapshot_multipart_keeps_form_fields() -> None:
         return type("Proc", (), {"returncode": 0, "stdout": b'{"status":"imported"}\n200', "stderr": b""})()
 
     with patch.object(tbload, "_run_curl_import", side_effect=fake_run):
-        data = tbload.import_snapshot_multipart(
+        data = tbload.import_snapshot(
             "http://127.0.0.1:8080",
             restore_mode="abort",
+            container="zip",
             input_path="/tmp/snap.zip",
         )
     assert data["status"] == "imported"
     args = captured["curl_args"]
-    assert "-F" in args
-    assert "restore_mode=abort" in args
-    assert "snapshot=@/tmp/snap.zip" in args
-    assert args[-1].endswith("backup/import")
+    assert "-H" in args
+    assert args[args.index("-H") + 1] == "Content-Type: application/zip"
+    assert args[-1].endswith("backup/import?restore_mode=abort")
+    assert "--data-binary" in args
+    assert "@/tmp/snap.zip" in args
 
 
 def test_tbload_iter_stdin_snapshot_chunks_yields_without_joining() -> None:

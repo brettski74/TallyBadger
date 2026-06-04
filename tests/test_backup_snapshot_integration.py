@@ -25,6 +25,20 @@ from tallybadger.main import app
 
 from psycopg import errors as pg_errors
 
+
+def _post_import_raw(
+    client: TestClient,
+    archive_bytes: bytes,
+    *,
+    restore_mode: str = "abort",
+    content_type: str = "application/gzip",
+):
+    return client.post(
+        f"/backup/import?restore_mode={restore_mode}",
+        content=archive_bytes,
+        headers={"Content-Type": content_type},
+    )
+
 from tallybadger.backup.errors import (
     IncompleteSnapshotError,
     SchemaVersionMismatchError,
@@ -787,10 +801,7 @@ def test_backup_export_and_import_api_round_trip(
 
         _truncate_all_data(integration_db_url)
 
-        imp = client.post(
-            "/backup/import",
-            files={"snapshot": ("snap.tar.gz", archive_bytes, "application/gzip")},
-        )
+        imp = _post_import_raw(client, archive_bytes)
         assert imp.status_code == 200
         assert imp.json() == {"status": "imported"}
 
@@ -799,6 +810,25 @@ def test_backup_export_and_import_api_round_trip(
         assert counts["accounts"] >= 2
         assert counts["journal_entries"] == 1
         assert counts["journal_lines"] == 2
+    finally:
+        core_config.get_settings.cache_clear()
+
+
+def test_backup_import_rejects_multipart(
+    integration_db_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TALLYBADGER_DATABASE_URL", integration_db_url)
+    core_config.get_settings.cache_clear()
+    try:
+        client = TestClient(app)
+        imp = client.post(
+            "/backup/import",
+            files={"snapshot": ("snap.tar.gz", b"\x1f\x8b", "application/gzip")},
+            data={"restore_mode": "abort"},
+        )
+        assert imp.status_code == 400
+        assert "multipart" in imp.json()["detail"].lower()
     finally:
         core_config.get_settings.cache_clear()
 
@@ -821,10 +851,11 @@ def test_backup_import_api_deprecation_warning_for_older_supported_format(
         _truncate_all_data(integration_db_url)
 
         client = TestClient(app)
-        imp = client.post(
-            "/backup/import",
-            files={"snapshot": ("legacy.zip", legacy_zip, "application/zip")},
-            data={"restore_mode": "erase-reload"},
+        imp = _post_import_raw(
+            client,
+            legacy_zip,
+            restore_mode="erase-reload",
+            content_type="application/zip",
         )
         assert imp.status_code == 200
         body = imp.json()
@@ -854,10 +885,7 @@ def test_backup_import_api_no_deprecation_on_unsupported_format(
         bad = _replace_metadata_only(zip_bytes, format_version="99.0.0")
 
         client = TestClient(app)
-        imp = client.post(
-            "/backup/import",
-            files={"snapshot": ("bad.zip", bad, "application/zip")},
-        )
+        imp = _post_import_raw(client, bad, content_type="application/zip")
         assert imp.status_code == 400
         assert "format_deprecation_warning" not in imp.json()
     finally:
@@ -888,11 +916,7 @@ def test_backup_import_api_reports_duplicate_key_in_detail(
         client = TestClient(app)
         with connect(integration_db_url, row_factory=dict_row) as conn:
             zip_bytes = export_complete_snapshot(conn)
-        imp = client.post(
-            "/backup/import",
-            files={"snapshot": ("snap.tar.gz", zip_bytes, "application/gzip")},
-            data={"restore_mode": "abort"},
-        )
+        imp = _post_import_raw(client, zip_bytes, restore_mode="abort")
         assert imp.status_code == 409
         body = imp.json()
         assert "detail" in body
@@ -921,18 +945,10 @@ def test_backup_export_query_and_import_restore_mode_form(
         fin_zip = exp.content
 
         _truncate_all_data(integration_db_url)
-        imp_cfg = client.post(
-            "/backup/import",
-            files={"snapshot": ("c.tar.gz", cfg, "application/gzip")},
-            data={"restore_mode": "abort"},
-        )
+        imp_cfg = _post_import_raw(client, cfg, restore_mode="abort")
         assert imp_cfg.status_code == 200
 
-        imp_fin = client.post(
-            "/backup/import",
-            files={"snapshot": ("f.tar.gz", fin_zip, "application/gzip")},
-            data={"restore_mode": "abort"},
-        )
+        imp_fin = _post_import_raw(client, fin_zip, restore_mode="abort")
         assert imp_fin.status_code == 200
         with connect(integration_db_url, row_factory=dict_row) as conn:
             assert snapshot_table_counts(conn)["journal_entries"] == 1
@@ -1192,9 +1208,9 @@ def test_backup_import_api_rejects_legacy_erase_reload_spelling(
             zip_bytes = export_complete_snapshot(conn)
         client = TestClient(app)
         imp = client.post(
-            "/backup/import",
-            files={"snapshot": ("snap.tar.gz", zip_bytes, "application/gzip")},
-            data={"restore_mode": "erase_reload"},
+            "/backup/import?restore_mode=erase_reload",
+            content=zip_bytes,
+            headers={"Content-Type": "application/gzip"},
         )
         assert imp.status_code == 400
         assert "unrecognized restore_mode" in imp.json()["detail"]
@@ -1214,9 +1230,9 @@ def test_backup_import_api_rejects_invalid_restore_mode(
             zip_bytes = export_complete_snapshot(conn)
         client = TestClient(app)
         imp = client.post(
-            "/backup/import",
-            files={"snapshot": ("snap.tar.gz", zip_bytes, "application/gzip")},
-            data={"restore_mode": "erase-spice-girls-music"},
+            "/backup/import?restore_mode=erase-spice-girls-music",
+            content=zip_bytes,
+            headers={"Content-Type": "application/gzip"},
         )
         assert imp.status_code == 400
         detail = imp.json()["detail"]

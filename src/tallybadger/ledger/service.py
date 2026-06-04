@@ -148,24 +148,6 @@ def _validate_review_request(payload: JournalEntryWrite, existing_message_count:
         )
 
 
-def read_upload_file_limited(file_obj: object, max_bytes: int) -> bytes:
-    """Read until EOF, raising ``LedgerValidationError`` if more than ``max_bytes`` are read."""
-    chunks: list[bytes] = []
-    total = 0
-    read = getattr(file_obj, "read")
-    while True:
-        chunk = read(65536)
-        if not chunk:
-            break
-        total += len(chunk)
-        if total > max_bytes:
-            raise LedgerValidationError(
-                f"attachment exceeds maximum size of {max_bytes} bytes",
-            )
-        chunks.append(chunk)
-    return b"".join(chunks)
-
-
 JOURNAL_LIST_SPLIT_LABEL = "-- Split --"
 JOURNAL_LIST_NO_PARTY_LABEL = "—"
 
@@ -5673,7 +5655,6 @@ class LedgerService:
         upload_filename: str | None,
         summary: str,
         external_reference: str | None,
-        enforce_upload_limit: bool = True,
     ) -> JournalEntryAttachmentOut:
         summary_clean = summary.strip()
         if not summary_clean:
@@ -5699,18 +5680,6 @@ class LedgerService:
                     )
                     if not cur.fetchone():
                         raise LedgerNotFoundError(f"journal entry {entry_id} not found")
-                    if enforce_upload_limit:
-                        cur.execute(
-                            "SELECT max_attachment_upload_bytes FROM ledger_settings WHERE id = 1",
-                        )
-                        lim_row = cur.fetchone()
-                        if not lim_row:
-                            raise LedgerValidationError("ledger settings row is missing")
-                        max_b = int(lim_row["max_attachment_upload_bytes"])
-                        if len(file_bytes) > max_b:
-                            raise LedgerValidationError(
-                                f"attachment exceeds maximum size of {max_b} bytes",
-                            )
                     return self._insert_journal_entry_attachment_row(
                         cur,
                         entry_id=entry_id,
@@ -5750,7 +5719,6 @@ class LedgerService:
             upload_filename=filename,
             summary=summary,
             external_reference=external_reference,
-            enforce_upload_limit=False,
         )
 
     def _scan_settings(self) -> ScanSettings:
