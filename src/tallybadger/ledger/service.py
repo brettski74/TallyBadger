@@ -18,6 +18,11 @@ from tallybadger.ledger.income_expense_report import (
     INCOME_EXPENSE_CURRENCY_LABEL,
     natural_pl_total_for_account_type,
 )
+from tallybadger.ledger.account_statement_report import (
+    AccountStatementNotFoundError,
+    AccountStatementValidationError,
+    build_account_statement_report,
+)
 from tallybadger.ledger.balance_sheet_report import (
     BALANCE_SHEET_CURRENCY_LABEL,
     natural_balance_sheet_total_for_account_type,
@@ -40,6 +45,7 @@ from tallybadger.ledger.models import (
     AccountCreate,
     AccountOut,
     AccountLedgerLineOut,
+    AccountStatementReportOut,
     AccountUpdate,
     AccrualDirection,
     AccrualObligationOut,
@@ -2129,6 +2135,29 @@ class LedgerService:
                 difference=difference,
             ),
         )
+
+    def account_statement_report(
+        self,
+        *,
+        account_id: int,
+        start_date: date,
+        end_date: date,
+    ) -> AccountStatementReportOut:
+        if end_date < start_date:
+            raise LedgerValidationError("end_date must be on or after start_date")
+        try:
+            with self._connection_factory() as conn:
+                with conn.cursor(row_factory=dict_row) as cur:
+                    return build_account_statement_report(
+                        cur,
+                        account_id=account_id,
+                        start_date=start_date,
+                        end_date=end_date,
+                    )
+        except AccountStatementNotFoundError as exc:
+            raise LedgerNotFoundError(str(exc)) from exc
+        except AccountStatementValidationError as exc:
+            raise LedgerValidationError(str(exc)) from exc
 
     def list_account_lines(
         self,

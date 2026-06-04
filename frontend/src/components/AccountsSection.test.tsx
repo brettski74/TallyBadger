@@ -416,6 +416,21 @@ describe("AccountsSection", () => {
     expect(screen.getByRole("table").querySelector("tbody")).toBeTruthy();
   });
 
+  it("offers an account statement row action", () => {
+    render(
+      <AccountsSection
+        accounts={[baseAccount]}
+        loading={false}
+        error={null}
+        onAccountCreated={vi.fn()}
+        onAccountUpdated={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: "Account statement for Petty Cash" }),
+    ).toBeInTheDocument();
+  });
+
   it("shows no-match message when filters exclude all accounts", async () => {
     const user = userEvent.setup();
     render(
