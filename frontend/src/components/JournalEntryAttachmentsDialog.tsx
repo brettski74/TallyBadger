@@ -231,6 +231,7 @@ export function JournalEntryAttachmentsDialog({ entryId, onDismiss }: JournalEnt
   return (
     <>
       <ScanDialog
+        mode="journal-entry"
         open={scanOpen}
         subtitle={entrySubtitle ?? undefined}
         onDismiss={() => setScanOpen(false)}

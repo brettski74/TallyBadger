@@ -25,6 +25,8 @@ from tallybadger.ledger.models import (
     AccountUpdate,
     AccrualObligationOut,
     AccrualPlanCreate,
+    AccrualPlanScanCreate,
+    AccrualPlanScanResult,
     AccrualPlanDetailResponse,
     AccrualPlanListResponse,
     AccrualPlanOut,
@@ -265,6 +267,31 @@ def create_accrual_plan(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except LedgerValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post(
+    "/accrual-plans/scan",
+    response_model=AccrualPlanScanResult,
+    status_code=status.HTTP_201_CREATED,
+)
+def scan_accrual_plan(
+    payload: AccrualPlanScanCreate,
+    service: LedgerService = Depends(get_ledger_service),
+    scan_backend: ScanBackend = Depends(get_scan_backend_dep),
+) -> AccrualPlanScanResult:
+    try:
+        return service.scan_and_create_accrual_plan(payload, scan_backend=scan_backend)
+    except LedgerNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except LedgerValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ScannerIntegrationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+    except LedgerConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.patch("/accrual-plans/{plan_id}", response_model=AccrualPlanOut)

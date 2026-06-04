@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { BookCopy, Eye, FilePlus2, Pencil, RefreshCcw, Trash2 } from "lucide-react";
+import { BookCopy, Eye, FilePlus2, FileScan, Pencil, RefreshCcw, Trash2 } from "lucide-react";
 
 import type { Account } from "../api/accounts";
 import {
@@ -8,6 +8,7 @@ import {
   getAccrualPlanDetail,
   listAccrualPlans,
   previewAccrualPlan,
+  scanAccrualPlan,
   updateAccrualPlan,
   type AccrualDirection,
   type AccrualFrequency,
@@ -37,6 +38,7 @@ import {
 import { isMacLikeUserAgent } from "../lib/platformKeyboard";
 import { JournalFilterMultiDropdown } from "./JournalFilterMultiDropdown";
 import { RegisterListCard, RegisterListChrome, RegisterListTable } from "./RegisterListLayout";
+import { ScanDialog, type ScanDialogAccrualParams } from "./ScanDialog";
 import { TableRowIconButton } from "./TableRowIconButton";
 
 const DAY_OPTIONS = [
@@ -133,6 +135,7 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState(false);
   const [cancellingPlanId, setCancellingPlanId] = useState<number | null>(null);
+  const [scanDialogOpen, setScanDialogOpen] = useState(false);
 
   const accountNameById = useMemo(
     () => new Map(accounts.map((account) => [account.id, account.name])),
@@ -536,6 +539,20 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
     } finally {
       setPreviewing(false);
     }
+  }
+
+  async function handleScanAccrual(params: ScanDialogAccrualParams) {
+    await scanAccrualPlan({
+      party_id: params.partyId,
+      target_account_id: params.targetAccountId,
+      amount: params.amount,
+      bill_date: params.billDate,
+      due_date: params.dueDate,
+      direction: params.direction,
+      summary: params.summary,
+      external_reference: params.externalReference,
+    });
+    await reloadList();
   }
 
   async function handleCreatePlan() {
@@ -1039,6 +1056,7 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
         <thead>
           <tr>
             <th>Accrual date</th>
+            <th>Due date</th>
             <th>Original</th>
             <th>Open</th>
             <th>Status</th>
@@ -1048,6 +1066,7 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
           {obligations.map((ob) => (
             <tr key={ob.id}>
               <td>{ob.source_entry_date ?? "—"}</td>
+              <td>{ob.due_date ?? "—"}</td>
               <td>{formatAmount(ob.original_amount)}</td>
               <td>{formatAmount(ob.open_amount)}</td>
               <td>{ob.status}</td>
@@ -1060,20 +1079,21 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
 
   return (
     <>
+      <ScanDialog
+        mode="accrual"
+        open={scanDialogOpen}
+        title="Scan bill into accrual"
+        subtitle="Creates a one-off accrual plan, posts the accrual entry, and attaches the scan."
+        parties={parties}
+        accounts={accounts}
+        onDismiss={() => setScanDialogOpen(false)}
+        onScan={handleScanAccrual}
+      />
       <RegisterListCard>
         <RegisterListChrome>
         <div className="cheque-register-toolbar">
           <h2>Accrual plans</h2>
           <div className="cheque-register-actions">
-            <TableRowIconButton
-              type="button"
-              aria-label="Refresh list"
-              title="Refresh list"
-              disabled={listLoading}
-              onClick={() => void reloadList()}
-            >
-              <RefreshCcw size={18} strokeWidth={2} aria-hidden />
-            </TableRowIconButton>
             <TableRowIconButton
               type="button"
               aria-label={newEntityAriaLabel("New accrual plan", isMac)}
@@ -1082,6 +1102,23 @@ export function AccrualPlansSection({ accounts, parties }: AccrualPlansSectionPr
               onClick={handleNewPlan}
             >
               <FilePlus2 size={18} strokeWidth={2} aria-hidden />
+            </TableRowIconButton>
+            <TableRowIconButton
+              type="button"
+              aria-label="Scan bill into accrual"
+              title="Scan bill into accrual"
+              onClick={() => setScanDialogOpen(true)}
+            >
+              <FileScan size={18} strokeWidth={2} aria-hidden />
+            </TableRowIconButton>
+            <TableRowIconButton
+              type="button"
+              aria-label="Refresh list"
+              title="Refresh list"
+              disabled={listLoading}
+              onClick={() => void reloadList()}
+            >
+              <RefreshCcw size={18} strokeWidth={2} aria-hidden />
             </TableRowIconButton>
           </div>
         </div>
