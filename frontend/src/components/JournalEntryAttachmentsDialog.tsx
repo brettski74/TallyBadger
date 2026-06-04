@@ -4,13 +4,16 @@ import { FileScan } from "lucide-react";
 import { getJournalEntry } from "../api/journalEntries";
 import {
   attachmentMimeSupportsInlinePreview,
+  attachmentUploadLimitMessage,
   fetchJournalEntryAttachmentBlob,
+  isAttachmentOverUploadLimit,
   listJournalEntryAttachments,
   scanJournalEntryAttachment,
   unlinkJournalEntryAttachment,
   uploadJournalEntryAttachment,
   type JournalEntryAttachmentOut,
 } from "../api/journalEntryAttachments";
+import { getLedgerSettings } from "../api/settlements";
 import { ScanDialog } from "./ScanDialog";
 
 const UNLINK_CONFIRM =
@@ -36,6 +39,7 @@ export function JournalEntryAttachmentsDialog({ entryId, onDismiss }: JournalEnt
   const [uploadSummary, setUploadSummary] = useState("");
   const [uploadExternalRef, setUploadExternalRef] = useState("");
   const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [maxUploadBytes, setMaxUploadBytes] = useState<number | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
@@ -95,6 +99,7 @@ export function JournalEntryAttachmentsDialog({ entryId, onDismiss }: JournalEnt
       setUploadSummary("");
       setUploadExternalRef("");
       setUploadFile(null);
+      setMaxUploadBytes(null);
       setUploadError(null);
       setScanOpen(false);
       setEntrySubtitle(null);
@@ -106,6 +111,9 @@ export function JournalEntryAttachmentsDialog({ entryId, onDismiss }: JournalEnt
     el?.showModal();
     void loadList(entryId);
     void loadEntryContext(entryId);
+    void getLedgerSettings()
+      .then((settings) => setMaxUploadBytes(settings.max_attachment_upload_bytes))
+      .catch(() => setMaxUploadBytes(null));
   }, [entryId, loadEntryContext, loadList, revokePreview]);
 
   function handleDialogClose() {
@@ -123,6 +131,14 @@ export function JournalEntryAttachmentsDialog({ entryId, onDismiss }: JournalEnt
       setUploadError("Summary is required.");
       return;
     }
+    if (maxUploadBytes == null) {
+      setUploadError("Upload limit not loaded yet — try again in a moment.");
+      return;
+    }
+    if (isAttachmentOverUploadLimit(uploadFile.size, maxUploadBytes)) {
+      setUploadError(attachmentUploadLimitMessage(maxUploadBytes));
+      return;
+    }
     setUploading(true);
     setUploadError(null);
     try {
@@ -130,6 +146,7 @@ export function JournalEntryAttachmentsDialog({ entryId, onDismiss }: JournalEnt
         file: uploadFile,
         summary,
         externalReference: uploadExternalRef.trim() === "" ? null : uploadExternalRef.trim(),
+        maxUploadBytes,
       });
       setUploadSummary("");
       setUploadExternalRef("");
@@ -319,7 +336,15 @@ export function JournalEntryAttachmentsDialog({ entryId, onDismiss }: JournalEnt
                 <input
                   ref={fileInputRef}
                   type="file"
-                  onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0] ?? null;
+                    setUploadFile(file);
+                    if (file && maxUploadBytes != null && isAttachmentOverUploadLimit(file.size, maxUploadBytes)) {
+                      setUploadError(attachmentUploadLimitMessage(maxUploadBytes));
+                    } else {
+                      setUploadError(null);
+                    }
+                  }}
                   disabled={uploading}
                 />
               </label>
@@ -348,7 +373,15 @@ export function JournalEntryAttachmentsDialog({ entryId, onDismiss }: JournalEnt
                   {uploadError}
                 </p>
               )}
-              <button type="submit" disabled={uploading || !uploadFile}>
+              <button
+                type="submit"
+                disabled={
+                  uploading ||
+                  !uploadFile ||
+                  maxUploadBytes == null ||
+                  isAttachmentOverUploadLimit(uploadFile.size, maxUploadBytes)
+                }
+              >
                 {uploading ? "Uploading…" : "Upload"}
               </button>
             </form>
