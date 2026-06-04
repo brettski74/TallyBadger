@@ -1805,8 +1805,14 @@ class LedgerService:
             )
             params.append(list(party_ids))
         if accrual_plan_ids:
-            conditions.append("je.accrual_plan_id = ANY(%s)")
-            params.append(list(accrual_plan_ids))
+            plan_ids = list(accrual_plan_ids)
+            conditions.append(
+                "(je.accrual_plan_id = ANY(%s) OR EXISTS ("
+                "SELECT 1 FROM settlement_allocations sa "
+                "INNER JOIN accrual_obligations ao ON ao.id = sa.obligation_id "
+                "WHERE sa.entry_id = je.id AND ao.accrual_plan_id = ANY(%s)))"
+            )
+            params.extend([plan_ids, plan_ids])
         if cheque_association == "with_cheque":
             conditions.append("je.cheque_id IS NOT NULL")
         elif cheque_association == "without_cheque":
