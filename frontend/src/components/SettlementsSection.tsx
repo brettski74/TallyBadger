@@ -161,6 +161,7 @@ export function SettlementsSection({ accounts, parties }: SettlementsSectionProp
                   <th>Summary</th>
                   <th>Type</th>
                   <th>Due</th>
+                  <th>Due date</th>
                   <th>Open amount</th>
                   <th>Allocate</th>
                 </tr>
@@ -178,6 +179,7 @@ export function SettlementsSection({ accounts, parties }: SettlementsSectionProp
                         ? "future"
                         : "due"}
                     </td>
+                    <td>{obligation.due_date ?? "—"}</td>
                     <td>{obligation.open_amount}</td>
                     <td>
                       <input

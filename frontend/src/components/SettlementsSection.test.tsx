@@ -44,6 +44,7 @@ describe("SettlementsSection", () => {
               status: "open",
               original_amount: "100.00",
               open_amount: "100.00",
+              due_date: "2026-01-15",
             },
             {
               id: 11,
@@ -55,6 +56,7 @@ describe("SettlementsSection", () => {
               status: "open",
               original_amount: "75.00",
               open_amount: "75.00",
+              due_date: null,
             },
             {
               id: 12,
@@ -66,6 +68,7 @@ describe("SettlementsSection", () => {
               status: "open",
               original_amount: "300.00",
               open_amount: "300.00",
+              due_date: "2126-03-15",
             },
         ]),
         { status: 200 },
@@ -81,6 +84,8 @@ describe("SettlementsSection", () => {
 
     expect(await screen.findByText("January accrual")).toBeInTheDocument();
     expect(screen.getByText("2026-01-01")).toBeInTheDocument();
+    expect(screen.getByText("2026-01-15")).toBeInTheDocument();
+    expect(screen.getByText("2126-03-15")).toBeInTheDocument();
     expect(screen.getByLabelText("Allocate obligation 10")).toHaveValue("100.00");
     expect(screen.getByLabelText("Allocate obligation 11")).toHaveValue("75.00");
     expect(screen.getByLabelText("Allocate obligation 12")).toHaveValue("250.00");
@@ -104,6 +109,7 @@ describe("SettlementsSection", () => {
             status: "open",
             original_amount: "500.00",
             open_amount: "500.00",
+            due_date: null,
           },
         ]),
         { status: 200 },
