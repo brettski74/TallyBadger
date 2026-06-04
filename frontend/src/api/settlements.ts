@@ -48,6 +48,7 @@ export interface Obligation {
   status: "open" | "partially_settled" | "settled" | "reconciled";
   original_amount: string;
   open_amount: string;
+  due_date: string | null;
 }
 
 export interface SettlementAllocation {

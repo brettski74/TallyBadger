@@ -1699,6 +1699,12 @@ class LedgerService:
                             obligations,
                             allocation_by_id,
                         )
+                        self._relink_accrual_attachments_to_settlement_entry(
+                            cur,
+                            entry_id,
+                            obligations,
+                            allocation_by_id,
+                        )
                         self._apply_early_settlement_reclassifications(
                             cur,
                             settlement_type=payload.settlement_type,
@@ -5120,6 +5126,12 @@ class LedgerService:
             obligations,
             allocation_by_id,
         )
+        self._relink_accrual_attachments_to_settlement_entry(
+            cur,
+            entry_id,
+            obligations,
+            allocation_by_id,
+        )
         self._apply_early_settlement_reclassifications(
             cur,
             settlement_type=settlement_type,
@@ -5145,6 +5157,34 @@ class LedgerService:
             payload,
             import_batch_id=batch_id,
             settings=settings,
+        )
+
+    @staticmethod
+    def _relink_accrual_attachments_to_settlement_entry(
+        cur,
+        settlement_entry_id: int,
+        obligations: list[dict],
+        allocation_by_id: dict[int, Decimal],
+    ) -> None:
+        """Copy attachment links from accrual JEs onto the settlement JE (#260 / US-3)."""
+        source_entry_ids = [
+            int(obligation["source_entry_id"])
+            for obligation in obligations
+            if allocation_by_id.get(obligation["id"], Decimal("0")) > Decimal("0")
+            and obligation.get("source_entry_id") is not None
+        ]
+        if not source_entry_ids:
+            return
+        cur.execute(
+            """
+            INSERT INTO journal_entry_attachments (journal_entry_id, attachment_id)
+            SELECT DISTINCT %s, j.attachment_id
+            FROM journal_entry_attachments j
+            WHERE j.journal_entry_id = ANY(%s)
+              AND j.journal_entry_id <> %s
+            ON CONFLICT (journal_entry_id, attachment_id) DO NOTHING
+            """,
+            (settlement_entry_id, source_entry_ids, settlement_entry_id),
         )
 
     @staticmethod
