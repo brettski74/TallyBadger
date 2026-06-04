@@ -18,6 +18,7 @@ This file is the **single human- and agent-visible source of truth** for how we 
 - **Secrets:** never commit credentials. Use environment variables (prefix **`TALLYBADGER_`** where applicable, see [`Settings`](src/tallybadger/core/config.py)) or your deployment’s secret store.
 - **JSON / form field names (keys):** prefer **`snake_case`** (e.g. `restore_mode`) — aligns with existing API shapes and JS-friendly identifiers.
 - **String enumeration values** (not identifiers): prefer **`kebab-case`** (e.g. `erase-reload`) for new or touched restore/import modes — easier to type than `_` or `+`, and visually distinct from keys.
+- **Untrusted upload size:** byte limits for client-supplied files (e.g. journal entry attachments) are enforced in **HTTP route handlers** (`src/tallybadger/api/`), not in ledger or other domain services. Domain methods accept bytes the caller has already bounded; server-generated content (e.g. flatbed scan) is not subject to the user-upload cap.
 
 ## Inactive objects (`is_active`)
 

@@ -120,39 +120,30 @@ describe("backup API", () => {
     const call = (globalThis.fetch as ReturnType<typeof vi.spyOn>).mock.calls[0];
     expect(call[0]).toContain("/backup/import?");
     expect(call[0]).toContain("restore_mode=overwrite");
-    const init = call[1] as RequestInit & { duplex?: string };
+    const init = call[1] as RequestInit;
     expect(init.method).toBe("POST");
     expect(init.headers).toEqual({ "Content-Type": "application/gzip" });
-    if (typeof file.stream === "function") {
-      expect(init.duplex).toBe("half");
-    } else {
-      expect(init.body).toBe(file);
-    }
+    expect(init.body).toBe(file);
   });
 
-  it("importBackup POSTs multipart with restore_mode for legacy zip", async () => {
+  it("importBackup POSTs raw zip body with restore_mode query for legacy zip", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ status: "imported" }), { status: 200 }));
     const file = new File(["x"], "snap.zip", { type: "application/zip" });
     await importBackup(file, "overwrite");
     const call = (globalThis.fetch as ReturnType<typeof vi.spyOn>).mock.calls[0];
-    expect(call[0]).toContain("/backup/import");
-    expect(call[0]).not.toContain("restore_mode=");
+    expect(call[0]).toContain("/backup/import?");
+    expect(call[0]).toContain("restore_mode=overwrite");
     const init = call[1] as RequestInit;
     expect(init.method).toBe("POST");
-    expect(init.body).toBeInstanceOf(FormData);
-    expect([...(init.body as FormData).entries()]).toEqual(
-      expect.arrayContaining([
-        ["snapshot", file],
-        ["restore_mode", "overwrite"],
-      ]),
-    );
+    expect(init.headers).toEqual({ "Content-Type": "application/zip" });
+    expect(init.body).toBe(file);
   });
 
   it("importCompleteBackup defaults restore_mode to abort", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ status: "imported" }), { status: 200 }));
     const file = new File(["x"], "snap.zip", { type: "application/zip" });
     await importCompleteBackup(file);
-    const init = (globalThis.fetch as ReturnType<typeof vi.spyOn>).mock.calls[0][1] as RequestInit;
-    expect((init.body as FormData).get("restore_mode")).toBe("abort");
+    const call = (globalThis.fetch as ReturnType<typeof vi.spyOn>).mock.calls[0];
+    expect(call[0]).toContain("restore_mode=abort");
   });
 });

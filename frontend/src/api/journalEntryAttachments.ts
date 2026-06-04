@@ -35,12 +35,26 @@ export interface UploadJournalEntryAttachmentParams {
   file: File;
   summary: string;
   externalReference?: string | null;
+  /** From ledger settings; checked before upload so oversized files fail in the UI (#263). */
+  maxUploadBytes: number;
+}
+
+/** Match server wording in ``read_upload_part_limited`` / HTTP 413 responses. */
+export function attachmentUploadLimitMessage(maxBytes: number): string {
+  return `attachment exceeds maximum size of ${maxBytes} bytes`;
+}
+
+export function isAttachmentOverUploadLimit(fileSize: number, maxBytes: number): boolean {
+  return fileSize > maxBytes;
 }
 
 export async function uploadJournalEntryAttachment(
   entryId: number,
   params: UploadJournalEntryAttachmentParams,
 ): Promise<JournalEntryAttachmentOut> {
+  if (isAttachmentOverUploadLimit(params.file.size, params.maxUploadBytes)) {
+    throw new Error(attachmentUploadLimitMessage(params.maxUploadBytes));
+  }
   const body = new FormData();
   body.append("file", params.file);
   body.append("summary", params.summary);
@@ -48,10 +62,22 @@ export async function uploadJournalEntryAttachment(
   if (ext) {
     body.append("external_reference", ext);
   }
-  const response = await fetch(`${getApiBase()}/journal-entries/${entryId}/attachments`, {
-    method: "POST",
-    body,
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${getApiBase()}/journal-entries/${entryId}/attachments`, {
+      method: "POST",
+      body,
+    });
+  } catch (err) {
+    if (isAttachmentOverUploadLimit(params.file.size, params.maxUploadBytes)) {
+      throw new Error(attachmentUploadLimitMessage(params.maxUploadBytes));
+    }
+    const message = err instanceof Error ? err.message : "Upload failed";
+    if (/networkerror|failed to fetch/i.test(message)) {
+      throw new Error("Upload failed — check your connection and try again.");
+    }
+    throw err instanceof Error ? err : new Error(message);
+  }
   if (!response.ok) {
     throw new Error(await readApiErrorMessage(response));
   }

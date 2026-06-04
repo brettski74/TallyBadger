@@ -39,15 +39,20 @@ function parseImportBackupResponse(data: unknown): ImportBackupResult {
   return warning !== undefined ? { formatDeprecationWarning: warning } : {};
 }
 
-/** Body for raw gzip import — uses streaming when the runtime supports `File.stream()`. */
+/** Raw import body — pass the ``File`` itself, not ``file.stream()``. Browsers stream ``File``/``Blob`` bodies efficiently; ``ReadableStream`` + ``duplex: half`` breaks behind the Vite dev proxy (body becomes ``[object ReadableStream]``). */
 function snapshotUploadBody(file: File): BodyInit {
-  if (typeof file.stream === "function") {
-    return file.stream();
-  }
   return file;
 }
 
-/** True when the file should use raw-body gzip import (tar.gz), not legacy multipart ZIP. */
+/** Content-Type for raw-body snapshot import (tar.gz vs legacy ZIP). */
+export function snapshotImportContentType(file: File): string {
+  if (isTarGzBackupFile(file)) {
+    return "application/gzip";
+  }
+  return "application/zip";
+}
+
+/** True when the file is a tar.gz snapshot (not legacy ZIP). */
 export function isTarGzBackupFile(file: File): boolean {
   const name = file.name.toLowerCase();
   if (name.endsWith(".tar.gz") || name.endsWith(".tgz")) {
@@ -127,29 +132,12 @@ export async function importBackup(
   file: File,
   restoreMode: RestoreMode = "abort",
 ): Promise<ImportBackupResult> {
-  if (isTarGzBackupFile(file)) {
-    const params = new URLSearchParams({ restore_mode: restoreMode });
-    const uploadBody = snapshotUploadBody(file);
-    const init: RequestInit & { duplex?: "half" } = {
-      method: "POST",
-      headers: { "Content-Type": "application/gzip" },
-      body: uploadBody,
-    };
-    if (typeof file.stream === "function") {
-      init.duplex = "half";
-    }
-    const res = await fetch(`${getApiBase()}/backup/import?${params.toString()}`, init);
-    if (!res.ok) {
-      throw new ApiHttpError(res.status, await readApiErrorMessage(res));
-    }
-    const data: unknown = await res.json();
-    return parseImportBackupResponse(data);
-  }
-
-  const body = new FormData();
-  body.append("snapshot", file);
-  body.append("restore_mode", restoreMode);
-  const res = await fetch(`${getApiBase()}/backup/import`, { method: "POST", body });
+  const params = new URLSearchParams({ restore_mode: restoreMode });
+  const res = await fetch(`${getApiBase()}/backup/import?${params.toString()}`, {
+    method: "POST",
+    headers: { "Content-Type": snapshotImportContentType(file) },
+    body: snapshotUploadBody(file),
+  });
   if (!res.ok) {
     throw new ApiHttpError(res.status, await readApiErrorMessage(res));
   }
