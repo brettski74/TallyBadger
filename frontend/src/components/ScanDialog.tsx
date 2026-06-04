@@ -212,110 +212,116 @@ export function ScanDialog(props: ScanDialogProps) {
             Place a single page on the flatbed. The server captures a greyscale JPEG at 300 dpi (US
             Letter scan area).
           </p>
-          {mode === "accrual" && (
-            <>
-              <label>
-                Direction
-                <select
-                  aria-label="Accrual direction"
-                  value={direction}
-                  onChange={(e) => setDirection(e.target.value as AccrualDirection)}
-                  disabled={scanning || Boolean(partyBlockedReason)}
-                >
-                  <option value="expense">expense</option>
-                  <option value="revenue">revenue</option>
-                </select>
-              </label>
-              <label>
-                Party (required)
-                <select
-                  aria-label="Bill party"
-                  value={partyId}
-                  onChange={(e) => setPartyId(e.target.value)}
-                  disabled={scanning || Boolean(partyBlockedReason)}
-                  required
-                >
-                  <option value="">Select party</option>
-                  {accrualParties.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Target account (required)
-                <select
-                  aria-label="Accrual target account"
-                  value={targetAccountId}
-                  onChange={(e) => setTargetAccountId(e.target.value)}
-                  disabled={scanning || Boolean(partyBlockedReason)}
-                  required
-                >
-                  <option value="">Select target account</option>
-                  {targetAccountOptions.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Amount (required)
-                <input
-                  aria-label="Bill amount"
-                  type="text"
-                  inputMode="decimal"
-                  value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
-                  disabled={scanning || Boolean(partyBlockedReason)}
-                  required
-                />
-              </label>
-              <label>
-                Bill date (required)
-                <input
-                  aria-label="Bill date"
-                  type="date"
-                  value={billDate}
-                  onChange={(e) => setBillDate(e.target.value)}
-                  disabled={scanning || Boolean(partyBlockedReason)}
-                  required
-                />
-              </label>
-              <label>
-                Due date (optional)
-                <input
-                  aria-label="Due date"
-                  type="date"
-                  value={dueDate}
-                  onChange={(e) => setDueDate(e.target.value)}
-                  disabled={scanning || Boolean(partyBlockedReason)}
-                />
-              </label>
-            </>
-          )}
-          <label>
-            Summary (required)
-            <input
-              ref={summaryRef}
-              aria-label="Scan summary"
-              value={summary}
-              onChange={(e) => setSummary(e.target.value)}
-              maxLength={200}
-              disabled={scanning || Boolean(partyBlockedReason)}
-            />
-          </label>
-          <label>
-            External reference (optional)
-            <input
-              aria-label="External reference"
-              value={externalReference}
-              onChange={(e) => setExternalReference(e.target.value)}
-              maxLength={500}
-              disabled={scanning || Boolean(partyBlockedReason)}
-            />
-          </label>
+          <div className="cheque-form-grid">
+            {mode === "accrual" && (
+              <>
+                <div className="cheque-form-col">
+                  <label>
+                    Party (required)
+                    <select
+                      aria-label="Bill party"
+                      value={partyId}
+                      onChange={(e) => setPartyId(e.target.value)}
+                      disabled={scanning || Boolean(partyBlockedReason)}
+                      required
+                    >
+                      <option value="">Select party</option>
+                      {accrualParties.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Target account (required)
+                    <select
+                      aria-label="Accrual target account"
+                      value={targetAccountId}
+                      onChange={(e) => setTargetAccountId(e.target.value)}
+                      disabled={scanning || Boolean(partyBlockedReason)}
+                      required
+                    >
+                      <option value="">Select target account</option>
+                      {targetAccountOptions.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Direction
+                    <select
+                      aria-label="Accrual direction"
+                      value={direction}
+                      onChange={(e) => setDirection(e.target.value as AccrualDirection)}
+                      disabled={scanning || Boolean(partyBlockedReason)}
+                    >
+                      <option value="expense">expense</option>
+                      <option value="revenue">revenue</option>
+                    </select>
+                  </label>
+                </div>
+                <div className="cheque-form-col">
+                  <label>
+                    Bill date (required)
+                    <input
+                      aria-label="Bill date"
+                      type="date"
+                      value={billDate}
+                      onChange={(e) => setBillDate(e.target.value)}
+                      disabled={scanning || Boolean(partyBlockedReason)}
+                      required
+                    />
+                  </label>
+                  <label>
+                    Due date (optional)
+                    <input
+                      aria-label="Due date"
+                      type="date"
+                      value={dueDate}
+                      onChange={(e) => setDueDate(e.target.value)}
+                      disabled={scanning || Boolean(partyBlockedReason)}
+                    />
+                  </label>
+                  <label>
+                    Amount (required)
+                    <input
+                      aria-label="Bill amount"
+                      type="text"
+                      inputMode="decimal"
+                      value={amount}
+                      onChange={(e) => setAmount(e.target.value)}
+                      disabled={scanning || Boolean(partyBlockedReason)}
+                      required
+                    />
+                  </label>
+                </div>
+              </>
+            )}
+            <label className="cheque-form-summary">
+              Summary (required)
+              <input
+                ref={summaryRef}
+                aria-label="Scan summary"
+                value={summary}
+                onChange={(e) => setSummary(e.target.value)}
+                maxLength={200}
+                disabled={scanning || Boolean(partyBlockedReason)}
+              />
+            </label>
+            <label className="cheque-form-summary">
+              External reference (optional)
+              <input
+                aria-label="External reference"
+                value={externalReference}
+                onChange={(e) => setExternalReference(e.target.value)}
+                maxLength={500}
+                disabled={scanning || Boolean(partyBlockedReason)}
+              />
+            </label>
+          </div>
           {error && (
             <p className="error" role="alert">
               {error}
