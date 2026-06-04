@@ -4,6 +4,7 @@ from datetime import date
 
 from tallybadger.scanner.filename import (
     build_accrual_scan_filename,
+    build_accrual_scan_plan_name,
     build_journal_entry_scan_filename,
     to_kebab_segment,
 )
@@ -42,6 +43,15 @@ def test_build_accrual_scan_filename() -> None:
         summary="Invoice May",
     )
     assert name == "20260530.acme-plumbing.invoice-may.jpg"
+
+
+def test_build_accrual_scan_plan_name() -> None:
+    name = build_accrual_scan_plan_name(
+        entry_date=date(2026, 5, 30),
+        party_name="Acme Plumbing",
+        summary="Invoice May",
+    )
+    assert name == "20260530 Acme Plumbing Invoice May"
 
 
 def test_scanimage_flatbed_command_geometry() -> None:

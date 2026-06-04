@@ -35,3 +35,11 @@ def build_accrual_scan_filename(*, entry_date: date, party_name: str, summary: s
     party_part = to_kebab_segment(party_name)
     summary_part = to_kebab_segment(summary)
     return f"{date_part}.{party_part}.{summary_part}.jpg"
+
+
+def build_accrual_scan_plan_name(*, entry_date: date, party_name: str, summary: str) -> str:
+    """Default one-off accrual plan name aligned with scan filename segments (#259)."""
+    date_part = entry_date.strftime("%Y%m%d")
+    party_part = party_name.strip()
+    summary_part = summary.strip()
+    return f"{date_part} {party_part} {summary_part}"

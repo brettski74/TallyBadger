@@ -63,6 +63,7 @@ erDiagram
         text obligation_type "receivable | payable | unearned"
         text status
         numeric open_amount
+        date due_date "nullable — bill due date from scan (#259)"
     }
 
     settlement_allocations {

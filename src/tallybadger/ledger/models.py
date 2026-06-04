@@ -710,8 +710,27 @@ class AccrualObligationOut(BaseModel):
     status: ObligationStatus
     original_amount: Decimal
     open_amount: Decimal
+    due_date: date | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class AccrualPlanScanCreate(BaseModel):
+    party_id: int = Field(gt=0)
+    target_account_id: int = Field(gt=0)
+    amount: Decimal = Field(gt=Decimal("0"))
+    bill_date: date
+    due_date: date | None = None
+    direction: AccrualDirection = "expense"
+    summary: str = Field(min_length=1, max_length=200)
+    external_reference: str | None = Field(default=None, max_length=500)
+
+
+class AccrualPlanScanResult(BaseModel):
+    plan: AccrualPlanOut
+    obligation: AccrualObligationOut
+    attachment: JournalEntryAttachmentOut
+    source_entry_id: int
 
 
 class SettlementAllocationIn(BaseModel):

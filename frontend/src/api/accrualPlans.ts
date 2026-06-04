@@ -45,8 +45,35 @@ export interface AccrualObligation {
   status: ObligationStatus;
   original_amount: string;
   open_amount: string;
+  due_date: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface AccrualPlanScanWrite {
+  party_id: number;
+  target_account_id: number;
+  amount: string;
+  bill_date: string;
+  due_date?: string | null;
+  direction?: AccrualDirection;
+  summary: string;
+  external_reference?: string | null;
+}
+
+export interface AccrualPlanScanResult {
+  plan: AccrualPlan;
+  obligation: AccrualObligation;
+  attachment: {
+    id: number;
+    summary: string;
+    external_reference: string | null;
+    mime_type: string;
+    original_filename: string | null;
+    created_at: string;
+    updated_at: string;
+  };
+  source_entry_id: number;
 }
 
 export interface AccrualPlanSummaryRollups {
@@ -157,6 +184,18 @@ export async function previewAccrualPlan(payload: AccrualPlanWrite): Promise<Acc
     throw new Error(await readApiErrorMessage(response));
   }
   return response.json();
+}
+
+export async function scanAccrualPlan(payload: AccrualPlanScanWrite): Promise<AccrualPlanScanResult> {
+  const response = await fetch(`${getApiBase()}/accrual-plans/scan`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error(await readApiErrorMessage(response));
+  }
+  return response.json() as Promise<AccrualPlanScanResult>;
 }
 
 export async function createAccrualPlan(payload: AccrualPlanWrite): Promise<AccrualPlan> {

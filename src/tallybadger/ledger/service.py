@@ -31,7 +31,11 @@ from tallybadger.ledger.settlement_utils import (
 )
 from tallybadger.scanner.backend import ScanBackend, ScanSettings, get_scan_backend
 from tallybadger.scanner.errors import ScannerError
-from tallybadger.scanner.filename import build_journal_entry_scan_filename
+from tallybadger.scanner.filename import (
+    build_accrual_scan_filename,
+    build_accrual_scan_plan_name,
+    build_journal_entry_scan_filename,
+)
 from tallybadger.ledger.models import (
     AccountCreate,
     AccountOut,
@@ -40,6 +44,8 @@ from tallybadger.ledger.models import (
     AccrualDirection,
     AccrualObligationOut,
     AccrualPlanCreate,
+    AccrualPlanScanCreate,
+    AccrualPlanScanResult,
     AccrualPlanDetailResponse,
     AccrualPlanListFilterOptions,
     AccrualPlanListResponse,
@@ -1141,7 +1147,8 @@ class LedgerService:
                            je.entry_date AS source_entry_date,
                            je.summary AS source_entry_summary,
                            ao.source_line_id, ao.obligation_type, ao.status,
-                           ao.original_amount, ao.open_amount, ao.created_at, ao.updated_at
+                           ao.original_amount, ao.open_amount, ao.due_date,
+                           ao.created_at, ao.updated_at
                     FROM accrual_obligations ao
                     LEFT JOIN journal_entries je ON je.id = ao.source_entry_id
                     WHERE ao.accrual_plan_id = %s
@@ -1453,7 +1460,8 @@ class LedgerService:
                            je.entry_date AS source_entry_date,
                            je.summary AS source_entry_summary,
                            ao.source_line_id, ao.obligation_type, ao.status,
-                           ao.original_amount, ao.open_amount, ao.created_at, ao.updated_at
+                           ao.original_amount, ao.open_amount, ao.due_date,
+                           ao.created_at, ao.updated_at
                     FROM accrual_obligations ao
                     LEFT JOIN journal_entries je ON je.id = ao.source_entry_id
                     WHERE ao.party_id = %s
@@ -1479,7 +1487,8 @@ class LedgerService:
                    je.entry_date AS source_entry_date,
                    je.summary AS source_entry_summary,
                    ao.source_line_id, ao.obligation_type, ao.status,
-                   ao.original_amount, ao.open_amount, ao.created_at, ao.updated_at
+                   ao.original_amount, ao.open_amount, ao.due_date,
+                   ao.created_at, ao.updated_at
             FROM accrual_obligations ao
             INNER JOIN accrual_plans ap ON ap.id = ao.accrual_plan_id
             LEFT JOIN journal_entries je ON je.id = ao.source_entry_id
@@ -1533,7 +1542,8 @@ class LedgerService:
                         SET status = %s, updated_at = NOW()
                         WHERE id = %s
                         RETURNING id, party_id, accrual_plan_id, source_entry_id, source_line_id,
-                                  obligation_type, status, original_amount, open_amount, created_at, updated_at
+                                  obligation_type, status, original_amount, open_amount, due_date,
+                                  created_at, updated_at
                         """,
                         (payload.status, obligation_id),
                     )
@@ -5556,6 +5566,8 @@ class LedgerService:
         payload: AccrualPlanCreate,
         preview: list[AccrualPreviewItem],
         bridge_account_id: int,
+        *,
+        obligation_due_date: date | None = None,
     ) -> None:
         for item in preview:
             cur.execute(
@@ -5588,9 +5600,9 @@ class LedgerService:
                     """
                     INSERT INTO accrual_obligations (
                         party_id, accrual_plan_id, source_entry_id, source_line_id,
-                        obligation_type, status, original_amount, open_amount
+                        obligation_type, status, original_amount, open_amount, due_date
                     )
-                    VALUES (%s, %s, %s, %s, %s, 'open', %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, 'open', %s, %s, %s)
                     """,
                     (
                         payload.party_id,
@@ -5600,8 +5612,175 @@ class LedgerService:
                         obligation_type,
                         bridge_amount,
                         bridge_amount,
+                        obligation_due_date,
                     ),
                 )
+
+    @staticmethod
+    def _allocate_unique_accrual_plan_name(cur, base_name: str) -> str:
+        cur.execute("SELECT 1 FROM accrual_plans WHERE name = %s", (base_name,))
+        if not cur.fetchone():
+            return base_name
+        for suffix in range(2, 10_000):
+            candidate = f"{base_name} ({suffix})"
+            cur.execute("SELECT 1 FROM accrual_plans WHERE name = %s", (candidate,))
+            if not cur.fetchone():
+                return candidate
+        raise LedgerValidationError(
+            f'could not allocate a unique accrual plan name for "{base_name}"'
+        )
+
+    def scan_and_create_accrual_plan(
+        self,
+        payload: AccrualPlanScanCreate,
+        *,
+        scan_backend: ScanBackend | None = None,
+    ) -> AccrualPlanScanResult:
+        summary_clean = payload.summary.strip()
+        with self._connection_factory() as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(
+                    "SELECT name, is_active FROM parties WHERE id = %s",
+                    (payload.party_id,),
+                )
+                party_row = cur.fetchone()
+                if not party_row:
+                    raise LedgerNotFoundError(f"party {payload.party_id} not found")
+                if not party_row["is_active"]:
+                    raise LedgerValidationError(
+                        f'party "{party_row["name"]}" (id={payload.party_id}) is inactive'
+                    )
+                party_name = str(party_row["name"])
+
+        plan_payload = AccrualPlanCreate(
+            name=build_accrual_scan_plan_name(
+                entry_date=payload.bill_date,
+                party_name=party_name,
+                summary=summary_clean,
+            ),
+            direction=payload.direction,
+            party_id=payload.party_id,
+            target_account_id=payload.target_account_id,
+            frequency="monthly_day",
+            start_date=payload.bill_date,
+            end_date=payload.bill_date,
+            amount=payload.amount,
+            summary_template=summary_clean,
+            description_template=None,
+            day_of_month=payload.bill_date.day,
+            business_day_adjust=False,
+        )
+        preview = self.preview_accrual_plan(plan_payload)
+        if len(preview) != 1:
+            raise LedgerValidationError(
+                f"scan accrual for party \"{party_name}\" (id={payload.party_id}) "
+                f"bill_date={payload.bill_date} produced {len(preview)} entries; expected 1"
+            )
+        if preview[0].entry_date != payload.bill_date:
+            raise LedgerValidationError(
+                f"scan accrual for party \"{party_name}\" (id={payload.party_id}) "
+                f"bill_date={payload.bill_date} scheduled entry_date={preview[0].entry_date}"
+            )
+
+        jpeg_bytes = self.scan_flatbed_jpeg(scan_backend=scan_backend)
+        filename = build_accrual_scan_filename(
+            entry_date=payload.bill_date,
+            party_name=party_name,
+            summary=summary_clean,
+        )
+        ext_ref = payload.external_reference.strip() if payload.external_reference else None
+        if ext_ref == "":
+            ext_ref = None
+
+        try:
+            with self._connection_factory() as conn:
+                with conn.transaction():
+                    with conn.cursor(row_factory=dict_row) as cur:
+                        bridge_id = self._resolve_accrual_plan_bridge(cur, plan_payload.direction)
+                        self._assert_accrual_plan_write_valid(cur, plan_payload, bridge_id)
+                        plan_name = self._allocate_unique_accrual_plan_name(cur, plan_payload.name)
+                        plan_params = self._accrual_plan_row_params(plan_payload)
+                        plan_params = (plan_name,) + plan_params[1:]
+                        cur.execute(
+                            """
+                            INSERT INTO accrual_plans (
+                                name, direction, party_id, target_account_id,
+                                frequency, start_date, end_date, amount, summary_template, description_template,
+                                day_of_week, day_of_month, month_of_year, business_day_adjust
+                            )
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            RETURNING id, name, direction, party_id, target_account_id,
+                                      frequency, start_date, end_date, amount, summary_template, description_template,
+                                      day_of_week, day_of_month, month_of_year, business_day_adjust,
+                                      created_at, updated_at
+                            """,
+                            plan_params,
+                        )
+                        plan_row = cur.fetchone()
+                        plan_id = int(plan_row["id"])
+                        self._insert_accrual_plan_schedule(
+                            cur,
+                            plan_id,
+                            plan_payload,
+                            preview,
+                            bridge_id,
+                            obligation_due_date=payload.due_date,
+                        )
+                        cur.execute(
+                            """
+                            SELECT je.id AS entry_id
+                            FROM journal_entries je
+                            WHERE je.accrual_plan_id = %s
+                            ORDER BY je.id ASC
+                            LIMIT 1
+                            """,
+                            (plan_id,),
+                        )
+                        entry_row = cur.fetchone()
+                        if not entry_row:
+                            raise LedgerValidationError(
+                                f'accrual plan "{plan_name}" (id={plan_id}) has no journal entries after scan create'
+                            )
+                        entry_id = int(entry_row["entry_id"])
+                        cur.execute(
+                            """
+                            SELECT ao.id, ao.party_id, ao.accrual_plan_id, ao.source_entry_id,
+                                   je.entry_date AS source_entry_date,
+                                   je.summary AS source_entry_summary,
+                                   ao.source_line_id, ao.obligation_type, ao.status,
+                                   ao.original_amount, ao.open_amount, ao.due_date,
+                                   ao.created_at, ao.updated_at
+                            FROM accrual_obligations ao
+                            LEFT JOIN journal_entries je ON je.id = ao.source_entry_id
+                            WHERE ao.accrual_plan_id = %s
+                            ORDER BY ao.id ASC
+                            LIMIT 1
+                            """,
+                            (plan_id,),
+                        )
+                        obligation_row = cur.fetchone()
+                        if not obligation_row:
+                            raise LedgerValidationError(
+                                f'accrual plan "{plan_name}" (id={plan_id}) has no obligation after scan create'
+                            )
+                        attachment = self._insert_journal_entry_attachment_row(
+                            cur,
+                            entry_id=entry_id,
+                            file_bytes=jpeg_bytes,
+                            summary_clean=summary_clean,
+                            ext_ref=ext_ref,
+                            mime="image/jpeg",
+                            original_name=filename,
+                        )
+        except (errors.RaiseException, errors.ForeignKeyViolation) as exc:
+            _reraise_ledger_journal_db_error(exc)
+
+        return AccrualPlanScanResult(
+            plan=AccrualPlanOut.model_validate(plan_row),
+            obligation=AccrualObligationOut.model_validate(obligation_row),
+            attachment=attachment,
+            source_entry_id=entry_id,
+        )
 
     @staticmethod
     def _assert_accrual_plan_has_no_settlement_allocations(
