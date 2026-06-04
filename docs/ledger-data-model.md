@@ -129,6 +129,15 @@ flowchart TB
 
 An obligation belongs to the **accrual subledger** (`accrual_obligations` + its `source_entry_id` accrual JE). A batch is only the set of journal entries tagged with that batch's `import_batch_id`.
 
+### Journal list filter: `accrual_plan_ids`
+
+`GET /journal-entries` with one or more `accrual_plan_ids` returns a journal entry when **either**:
+
+- `journal_entries.accrual_plan_id` is in the selected set (plan-posted accrual rows), **or**
+- the entry is `settlement_allocations.entry_id` for at least one allocation whose `accrual_obligations.accrual_plan_id` is in the selected set (non-collapsed settlement JEs and CSV `line[]` settlements, where the settlement JE typically has `accrual_plan_id` null).
+
+Same-day collapse still surfaces as the single accrual JE (allocations on that entry; `accrual_plan_id` already set). Other list dimensions (dates, accounts, parties, import basename, etc.) still combine with **AND** semantics.
+
 ---
 
 ## Settlement flow (manual today; CSV `line[]` in #151)
