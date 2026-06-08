@@ -11,6 +11,8 @@ from fpdf import FPDF
 from fpdf.enums import MethodReturnValue, XPos, YPos
 
 from tallybadger.api.income_expense_export import _format_currency_usd, resolve_pdf_unicode_font_path
+from tallybadger.api.pdf_page import create_report_pdf
+from tallybadger.core.config import PdfPageSizeKind
 from tallybadger.ledger.models import AccountStatementReportOut, AccountStatementRowOut
 
 
@@ -345,9 +347,13 @@ def _csv_row_cells(row: AccountStatementRowOut) -> list[str]:
     ]
 
 
-def account_statement_report_pdf_bytes(report: AccountStatementReportOut) -> bytes:
+def account_statement_report_pdf_bytes(
+    report: AccountStatementReportOut,
+    *,
+    page_size: PdfPageSizeKind | None = None,
+) -> bytes:
     font_path = resolve_pdf_unicode_font_path()
-    pdf = FPDF(orientation="L", unit="mm", format="A4")
+    pdf = create_report_pdf(orientation="L", page_size=page_size)
     pdf.set_auto_page_break(auto=False)
     pdf.set_margins(10, 10, 10)
     pdf.add_page()

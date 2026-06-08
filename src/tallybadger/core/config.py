@@ -4,6 +4,7 @@ from typing import Literal
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ScanBackendKind = Literal["stub", "hplip"]
+PdfPageSizeKind = Literal["us-letter", "a4"]
 
 
 class Settings(BaseSettings):
@@ -21,6 +22,7 @@ class Settings(BaseSettings):
     cors_allowed_origins: list[str] = []
     scan_backend: ScanBackendKind = "stub"
     scanner_device_uri: str | None = None
+    pdf_page_size: PdfPageSizeKind = "us-letter"
 
     def resolved_cors_allowed_origins(self) -> list[str]:
         if self.cors_allowed_origins:
