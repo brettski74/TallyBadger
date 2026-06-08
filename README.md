@@ -15,7 +15,7 @@ Double-entry accounting for a **small set of rental properties**: journals, char
 | Area | Status |
 |------|--------|
 | API shell | FastAPI app with `/`, `/health`, OpenAPI at `/docs` when running |
-| Config | `tallybadger.core.config.Settings` — `TALLYBADGER_DATABASE_URL` (see below); journal **attachment** max upload size lives on **`ledger_settings.max_attachment_upload_bytes`** (default **5 MiB**), adjustable via `PATCH /ledger-settings` using a byte integer or a string with **`k`** (×1024) or **`M`** (×1048576) |
+| Config | `tallybadger.core.config.Settings` — `TALLYBADGER_DATABASE_URL` (see below); journal **attachment** max upload size lives on **`ledger_settings.max_attachment_upload_bytes`** (default **5 MiB**), adjustable via `PATCH /ledger-settings` using a byte integer or a string with **`k`** (×1024) or **`M`** (×1048576); financial report PDF page size is **`ledger_settings.pdf_page_size`** (`us-letter` default, or `a4`) on the Configuration tab |
 | Database | PostgreSQL in Compose; `sql/*.sql` migrations (ledger, accruals, settlements, …) |
 | Bank CSV import (#40 / #9) | Upload and execute path in API (`import_csv` routes); templates + CEL rule sets; posts journals — usable; gaps: duplicates, cheque reconciliation, settlement wiring |
 | Import rules (#8) | **CEL** rules: **`evaluate_cel`**, persisted rule sets (`/import-rules/cel/rule-sets`), **`POST /import-rules/cel/evaluate`**, CSV execute with `cel_rule_set_id`; **Import rules** tab in the SPA for editing sets — **see [docs/import-rules-engine.md](docs/import-rules-engine.md)** |

@@ -640,6 +640,9 @@ class AccrualPreviewItem(BaseModel):
     lines: list[JournalLineIn]
 
 
+PdfPageSizeKind = Literal["us-letter", "a4"]
+
+
 class LedgerSettingsUpdate(BaseModel):
     accounts_receivable_account_id: int | None = Field(default=None, gt=0)
     accounts_payable_account_id: int | None = Field(default=None, gt=0)
@@ -657,6 +660,7 @@ class LedgerSettingsUpdate(BaseModel):
     max_scanned_pages: int | None = Field(default=None, gt=0)
     scan_dpi: int | None = Field(default=None, gt=0)
     scan_color_mode: Literal["greyscale"] | None = None
+    pdf_page_size: PdfPageSizeKind | None = None
 
 
 class LedgerSettingsOut(BaseModel):
@@ -676,6 +680,7 @@ class LedgerSettingsOut(BaseModel):
     max_scanned_pages: int
     scan_dpi: int
     scan_color_mode: str
+    pdf_page_size: PdfPageSizeKind
     updated_at: datetime
 
 
@@ -856,3 +861,44 @@ class BalanceSheetReportOut(BaseModel):
     liabilities: BalanceSheetSectionOut
     equity: BalanceSheetSectionOut
     balance_check: BalanceSheetBalanceCheckOut
+
+
+AccountStatementRowKind = Literal["balance_forward", "activity", "closing_balance"]
+
+
+class AccountStatementPeriodEcho(BaseModel):
+    start_date: date
+    end_date: date
+
+
+class AccountStatementAccountEcho(BaseModel):
+    account_id: int
+    account_name: str
+    is_active: bool
+
+
+class AccountStatementRowOut(BaseModel):
+    row_kind: AccountStatementRowKind
+    entry_date: date
+    summary: str
+    counterparty_account: str | None = None
+    party: str | None = None
+    debit: Decimal | None = None
+    credit: Decimal | None = None
+    balance: Decimal
+    entry_id: int | None = Field(
+        default=None,
+        description="Journal entry id for activity rows; null for balance forward and closing rows.",
+    )
+
+
+class AccountStatementReportOut(BaseModel):
+    """Stable JSON contract for the Account Statement report (schema version 1)."""
+
+    report_schema_version: Literal[1] = 1
+    account: AccountStatementAccountEcho
+    period: AccountStatementPeriodEcho
+    currency_label: str
+    balance_forward: Decimal
+    closing_balance: Decimal
+    rows: list[AccountStatementRowOut]

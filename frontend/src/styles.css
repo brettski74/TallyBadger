@@ -2071,3 +2071,57 @@ fieldset legend {
   text-align: center;
   font-variant-numeric: tabular-nums;
 }
+
+.account-statement-report-dialog {
+  max-width: min(72rem, calc(100vw - 2rem));
+}
+
+.account-statement-report-dialog .account-statement-report-shell {
+  display: flex;
+  flex-direction: column;
+  max-height: min(90vh, 52rem);
+  padding: 1rem 1.25rem 1.25rem;
+}
+
+.account-statement-report-chrome {
+  flex: 0 0 auto;
+}
+
+.account-statement-report-header {
+  align-items: flex-start;
+}
+
+.account-statement-report-period {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2.5rem;
+  margin: 0.25rem 0 0;
+}
+
+.account-statement-report-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  margin: 0.5rem 0;
+}
+
+.account-statement-report-table {
+  width: 100%;
+}
+
+.account-statement-report-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg-card);
+}
+
+.account-statement-report-footer {
+  flex: 0 0 auto;
+  padding-top: 0.25rem;
+}
+
+.account-statement-row-balance_forward td,
+.account-statement-row-closing_balance td {
+  font-weight: 600;
+}

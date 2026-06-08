@@ -12,6 +12,10 @@ This file is the **single human- and agent-visible source of truth** for how we 
 
 - Use **`Decimal`** or **integer minor units** for currency and amounts in **new** code—never `float` for money.
 
+## Financial report PDF exports
+
+Server-generated PDF exports (Income & Expense, Balance Sheet, Account Statement, and future tabular reports) follow **[docs/pdf-report-standards.md](docs/pdf-report-standards.md)** for page size (`ledger_settings.pdf_page_size`), table width, column sizing, vertical alignment, borders, fonts, and pagination. Read that document before implementing or revising PDF layout code; the account statement exporter is the reference implementation for multi-column tables.
+
 ## API contracts and configuration
 
 - Treat **published HTTP routes** and **stable JSON response shapes** as contracts: change them together with **tests** and any **user-facing or integration documentation** that promises that shape.
@@ -221,5 +225,6 @@ Use this table when preparing a PR; extend it as the repo evolves.
 | **Architecture vs style / delivery** | Boundaries, trust, integrations, lifecycle vs day-to-day conventions | **ARCH.md** for boundaries/lifecycle; **STYLE.md** for conventions, testing bar, or PR hygiene. **`.cursor/rules/`** only for **wiring** (pointers, tool constraints)—not duplicate policy text. |
 | **Feature-level domain docs** | Subtle or cross-cutting behaviour | Extend the relevant file under `docs/`; link from **ARCH.md** when it helps navigation. |
 | **Register / list UI** | New or revised filterable entity register | Follow **Register and list UI**; cite that section in PR body when part of cheque-register epic work. |
+| **Financial report PDF** | New or revised PDF export under `src/tallybadger/api/*_export.py` | Follow **[docs/pdf-report-standards.md](docs/pdf-report-standards.md)**; extend that doc when introducing new layout rules. |
 
 Never undo user commits or remove them from a branch using git reset or similar commands unless the user explicitly requests you to do so. Assume that the user knows what he/she is doing and if he/she committed something on a branch it's because that is what he/she wanted done.

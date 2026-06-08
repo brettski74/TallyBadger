@@ -67,6 +67,7 @@ def _blank_ledger_settings(**overrides: object) -> LedgerSettingsOut:
         "max_scanned_pages": 50,
         "scan_dpi": 300,
         "scan_color_mode": "greyscale",
+        "pdf_page_size": "us-letter",
         "updated_at": datetime.now(tz=timezone.utc),
     }
     data.update(overrides)

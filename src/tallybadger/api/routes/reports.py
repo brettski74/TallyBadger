@@ -6,6 +6,11 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from starlette.responses import Response
 
+from tallybadger.api.account_statement_export import (
+    account_statement_report_csv_bytes,
+    account_statement_report_filename_stem,
+    account_statement_report_pdf_bytes,
+)
 from tallybadger.api.balance_sheet_export import (
     balance_sheet_report_csv_bytes,
     balance_sheet_report_filename_stem,
@@ -18,8 +23,12 @@ from tallybadger.api.income_expense_export import (
 )
 from tallybadger.ledger.balance_sheet_report import resolve_balance_sheet_preset
 from tallybadger.ledger.income_expense_report import resolve_income_expense_preset
-from tallybadger.ledger.models import BalanceSheetReportOut, IncomeExpenseReportOut
-from tallybadger.ledger.service import LedgerService, LedgerValidationError
+from tallybadger.ledger.models import (
+    AccountStatementReportOut,
+    BalanceSheetReportOut,
+    IncomeExpenseReportOut,
+)
+from tallybadger.ledger.service import LedgerNotFoundError, LedgerService, LedgerValidationError
 
 from .ledger import _attachment_content_disposition, get_ledger_service
 
@@ -144,7 +153,8 @@ def export_income_expense_report(
         media = "text/csv; charset=utf-8"
         filename = f"{stem}.csv"
     else:
-        body = income_expense_report_pdf_bytes(report)
+        pdf_page_size = service.get_ledger_settings().pdf_page_size
+        body = income_expense_report_pdf_bytes(report, page_size=pdf_page_size)
         media = "application/pdf"
         filename = f"{stem}.pdf"
 
@@ -207,7 +217,66 @@ def export_balance_sheet_report(
         media = "text/csv; charset=utf-8"
         filename = f"{stem}.csv"
     else:
-        body = balance_sheet_report_pdf_bytes(report)
+        pdf_page_size = service.get_ledger_settings().pdf_page_size
+        body = balance_sheet_report_pdf_bytes(report, page_size=pdf_page_size)
+        media = "application/pdf"
+        filename = f"{stem}.pdf"
+    headers = {"Content-Disposition": _attachment_content_disposition(filename)}
+    return Response(content=body, media_type=media, headers=headers)
+
+
+def _require_account_statement_dates(
+    start_date: date | None,
+    end_date: date | None,
+) -> tuple[date, date]:
+    if start_date is None or end_date is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="account_id, start_date, and end_date are required",
+        )
+    return start_date, end_date
+
+
+@router.get("/account-statement", response_model=AccountStatementReportOut)
+def get_account_statement_report(
+    account_id: Annotated[int, Query(description="Ledger account id for the statement")],
+    start_date: date | None = None,
+    end_date: date | None = None,
+    service: LedgerService = Depends(get_ledger_service),
+) -> AccountStatementReportOut:
+    s, e = _require_account_statement_dates(start_date, end_date)
+    try:
+        return service.account_statement_report(account_id=account_id, start_date=s, end_date=e)
+    except LedgerNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except LedgerValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+
+@router.get("/account-statement/export")
+def export_account_statement_report(
+    format: Annotated[ExportFormat, Query(description="Download format")],
+    account_id: Annotated[int, Query(description="Ledger account id for the statement")],
+    start_date: date | None = None,
+    end_date: date | None = None,
+    service: LedgerService = Depends(get_ledger_service),
+) -> Response:
+    s, e = _require_account_statement_dates(start_date, end_date)
+    try:
+        report = service.account_statement_report(account_id=account_id, start_date=s, end_date=e)
+    except LedgerNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except LedgerValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+    stem = account_statement_report_filename_stem(report)
+    if format == "csv":
+        body = account_statement_report_csv_bytes(report)
+        media = "text/csv; charset=utf-8"
+        filename = f"{stem}.csv"
+    else:
+        pdf_page_size = service.get_ledger_settings().pdf_page_size
+        body = account_statement_report_pdf_bytes(report, page_size=pdf_page_size)
         media = "application/pdf"
         filename = f"{stem}.pdf"
     headers = {"Content-Disposition": _attachment_content_disposition(filename)}

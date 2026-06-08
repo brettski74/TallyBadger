@@ -1,5 +1,5 @@
 {
-  "format_version": "2.0.0",
+  "format_version": "2.1.0",
   "rows": [
     {
       "accounts_payable_account_id": 2,
@@ -10,6 +10,7 @@
       "max_attachment_upload_bytes": 5242880,
       "max_cheque_series_count": 60,
       "max_scanned_pages": 50,
+      "pdf_page_size": "us-letter",
       "prepaid_expenses_account_id": 4,
       "scan_color_mode": "greyscale",
       "scan_dpi": 300,

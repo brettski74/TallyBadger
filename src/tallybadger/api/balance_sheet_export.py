@@ -6,11 +6,11 @@ import csv
 import io
 from decimal import ROUND_HALF_UP, Decimal
 
-from fpdf import FPDF
 from fpdf.enums import XPos, YPos
 
 from tallybadger.api.income_expense_export import resolve_pdf_unicode_font_path
-from tallybadger.ledger.models import BalanceSheetReportOut
+from tallybadger.api.pdf_page import create_report_pdf
+from tallybadger.ledger.models import BalanceSheetReportOut, PdfPageSizeKind
 
 
 def _decimal_csv(d: Decimal) -> str:
@@ -63,9 +63,13 @@ def balance_sheet_report_csv_bytes(report: BalanceSheetReportOut) -> bytes:
     return buf.getvalue().encode("utf-8")
 
 
-def balance_sheet_report_pdf_bytes(report: BalanceSheetReportOut) -> bytes:
+def balance_sheet_report_pdf_bytes(
+    report: BalanceSheetReportOut,
+    *,
+    page_size: PdfPageSizeKind | None = None,
+) -> bytes:
     font_path = resolve_pdf_unicode_font_path()
-    pdf = FPDF()
+    pdf = create_report_pdf(page_size=page_size)
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
     pdf.add_font("ReportFont", "", str(font_path))

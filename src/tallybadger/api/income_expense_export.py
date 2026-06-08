@@ -8,10 +8,10 @@ import os
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
-from fpdf import FPDF
 from fpdf.enums import XPos, YPos
 
-from tallybadger.ledger.models import IncomeExpenseReportOut
+from tallybadger.api.pdf_page import create_report_pdf
+from tallybadger.ledger.models import IncomeExpenseReportOut, PdfPageSizeKind
 
 
 def _decimal_csv(d: Decimal) -> str:
@@ -81,11 +81,15 @@ def income_expense_report_csv_bytes(report: IncomeExpenseReportOut) -> bytes:
     return buf.getvalue().encode("utf-8")
 
 
-def income_expense_report_pdf_bytes(report: IncomeExpenseReportOut) -> bytes:
+def income_expense_report_pdf_bytes(
+    report: IncomeExpenseReportOut,
+    *,
+    page_size: PdfPageSizeKind | None = None,
+) -> bytes:
     """PDF mirroring on-screen layout: per-account lines, section subtotals, net income last."""
 
     font_path = resolve_pdf_unicode_font_path()
-    pdf = FPDF()
+    pdf = create_report_pdf(page_size=page_size)
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
     pdf.add_font("ReportFont", "", str(font_path))

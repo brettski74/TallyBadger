@@ -1,6 +1,6 @@
 import type { CSSProperties } from "react";
 import { FormEvent, Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { FilePlus, Pencil, Save, SquareCheckBig, SquareX, Undo2 } from "lucide-react";
+import { FilePlus, Pencil, Save, ScrollText, SquareCheckBig, SquareX, Undo2 } from "lucide-react";
 
 import {
   Account,
@@ -9,6 +9,7 @@ import {
   updateAccount,
   UpdateAccountInput,
 } from "../api/accounts";
+import type { AccountStatementReport, FetchAccountStatementParams } from "../api/accountStatementReport";
 import { useFormSaveRevertShortcuts } from "../hooks/useFormSaveRevertShortcuts";
 import {
   newActionTooltip,
@@ -23,6 +24,8 @@ import { accountNameMatchesGlob } from "../lib/accountNameGlob";
 import { isMacLikeUserAgent } from "../lib/platformKeyboard";
 import { JournalFilterMultiDropdown } from "./JournalFilterMultiDropdown";
 import { RegisterListCard, RegisterListChrome, RegisterListTable } from "./RegisterListLayout";
+import { AccountStatementReportDialog } from "./AccountStatementReportDialog";
+import { AccountStatementSettingsDialog } from "./AccountStatementSettingsDialog";
 import { TableRowIconButton } from "./TableRowIconButton";
 
 const ACCOUNT_TYPES: AccountType[] = ["asset", "liability", "equity", "revenue", "expense", "suspense"];
@@ -116,6 +119,10 @@ export function AccountsSection({
 
   const [rowActionError, setRowActionError] = useState<string | null>(null);
   const [accountRowBusyId, setAccountRowBusyId] = useState<number | null>(null);
+
+  const [statementSettingsAccount, setStatementSettingsAccount] = useState<Account | null>(null);
+  const [statementReport, setStatementReport] = useState<AccountStatementReport | null>(null);
+  const [statementParams, setStatementParams] = useState<FetchAccountStatementParams | null>(null);
 
   const [namePattern, setNamePattern] = useState("");
   const [typeFilterIds, setTypeFilterIds] = useState<number[]>([]);
@@ -641,6 +648,20 @@ export function AccountsSection({
                       aria-label={`Actions for account ${account.name}`}
                     >
                       <TableRowIconButton
+                        aria-label={`Account statement for ${account.name}`}
+                        title={`Account statement for ${account.name}`}
+                        disabled={rowActionsLocked}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (rowActionsLocked) {
+                            return;
+                          }
+                          setStatementSettingsAccount(account);
+                        }}
+                      >
+                        <ScrollText size={18} strokeWidth={2} aria-hidden />
+                      </TableRowIconButton>
+                      <TableRowIconButton
                         aria-label={`Edit account ${account.name}`}
                         title={`Edit account ${account.name}`}
                         disabled={rowActionsLocked}
@@ -684,6 +705,24 @@ export function AccountsSection({
             })}
         </RegisterListTable>
       )}
+      <AccountStatementSettingsDialog
+        open={statementSettingsAccount != null}
+        account={statementSettingsAccount}
+        onDismiss={() => setStatementSettingsAccount(null)}
+        onReportLoaded={(report, params) => {
+          setStatementReport(report);
+          setStatementParams(params);
+        }}
+      />
+      <AccountStatementReportDialog
+        open={statementReport != null}
+        report={statementReport}
+        params={statementParams}
+        onDismiss={() => {
+          setStatementReport(null);
+          setStatementParams(null);
+        }}
+      />
     </RegisterListCard>
   );
 }

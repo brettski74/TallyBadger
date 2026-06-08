@@ -35,6 +35,7 @@ describe("ConfigurationSection", () => {
             prepaid_expenses_account_id: null,
             unallocated_debits_account_id: null,
             unallocated_credits_account_id: null,
+            pdf_page_size: "us-letter",
             updated_at: "2026-01-01T00:00:00Z",
           }),
           { status: 200 },
@@ -49,6 +50,7 @@ describe("ConfigurationSection", () => {
             prepaid_expenses_account_id: 5,
             unallocated_debits_account_id: 10,
             unallocated_credits_account_id: 11,
+            pdf_page_size: "us-letter",
             updated_at: "2026-01-02T00:00:00Z",
           }),
           { status: 200 },
@@ -84,7 +86,57 @@ describe("ConfigurationSection", () => {
       scanner_device_uri: null,
       max_scanned_pages: null,
       scan_dpi: null,
+      pdf_page_size: "us-letter",
     });
+  });
+
+  it("saves PDF page size from the Reports section", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            accounts_receivable_account_id: null,
+            accounts_payable_account_id: null,
+            unearned_revenue_account_id: null,
+            prepaid_expenses_account_id: null,
+            unallocated_debits_account_id: null,
+            unallocated_credits_account_id: null,
+            pdf_page_size: "us-letter",
+            updated_at: "2026-01-01T00:00:00Z",
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            accounts_receivable_account_id: null,
+            accounts_payable_account_id: null,
+            unearned_revenue_account_id: null,
+            prepaid_expenses_account_id: null,
+            unallocated_debits_account_id: null,
+            unallocated_credits_account_id: null,
+            pdf_page_size: "a4",
+            updated_at: "2026-01-02T00:00:00Z",
+          }),
+          { status: 200 },
+        ),
+      );
+
+    render(<ConfigurationSection accounts={accounts} />);
+    const user = userEvent.setup();
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("PDF page size")).toHaveValue("us-letter");
+    });
+
+    await user.selectOptions(screen.getByLabelText("PDF page size"), "a4");
+    await user.click(screen.getByRole("button", { name: /Save configuration/i }));
+
+    const patchCall = (globalThis.fetch as ReturnType<typeof vi.spyOn>).mock.calls.find(
+      (c) => (c[1] as RequestInit | undefined)?.method === "PATCH",
+    );
+    expect(JSON.parse(String(patchCall![1]!.body))).toMatchObject({ pdf_page_size: "a4" });
   });
 
   it("shows inactive account in a role dropdown only when that setting already points at it", async () => {
@@ -147,6 +199,7 @@ describe("ConfigurationSection", () => {
         prepaid_expenses_account_id: null,
         unallocated_debits_account_id: null,
         unallocated_credits_account_id: null,
+        pdf_page_size: "us-letter",
         updated_at: "2026-01-01T00:00:00Z",
       }),
       { status: 200 },

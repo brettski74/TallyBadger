@@ -2,41 +2,41 @@
   "app_version": "0.1.0",
   "currency_assumption": "single_currency_numeric_18_2",
   "export_type": "configuration",
-  "exported_at": "2026-05-01T00:00:00.000000-04:00",
-  "format_version": "2.0.0",
+  "exported_at": "2026-06-08T02:39:23.515419+00:00",
+  "format_version": "2.1.0",
   "member_manifest": [
     {
       "path": "accounts.json",
-      "sha256": "2538b512cf13ff4bc31a86b258cb1c2103748b66bc1ea938ced0f1fe7edc67ba"
+      "sha256": "ccc547445524b42f36a7d2fd09dda891fd994a48ba841b2d7f83ca5fa78cf61d"
     },
     {
       "path": "parties.json",
-      "sha256": "dac74da09054b437a3e0458ad4559e12c712021fb92c4f962c73861e6cc9e39b"
+      "sha256": "a0bb756ffa527ff373068a2ec0a0f02159687eb6bca652ac563f7731c4bbddbe"
     },
     {
       "path": "party_match_patterns.json",
-      "sha256": "46f51dddbc8c6495a5a970103b065233d69a036bc1642fe05d6e479bc3329ca8"
+      "sha256": "0eed3367f0555851e18624f195279b4ec6a686f755501e085f4257ac465b7025"
     },
     {
       "path": "ledger_settings.json",
-      "sha256": "a3955a451fb570d65e3c3179eed7b84f7144b2fedd6693adfdbb6719340261b6"
+      "sha256": "f60d5f44b526dcdf0d862eec2d3d7de5cd3c9c199ccd91a7c846a091826905a6"
     },
     {
       "path": "cel_rule_sets.json",
-      "sha256": "03b882aecedf813f7e8adc1e0158dce79fc263800a8538daf409b9bf8437a5aa"
+      "sha256": "ec1fc5feebb8c522c3b85e79be2262e10c383b684d89a5a97ba4bfe2fa91acb0"
     },
     {
       "path": "import_templates.json",
-      "sha256": "caf167e4b1ac43b379ddb3939fcb16a48edc642ad8d74a256d96521cac0794d0"
+      "sha256": "6d331a749590927c41609511d34ca7438848ba8294e00127f1ff888868d819d9"
     },
     {
       "path": "journal_entry_filter_presets.json",
-      "sha256": "b161983a9e885b0bc44430c3f69b09c27892653b82b3b3798d7d4a1390062a09"
+      "sha256": "9f36cf875081c5a44a0469642ea0dd2af89e64a4243dfc04e35e23642247e9b7"
     },
     {
       "path": "cheque_register_filter_presets.json",
-      "sha256": "cb0714ee04010ba6b97f8aba9778210e3db173c7799739c275e4cc1cf2759067"
+      "sha256": "68f709cf7d8cf0a058a95f8af454ea041a9f3f3d6a7727bb3eda17864bf32951"
     }
   ],
-  "schema_version": "027_journal_entry_balance_deferrable"
+  "schema_version": "030_accrual_obligations_due_date"
 }
