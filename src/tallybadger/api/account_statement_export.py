@@ -51,8 +51,18 @@ def account_statement_report_csv_bytes(report: AccountStatementReportOut) -> byt
     )
     w.writerow(["report", "account_statement", "", "", "", "", "", ""])
     w.writerow(["account_name", report.account.account_name, "", "", "", "", "", ""])
-    w.writerow(["period_start", report.period.start_date.isoformat(), "", "", "", "", "", ""])
-    w.writerow(["period_end", report.period.end_date.isoformat(), "", "", "", "", "", ""])
+    w.writerow(
+        [
+            "Start Date",
+            report.period.start_date.isoformat(),
+            "End Date",
+            report.period.end_date.isoformat(),
+            "",
+            "",
+            "",
+            "",
+        ],
+    )
     for row in report.rows:
         w.writerow(_csv_row_cells(row))
     return buf.getvalue().encode("utf-8")
@@ -369,13 +379,18 @@ def account_statement_report_pdf_bytes(
         pdf.set_font("ReportFont", size=16)
         pdf.cell(0, 10, text=f"{report.account.account_name} Statement", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         pdf.set_font("ReportFont", size=11)
+        period_line_w = pdf.epw
         pdf.cell(
-            0,
+            period_line_w / 2,
             8,
-            text=(
-                f"Period: {report.period.start_date.isoformat()} – "
-                f"{report.period.end_date.isoformat()}"
-            ),
+            text=f"Start Date: {report.period.start_date.isoformat()}",
+            new_x=XPos.RIGHT,
+            new_y=YPos.TOP,
+        )
+        pdf.cell(
+            period_line_w / 2,
+            8,
+            text=f"End Date: {report.period.end_date.isoformat()}",
             new_x=XPos.LMARGIN,
             new_y=YPos.NEXT,
         )
@@ -412,6 +427,7 @@ def account_statement_report_pdf_bytes(
                 )
         _pdf_draw_horizontal_rule(pdf, x, y + _PDF_HEADER_H, table_width)
         pdf.set_xy(x, y + _PDF_HEADER_H)
+        pdf.set_font("ReportFont", size=_PDF_BODY_FONT_SIZE)
 
     def _ensure_space(needed: float) -> None:
         nonlocal pdf
@@ -422,7 +438,6 @@ def account_statement_report_pdf_bytes(
     _draw_title_block()
     _draw_column_headers()
 
-    pdf.set_font("ReportFont", size=_PDF_BODY_FONT_SIZE)
     for row in report.rows:
         row_height = _pdf_statement_row_height(
             pdf,

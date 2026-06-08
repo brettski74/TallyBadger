@@ -107,6 +107,7 @@ def test_account_statement_csv_includes_special_rows_and_columns() -> None:
     raw = account_statement_report_csv_bytes(_sample_report()).decode("utf-8")
     lines = raw.strip().splitlines()
     assert lines[0].startswith("entry_date,summary,account")
+    assert "Start Date,2026-05-01,End Date,2026-05-31" in lines[3]
     assert any(BALANCE_FORWARD_SUMMARY in line for line in lines)
     assert any(CLOSING_BALANCE_SUMMARY in line for line in lines)
     assert any(",deposit,Revenue," in line for line in lines)
@@ -157,6 +158,29 @@ def test_account_statement_pdf_contains_title_and_amounts() -> None:
     assert "Cash Statement" in text
     assert BALANCE_FORWARD_SUMMARY in text
     assert "$150.00" in text
+
+
+def test_account_statement_pdf_continuation_pages_render_body_rows() -> None:
+    report = _sample_report()
+    filler_rows = [
+        AccountStatementRowOut(
+            row_kind="activity",
+            entry_date=date(2026, 5, 15),
+            summary=f"activity-{index}",
+            counterparty_account="Revenue",
+            party="-- None --",
+            debit=Decimal("1.00"),
+            balance=Decimal("150.00") + Decimal(index),
+            entry_id=100 + index,
+        )
+        for index in range(45)
+    ]
+    report.rows = [report.rows[0], *filler_rows, report.rows[-1]]
+    pdf_bytes = account_statement_report_pdf_bytes(report)
+    reader = PdfReader(io.BytesIO(pdf_bytes))
+    assert len(reader.pages) >= 2
+    text = "\n".join(page.extract_text() or "" for page in reader.pages)
+    assert "activity-44" in text
 
 
 def test_account_statement_pdf_wraps_long_summary_without_truncation() -> None:

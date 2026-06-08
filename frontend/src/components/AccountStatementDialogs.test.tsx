@@ -139,6 +139,8 @@ describe("AccountStatementReportDialog", () => {
     );
 
     expect(screen.getByRole("heading", { name: "Cash Statement" })).toBeInTheDocument();
+    expect(screen.getByText("Start Date: 2026-05-01")).toBeInTheDocument();
+    expect(screen.getByText("End Date: 2026-05-31")).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Entry date" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Summary" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Debit" })).toBeInTheDocument();

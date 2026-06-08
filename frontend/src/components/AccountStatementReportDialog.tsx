@@ -75,7 +75,8 @@ export function AccountStatementReportDialog({
             <div>
               <h2 id="account-statement-report-title">{report.account.account_name} Statement</h2>
               <p className="account-statement-report-period muted">
-                {report.period.start_date} – {report.period.end_date}
+                <span>Start Date: {report.period.start_date}</span>
+                <span>End Date: {report.period.end_date}</span>
               </p>
             </div>
             <button type="button" className="button-secondary" onClick={onDismiss}>
