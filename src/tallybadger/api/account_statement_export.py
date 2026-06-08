@@ -57,15 +57,35 @@ def account_statement_report_csv_bytes(report: AccountStatementReportOut) -> byt
     return buf.getvalue().encode("utf-8")
 
 
+# Matches frontend --border (#e2e8f0).
+_PDF_ROW_LINE_RGB = (226, 232, 240)
+_PDF_ROW_LINE_WIDTH_MM = 0.15
+_PDF_COLUMN_WEIGHTS = (22, 62, 42, 42, 28, 28, 28)
 _PDF_TEXT_LINE_H = 4.0
 _PDF_MIN_ROW_H = 7.0
+_PDF_HEADER_H = 7.0
 
 
-def _pdf_wrapped_text_height(
-    pdf: FPDF, width: float, text: str, *, line_h: float, min_h: float
-) -> float:
+def _pdf_table_width(pdf: FPDF) -> float:
+    return pdf.epw
+
+
+def _pdf_column_widths(pdf: FPDF) -> tuple[float, ...]:
+    table_width = _pdf_table_width(pdf)
+    total_weight = sum(_PDF_COLUMN_WEIGHTS)
+    return tuple(table_width * weight / total_weight for weight in _PDF_COLUMN_WEIGHTS)
+
+
+def _pdf_column_x_offsets(col_widths: tuple[float, ...]) -> tuple[float, ...]:
+    offsets: list[float] = [0.0]
+    for width in col_widths[:-1]:
+        offsets.append(offsets[-1] + width)
+    return tuple(offsets)
+
+
+def _pdf_text_block_height(pdf: FPDF, width: float, text: str, *, line_h: float) -> float:
     if not text:
-        return min_h
+        return 0.0
     measured = pdf.multi_cell(
         width,
         line_h,
@@ -76,10 +96,16 @@ def _pdf_wrapped_text_height(
         new_x=XPos.RIGHT,
         new_y=YPos.TOP,
     )
-    return max(min_h, float(measured))
+    return float(measured)
 
 
-def _pdf_draw_wrapped_text_cell(
+def _pdf_draw_horizontal_rule(pdf: FPDF, x: float, y: float, width: float) -> None:
+    pdf.set_draw_color(*_PDF_ROW_LINE_RGB)
+    pdf.set_line_width(_PDF_ROW_LINE_WIDTH_MM)
+    pdf.line(x, y, x + width, y)
+
+
+def _pdf_draw_cell_text(
     pdf: FPDF,
     x: float,
     y: float,
@@ -90,10 +116,11 @@ def _pdf_draw_wrapped_text_cell(
     align: str,
     line_h: float,
 ) -> None:
-    pdf.rect(x, y, width, height)
     if not text:
         return
-    pdf.set_xy(x, y)
+    content_h = max(line_h, _pdf_text_block_height(pdf, width, text, line_h=line_h))
+    y_text = y + max(0.0, (height - content_h) / 2)
+    pdf.set_xy(x, y_text)
     pdf.multi_cell(
         width,
         line_h,
@@ -119,10 +146,8 @@ def _pdf_statement_row_height(
         (col_widths[2], row.counterparty_account or ""),
         (col_widths[3], row.party or ""),
     ):
-        row_height = max(
-            row_height,
-            _pdf_wrapped_text_height(pdf, width, text, line_h=line_h, min_h=min_row_h),
-        )
+        if text:
+            row_height = max(row_height, _pdf_text_block_height(pdf, width, text, line_h=line_h))
     return row_height
 
 
@@ -134,39 +159,26 @@ def _pdf_draw_statement_row(
     row_height: float,
     line_h: float,
 ) -> None:
-    summary = row.summary
-    counterparty = row.counterparty_account or ""
-    party = row.party or ""
-
-    x = pdf.get_x()
+    x = pdf.l_margin
     y = pdf.get_y()
-    x_offsets = [0.0]
-    for width in col_widths[:-1]:
-        x_offsets.append(x_offsets[-1] + width)
-
-    pdf.set_xy(x + x_offsets[0], y)
-    pdf.cell(col_widths[0], row_height, text=row.entry_date.isoformat(), border=1)
-    _pdf_draw_wrapped_text_cell(
-        pdf, x + x_offsets[1], y, col_widths[1], row_height, summary, align="L", line_h=line_h
-    )
-    _pdf_draw_wrapped_text_cell(
-        pdf,
-        x + x_offsets[2],
-        y,
-        col_widths[2],
-        row_height,
-        counterparty,
-        align="L",
-        line_h=line_h,
-    )
-    _pdf_draw_wrapped_text_cell(
-        pdf, x + x_offsets[3], y, col_widths[3], row_height, party, align="L", line_h=line_h
-    )
-    for col_index, amount in enumerate((row.debit, row.credit, row.balance), start=4):
+    table_width = _pdf_table_width(pdf)
+    x_offsets = _pdf_column_x_offsets(col_widths)
+    cell_specs: list[tuple[float, str, str]] = [
+        (col_widths[0], row.entry_date.isoformat(), "L"),
+        (col_widths[1], row.summary, "L"),
+        (col_widths[2], row.counterparty_account or "", "L"),
+        (col_widths[3], row.party or "", "L"),
+    ]
+    for amount in (row.debit, row.credit, row.balance):
         money_text = _format_currency_usd(amount) if amount is not None else ""
-        pdf.set_xy(x + x_offsets[col_index], y)
-        pdf.cell(col_widths[col_index], row_height, text=money_text, border=1, align="R")
+        cell_specs.append((col_widths[len(cell_specs)], money_text, "R"))
 
+    for offset, (width, text, align) in zip(x_offsets, cell_specs, strict=True):
+        _pdf_draw_cell_text(
+            pdf, x + offset, y, width, row_height, text, align=align, line_h=line_h
+        )
+
+    _pdf_draw_horizontal_rule(pdf, x, y + row_height, table_width)
     pdf.set_xy(x, y + row_height)
 
 
@@ -190,10 +202,10 @@ def account_statement_report_pdf_bytes(report: AccountStatementReportOut) -> byt
     pdf.set_margins(10, 10, 10)
     pdf.add_page()
     pdf.add_font("ReportFont", "", str(font_path))
+    pdf.c_margin = 1.0
 
     col_headers = ("Entry date", "Summary", "Account", "Party", "Debit", "Credit", "Balance")
-    col_widths = (22.0, 62.0, 42.0, 42.0, 28.0, 28.0, 28.0)
-    header_h = 7.0
+    col_widths = _pdf_column_widths(pdf)
     bottom_margin = 15.0
     page_h = pdf.h
 
@@ -214,13 +226,25 @@ def account_statement_report_pdf_bytes(report: AccountStatementReportOut) -> byt
         pdf.ln(2)
 
     def _draw_column_headers() -> None:
+        x = pdf.l_margin
+        y = pdf.get_y()
+        table_width = _pdf_table_width(pdf)
+        x_offsets = _pdf_column_x_offsets(col_widths)
         pdf.set_font("ReportFont", size=9)
-        pdf.set_fill_color(230, 230, 230)
-        for label, width in zip(col_headers, col_widths, strict=True):
+        for offset, (label, width) in zip(x_offsets, zip(col_headers, col_widths, strict=True), strict=True):
             align = "R" if label in ("Debit", "Credit", "Balance") else "L"
-            pdf.cell(width, header_h, text=label, border=1, fill=True, align=align)
-        pdf.ln(header_h)
-        pdf.set_fill_color(255, 255, 255)
+            _pdf_draw_cell_text(
+                pdf,
+                x + offset,
+                y,
+                width,
+                _PDF_HEADER_H,
+                label,
+                align=align,
+                line_h=_PDF_TEXT_LINE_H,
+            )
+        _pdf_draw_horizontal_rule(pdf, x, y + _PDF_HEADER_H, table_width)
+        pdf.set_xy(x, y + _PDF_HEADER_H)
 
     def _ensure_space(needed: float) -> None:
         nonlocal pdf
