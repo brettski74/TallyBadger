@@ -1370,7 +1370,7 @@ class LedgerService:
                            default_cheque_credit_account_id, default_cheque_debit_account_id,
                            max_attachment_upload_bytes, max_cheque_series_count,
                            scanner_device_uri, max_scanned_pages, scan_dpi, scan_color_mode,
-                           updated_at
+                           pdf_page_size, updated_at
                     FROM ledger_settings
                     WHERE id = 1
                     """
@@ -1426,6 +1426,7 @@ class LedgerService:
                             max_scanned_pages = COALESCE(%s, max_scanned_pages),
                             scan_dpi = COALESCE(%s, scan_dpi),
                             scan_color_mode = COALESCE(%s, scan_color_mode),
+                            pdf_page_size = COALESCE(%s, pdf_page_size),
                             updated_at = NOW()
                         WHERE id = 1
                         RETURNING accounts_receivable_account_id, accounts_payable_account_id,
@@ -1436,7 +1437,7 @@ class LedgerService:
                                   max_attachment_upload_bytes,
                                   max_cheque_series_count,
                                   scanner_device_uri, max_scanned_pages, scan_dpi, scan_color_mode,
-                                  updated_at
+                                  pdf_page_size, updated_at
                         """,
                         (
                             payload.accounts_receivable_account_id,
@@ -1452,6 +1453,7 @@ class LedgerService:
                             payload.max_scanned_pages,
                             payload.scan_dpi,
                             payload.scan_color_mode,
+                            payload.pdf_page_size,
                         ),
                     )
                     row = cur.fetchone()

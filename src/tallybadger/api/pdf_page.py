@@ -6,9 +6,10 @@ from typing import Literal
 
 from fpdf import FPDF
 
-from tallybadger.core.config import PdfPageSizeKind, get_settings
+from tallybadger.ledger.models import PdfPageSizeKind
 
 PdfOrientation = Literal["P", "L"]
+_DEFAULT_PDF_PAGE_SIZE: PdfPageSizeKind = "us-letter"
 
 _FPDF_PAGE_FORMAT: dict[PdfPageSizeKind, str] = {
     "us-letter": "letter",
@@ -17,9 +18,7 @@ _FPDF_PAGE_FORMAT: dict[PdfPageSizeKind, str] = {
 
 
 def resolved_pdf_page_size(page_size: PdfPageSizeKind | None = None) -> PdfPageSizeKind:
-    if page_size is not None:
-        return page_size
-    return get_settings().pdf_page_size
+    return page_size if page_size is not None else _DEFAULT_PDF_PAGE_SIZE
 
 
 def fpdf_page_format(page_size: PdfPageSizeKind) -> str:

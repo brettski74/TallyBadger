@@ -153,7 +153,8 @@ def export_income_expense_report(
         media = "text/csv; charset=utf-8"
         filename = f"{stem}.csv"
     else:
-        body = income_expense_report_pdf_bytes(report)
+        pdf_page_size = service.get_ledger_settings().pdf_page_size
+        body = income_expense_report_pdf_bytes(report, page_size=pdf_page_size)
         media = "application/pdf"
         filename = f"{stem}.pdf"
 
@@ -216,7 +217,8 @@ def export_balance_sheet_report(
         media = "text/csv; charset=utf-8"
         filename = f"{stem}.csv"
     else:
-        body = balance_sheet_report_pdf_bytes(report)
+        pdf_page_size = service.get_ledger_settings().pdf_page_size
+        body = balance_sheet_report_pdf_bytes(report, page_size=pdf_page_size)
         media = "application/pdf"
         filename = f"{stem}.pdf"
     headers = {"Content-Disposition": _attachment_content_disposition(filename)}
@@ -273,7 +275,8 @@ def export_account_statement_report(
         media = "text/csv; charset=utf-8"
         filename = f"{stem}.csv"
     else:
-        body = account_statement_report_pdf_bytes(report)
+        pdf_page_size = service.get_ledger_settings().pdf_page_size
+        body = account_statement_report_pdf_bytes(report, page_size=pdf_page_size)
         media = "application/pdf"
         filename = f"{stem}.pdf"
     headers = {"Content-Disposition": _attachment_content_disposition(filename)}

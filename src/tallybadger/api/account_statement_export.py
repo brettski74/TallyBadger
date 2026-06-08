@@ -12,8 +12,7 @@ from fpdf.enums import MethodReturnValue, XPos, YPos
 
 from tallybadger.api.income_expense_export import _format_currency_usd, resolve_pdf_unicode_font_path
 from tallybadger.api.pdf_page import create_report_pdf
-from tallybadger.core.config import PdfPageSizeKind
-from tallybadger.ledger.models import AccountStatementReportOut, AccountStatementRowOut
+from tallybadger.ledger.models import AccountStatementReportOut, AccountStatementRowOut, PdfPageSizeKind
 
 
 def _decimal_csv(d: Decimal | None) -> str:

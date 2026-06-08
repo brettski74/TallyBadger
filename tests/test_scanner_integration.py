@@ -362,6 +362,19 @@ def test_api_scan_accrual_plan_route(integration_db_url: str) -> None:
         app.dependency_overrides.pop(get_scan_backend_dep, None)
 
 
+def test_ledger_settings_pdf_page_size_round_trip(ledger_service: LedgerService) -> None:
+    prev = ledger_service.get_ledger_settings()
+    try:
+        assert prev.pdf_page_size == "us-letter"
+        out = ledger_service.update_ledger_settings(LedgerSettingsUpdate(pdf_page_size="a4"))
+        assert out.pdf_page_size == "a4"
+        assert ledger_service.get_ledger_settings().pdf_page_size == "a4"
+    finally:
+        ledger_service.update_ledger_settings(
+            LedgerSettingsUpdate(pdf_page_size=prev.pdf_page_size),
+        )
+
+
 def test_ledger_settings_scanner_fields_round_trip(ledger_service: LedgerService) -> None:
     prev = ledger_service.get_ledger_settings()
     try:

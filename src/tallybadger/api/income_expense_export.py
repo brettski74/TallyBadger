@@ -11,8 +11,7 @@ from pathlib import Path
 from fpdf.enums import XPos, YPos
 
 from tallybadger.api.pdf_page import create_report_pdf
-from tallybadger.core.config import PdfPageSizeKind
-from tallybadger.ledger.models import IncomeExpenseReportOut
+from tallybadger.ledger.models import IncomeExpenseReportOut, PdfPageSizeKind
 
 
 def _decimal_csv(d: Decimal) -> str:

@@ -35,6 +35,8 @@ export interface LedgerSettings {
   scan_dpi: number;
   /** Flatbed scan colour mode (#258; v1 greyscale only). */
   scan_color_mode: string;
+  /** Financial report PDF page size (#242). */
+  pdf_page_size: "us-letter" | "a4";
   updated_at: string;
 }
 

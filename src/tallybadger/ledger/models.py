@@ -640,6 +640,9 @@ class AccrualPreviewItem(BaseModel):
     lines: list[JournalLineIn]
 
 
+PdfPageSizeKind = Literal["us-letter", "a4"]
+
+
 class LedgerSettingsUpdate(BaseModel):
     accounts_receivable_account_id: int | None = Field(default=None, gt=0)
     accounts_payable_account_id: int | None = Field(default=None, gt=0)
@@ -657,6 +660,7 @@ class LedgerSettingsUpdate(BaseModel):
     max_scanned_pages: int | None = Field(default=None, gt=0)
     scan_dpi: int | None = Field(default=None, gt=0)
     scan_color_mode: Literal["greyscale"] | None = None
+    pdf_page_size: PdfPageSizeKind | None = None
 
 
 class LedgerSettingsOut(BaseModel):
@@ -676,6 +680,7 @@ class LedgerSettingsOut(BaseModel):
     max_scanned_pages: int
     scan_dpi: int
     scan_color_mode: str
+    pdf_page_size: PdfPageSizeKind
     updated_at: datetime
 
 
