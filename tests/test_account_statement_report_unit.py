@@ -154,3 +154,15 @@ def test_account_statement_pdf_contains_title_and_amounts() -> None:
     assert "Cash Statement" in text
     assert BALANCE_FORWARD_SUMMARY in text
     assert "$150.00" in text
+
+
+def test_account_statement_pdf_wraps_long_summary_without_truncation() -> None:
+    report = _sample_report()
+    marker_start = "LONGSUMMARYSTART"
+    marker_end = "LONGSUMMARYEND"
+    report.rows[1].summary = f"{marker_start} " + ("word " * 40) + marker_end
+    pdf_bytes = account_statement_report_pdf_bytes(report)
+    reader = PdfReader(io.BytesIO(pdf_bytes))
+    text = "\n".join(page.extract_text() or "" for page in reader.pages)
+    assert marker_start in text
+    assert marker_end in text

@@ -8,7 +8,7 @@ import re
 from decimal import Decimal
 
 from fpdf import FPDF
-from fpdf.enums import XPos, YPos
+from fpdf.enums import MethodReturnValue, XPos, YPos
 
 from tallybadger.api.income_expense_export import _format_currency_usd, resolve_pdf_unicode_font_path
 from tallybadger.ledger.models import AccountStatementReportOut, AccountStatementRowOut
@@ -57,6 +57,119 @@ def account_statement_report_csv_bytes(report: AccountStatementReportOut) -> byt
     return buf.getvalue().encode("utf-8")
 
 
+_PDF_TEXT_LINE_H = 4.0
+_PDF_MIN_ROW_H = 7.0
+
+
+def _pdf_wrapped_text_height(
+    pdf: FPDF, width: float, text: str, *, line_h: float, min_h: float
+) -> float:
+    if not text:
+        return min_h
+    measured = pdf.multi_cell(
+        width,
+        line_h,
+        text=text,
+        border=0,
+        dry_run=True,
+        output=MethodReturnValue.HEIGHT,
+        new_x=XPos.RIGHT,
+        new_y=YPos.TOP,
+    )
+    return max(min_h, float(measured))
+
+
+def _pdf_draw_wrapped_text_cell(
+    pdf: FPDF,
+    x: float,
+    y: float,
+    width: float,
+    height: float,
+    text: str,
+    *,
+    align: str,
+    line_h: float,
+) -> None:
+    pdf.rect(x, y, width, height)
+    if not text:
+        return
+    pdf.set_xy(x, y)
+    pdf.multi_cell(
+        width,
+        line_h,
+        text=text,
+        border=0,
+        align=align,
+        new_x=XPos.RIGHT,
+        new_y=YPos.TOP,
+    )
+
+
+def _pdf_statement_row_height(
+    pdf: FPDF,
+    col_widths: tuple[float, ...],
+    row: AccountStatementRowOut,
+    *,
+    line_h: float,
+    min_row_h: float,
+) -> float:
+    row_height = min_row_h
+    for width, text in (
+        (col_widths[1], row.summary),
+        (col_widths[2], row.counterparty_account or ""),
+        (col_widths[3], row.party or ""),
+    ):
+        row_height = max(
+            row_height,
+            _pdf_wrapped_text_height(pdf, width, text, line_h=line_h, min_h=min_row_h),
+        )
+    return row_height
+
+
+def _pdf_draw_statement_row(
+    pdf: FPDF,
+    col_widths: tuple[float, ...],
+    row: AccountStatementRowOut,
+    *,
+    row_height: float,
+    line_h: float,
+) -> None:
+    summary = row.summary
+    counterparty = row.counterparty_account or ""
+    party = row.party or ""
+
+    x = pdf.get_x()
+    y = pdf.get_y()
+    x_offsets = [0.0]
+    for width in col_widths[:-1]:
+        x_offsets.append(x_offsets[-1] + width)
+
+    pdf.set_xy(x + x_offsets[0], y)
+    pdf.cell(col_widths[0], row_height, text=row.entry_date.isoformat(), border=1)
+    _pdf_draw_wrapped_text_cell(
+        pdf, x + x_offsets[1], y, col_widths[1], row_height, summary, align="L", line_h=line_h
+    )
+    _pdf_draw_wrapped_text_cell(
+        pdf,
+        x + x_offsets[2],
+        y,
+        col_widths[2],
+        row_height,
+        counterparty,
+        align="L",
+        line_h=line_h,
+    )
+    _pdf_draw_wrapped_text_cell(
+        pdf, x + x_offsets[3], y, col_widths[3], row_height, party, align="L", line_h=line_h
+    )
+    for col_index, amount in enumerate((row.debit, row.credit, row.balance), start=4):
+        money_text = _format_currency_usd(amount) if amount is not None else ""
+        pdf.set_xy(x + x_offsets[col_index], y)
+        pdf.cell(col_widths[col_index], row_height, text=money_text, border=1, align="R")
+
+    pdf.set_xy(x, y + row_height)
+
+
 def _csv_row_cells(row: AccountStatementRowOut) -> list[str]:
     return [
         row.entry_date.isoformat(),
@@ -80,7 +193,6 @@ def account_statement_report_pdf_bytes(report: AccountStatementReportOut) -> byt
 
     col_headers = ("Entry date", "Summary", "Account", "Party", "Debit", "Credit", "Balance")
     col_widths = (22.0, 62.0, 42.0, 42.0, 28.0, 28.0, 28.0)
-    row_h = 7.0
     header_h = 7.0
     bottom_margin = 15.0
     page_h = pdf.h
@@ -116,23 +228,25 @@ def account_statement_report_pdf_bytes(report: AccountStatementReportOut) -> byt
             pdf.add_page()
             _draw_column_headers()
 
-    def _money_cell(width: float, amount: Decimal | None) -> None:
-        text = _format_currency_usd(amount) if amount is not None else ""
-        pdf.cell(width, row_h, text=text, border=1, align="R")
-
     _draw_title_block()
     _draw_column_headers()
 
     pdf.set_font("ReportFont", size=8)
     for row in report.rows:
-        _ensure_space(row_h)
-        pdf.cell(col_widths[0], row_h, text=row.entry_date.isoformat(), border=1)
-        pdf.cell(col_widths[1], row_h, text=row.summary[:80], border=1)
-        pdf.cell(col_widths[2], row_h, text=(row.counterparty_account or "")[:40], border=1)
-        pdf.cell(col_widths[3], row_h, text=(row.party or "")[:40], border=1)
-        _money_cell(col_widths[4], row.debit)
-        _money_cell(col_widths[5], row.credit)
-        _money_cell(col_widths[6], row.balance)
-        pdf.ln(row_h)
+        row_height = _pdf_statement_row_height(
+            pdf,
+            col_widths,
+            row,
+            line_h=_PDF_TEXT_LINE_H,
+            min_row_h=_PDF_MIN_ROW_H,
+        )
+        _ensure_space(row_height)
+        _pdf_draw_statement_row(
+            pdf,
+            col_widths,
+            row,
+            row_height=row_height,
+            line_h=_PDF_TEXT_LINE_H,
+        )
 
     return bytes(pdf.output())
