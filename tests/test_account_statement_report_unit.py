@@ -12,6 +12,9 @@ from tallybadger.api.account_statement_export import (
     account_statement_report_csv_bytes,
     account_statement_report_filename_stem,
     account_statement_report_pdf_bytes,
+    _pdf_allocate_text_column_widths,
+    _pdf_average_char_counts,
+    _pdf_largest_money_display_amount,
 )
 from tallybadger.ledger.account_statement_report import (
     BALANCE_FORWARD_SUMMARY,
@@ -166,3 +169,36 @@ def test_account_statement_pdf_wraps_long_summary_without_truncation() -> None:
     text = "\n".join(page.extract_text() or "" for page in reader.pages)
     assert marker_start in text
     assert marker_end in text
+
+
+def test_pdf_average_char_counts_use_row_content() -> None:
+    report = _sample_report()
+    summary_avg, account_avg, party_avg = _pdf_average_char_counts(report.rows)
+    assert summary_avg > 0
+    assert account_avg > 0
+    assert party_avg > 0
+
+
+def test_pdf_allocate_text_columns_splits_evenly_when_under_30_ems() -> None:
+    widths = _pdf_allocate_text_column_widths(
+        available_width=25.0,
+        avg_chars=(100.0, 10.0, 10.0),
+        em_width=2.0,
+    )
+    assert widths == pytest.approx((25.0 / 3, 25.0 / 3, 25.0 / 3))
+
+
+def test_pdf_allocate_text_columns_enforces_min_em_width() -> None:
+    widths = _pdf_allocate_text_column_widths(
+        available_width=100.0,
+        avg_chars=(1.0, 1.0, 98.0),
+        em_width=2.0,
+    )
+    assert widths[0] == pytest.approx(20.0)
+    assert widths[1] == pytest.approx(20.0)
+    assert widths[2] == pytest.approx(60.0)
+
+
+def test_pdf_money_floor_uses_at_least_one_hundred_thousand() -> None:
+    report = _sample_report()
+    assert _pdf_largest_money_display_amount(report.rows) == Decimal("100000.00")

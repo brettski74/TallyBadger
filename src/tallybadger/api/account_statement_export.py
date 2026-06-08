@@ -60,20 +60,151 @@ def account_statement_report_csv_bytes(report: AccountStatementReportOut) -> byt
 # Matches frontend --border (#e2e8f0).
 _PDF_ROW_LINE_RGB = (226, 232, 240)
 _PDF_ROW_LINE_WIDTH_MM = 0.15
-_PDF_COLUMN_WEIGHTS = (22, 62, 42, 42, 28, 28, 28)
 _PDF_TEXT_LINE_H = 4.0
 _PDF_MIN_ROW_H = 7.0
 _PDF_HEADER_H = 7.0
+_PDF_BODY_FONT_SIZE = 8
+_PDF_HEADER_FONT_SIZE = 9
+_PDF_MIN_MONEY_FLOOR = Decimal("100000.00")
+_PDF_MIN_TEXT_COL_EMS = 10
+_PDF_WIDEST_ISO_DATE = "2099-12-31"
 
 
 def _pdf_table_width(pdf: FPDF) -> float:
     return pdf.epw
 
 
-def _pdf_column_widths(pdf: FPDF) -> tuple[float, ...]:
+def _pdf_em_width(pdf: FPDF) -> float:
+    return pdf.get_string_width("0")
+
+
+def _pdf_text_width(pdf: FPDF, text: str) -> float:
+    return pdf.get_string_width(text)
+
+
+def _pdf_cell_horizontal_padding(pdf: FPDF) -> float:
+    return 2 * pdf.c_margin
+
+
+def _pdf_average_char_counts(rows: list[AccountStatementRowOut]) -> tuple[float, float, float]:
+    if not rows:
+        return (1.0, 1.0, 1.0)
+    summary_total = 0
+    account_total = 0
+    party_total = 0
+    for row in rows:
+        summary_total += len(row.summary)
+        account_total += len(row.counterparty_account or "")
+        party_total += len(row.party or "")
+    count = len(rows)
+    return (summary_total / count, account_total / count, party_total / count)
+
+
+def _pdf_allocate_text_column_widths(
+    *,
+    available_width: float,
+    avg_chars: tuple[float, float, float],
+    em_width: float,
+) -> tuple[float, float, float]:
+    """Split width among Summary, Account, and Party using average char weights."""
+    min_col_width = _PDF_MIN_TEXT_COL_EMS * em_width
+    min_total = 3 * min_col_width
+
+    if available_width <= 0:
+        return (0.0, 0.0, 0.0)
+    if available_width < min_total:
+        third = available_width / 3.0
+        return (third, third, third)
+
+    weights = list(avg_chars)
+    if sum(weights) <= 0:
+        weights = [1.0, 1.0, 1.0]
+
+    assigned: list[float | None] = [None, None, None]
+    free_indices = [0, 1, 2]
+    remaining = available_width
+
+    while free_indices:
+        weight_sum = sum(weights[index] for index in free_indices)
+        if weight_sum <= 0:
+            allocation = {index: remaining / len(free_indices) for index in free_indices}
+        else:
+            allocation = {
+                index: remaining * weights[index] / weight_sum for index in free_indices
+            }
+
+        fixed_this_round = False
+        for index in list(free_indices):
+            if allocation[index] < min_col_width:
+                assigned[index] = min_col_width
+                remaining -= min_col_width
+                free_indices.remove(index)
+                fixed_this_round = True
+
+        if not fixed_this_round:
+            for index in free_indices:
+                assigned[index] = allocation[index]
+            break
+
+    return tuple(width if width is not None else 0.0 for width in assigned)
+
+
+def _pdf_largest_money_display_amount(rows: list[AccountStatementRowOut]) -> Decimal:
+    largest = _PDF_MIN_MONEY_FLOOR
+    for row in rows:
+        for amount in (row.debit, row.credit, row.balance):
+            if amount is not None:
+                largest = max(largest, abs(amount))
+    return largest
+
+
+def _pdf_date_column_width(pdf: FPDF, rows: list[AccountStatementRowOut]) -> float:
+    pdf.set_font("ReportFont", size=_PDF_BODY_FONT_SIZE)
+    candidates = [_PDF_WIDEST_ISO_DATE]
+    for row in rows:
+        candidates.append(row.entry_date.isoformat())
+    max_width = max(_pdf_text_width(pdf, text) for text in candidates)
+    pdf.set_font("ReportFont", size=_PDF_HEADER_FONT_SIZE)
+    max_width = max(max_width, _pdf_text_width(pdf, "Entry date"))
+    return max_width + _pdf_cell_horizontal_padding(pdf)
+
+
+def _pdf_money_column_width(pdf: FPDF, rows: list[AccountStatementRowOut]) -> float:
+    display_amount = _pdf_largest_money_display_amount(rows)
+    pdf.set_font("ReportFont", size=_PDF_BODY_FONT_SIZE)
+    max_width = _pdf_text_width(pdf, _format_currency_usd(display_amount))
+    pdf.set_font("ReportFont", size=_PDF_HEADER_FONT_SIZE)
+    for label in ("Debit", "Credit", "Balance"):
+        max_width = max(max_width, _pdf_text_width(pdf, label))
+    return max_width + _pdf_cell_horizontal_padding(pdf)
+
+
+def _pdf_column_widths(pdf: FPDF, report: AccountStatementReportOut) -> tuple[float, ...]:
     table_width = _pdf_table_width(pdf)
-    total_weight = sum(_PDF_COLUMN_WEIGHTS)
-    return tuple(table_width * weight / total_weight for weight in _PDF_COLUMN_WEIGHTS)
+    date_width = _pdf_date_column_width(pdf, report.rows)
+    money_width = _pdf_money_column_width(pdf, report.rows)
+    text_available = table_width - date_width - (3 * money_width)
+    if text_available < 0:
+        fixed_budget = table_width * 0.65
+        scale = fixed_budget / (date_width + (3 * money_width))
+        date_width *= scale
+        money_width *= scale
+        text_available = table_width - date_width - (3 * money_width)
+    pdf.set_font("ReportFont", size=_PDF_BODY_FONT_SIZE)
+    summary_width, account_width, party_width = _pdf_allocate_text_column_widths(
+        available_width=max(0.0, text_available),
+        avg_chars=_pdf_average_char_counts(report.rows),
+        em_width=_pdf_em_width(pdf),
+    )
+    return (
+        date_width,
+        summary_width,
+        account_width,
+        party_width,
+        money_width,
+        money_width,
+        money_width,
+    )
 
 
 def _pdf_column_x_offsets(col_widths: tuple[float, ...]) -> tuple[float, ...]:
@@ -103,6 +234,20 @@ def _pdf_draw_horizontal_rule(pdf: FPDF, x: float, y: float, width: float) -> No
     pdf.set_draw_color(*_PDF_ROW_LINE_RGB)
     pdf.set_line_width(_PDF_ROW_LINE_WIDTH_MM)
     pdf.line(x, y, x + width, y)
+
+
+def _pdf_draw_single_line_cell(
+    pdf: FPDF,
+    x: float,
+    y: float,
+    width: float,
+    height: float,
+    text: str,
+    *,
+    align: str,
+) -> None:
+    pdf.set_xy(x, y)
+    pdf.cell(width, height, text=text, border=0, align=align)
 
 
 def _pdf_draw_cell_text(
@@ -174,9 +319,14 @@ def _pdf_draw_statement_row(
         cell_specs.append((col_widths[len(cell_specs)], money_text, "R"))
 
     for offset, (width, text, align) in zip(x_offsets, cell_specs, strict=True):
-        _pdf_draw_cell_text(
-            pdf, x + offset, y, width, row_height, text, align=align, line_h=line_h
-        )
+        if offset == x_offsets[0] or offset >= x_offsets[4]:
+            _pdf_draw_single_line_cell(
+                pdf, x + offset, y, width, row_height, text, align=align
+            )
+        else:
+            _pdf_draw_cell_text(
+                pdf, x + offset, y, width, row_height, text, align=align, line_h=line_h
+            )
 
     _pdf_draw_horizontal_rule(pdf, x, y + row_height, table_width)
     pdf.set_xy(x, y + row_height)
@@ -205,7 +355,8 @@ def account_statement_report_pdf_bytes(report: AccountStatementReportOut) -> byt
     pdf.c_margin = 1.0
 
     col_headers = ("Entry date", "Summary", "Account", "Party", "Debit", "Credit", "Balance")
-    col_widths = _pdf_column_widths(pdf)
+    pdf.set_font("ReportFont", size=_PDF_BODY_FONT_SIZE)
+    col_widths = _pdf_column_widths(pdf, report)
     bottom_margin = 15.0
     page_h = pdf.h
 
@@ -230,19 +381,30 @@ def account_statement_report_pdf_bytes(report: AccountStatementReportOut) -> byt
         y = pdf.get_y()
         table_width = _pdf_table_width(pdf)
         x_offsets = _pdf_column_x_offsets(col_widths)
-        pdf.set_font("ReportFont", size=9)
+        pdf.set_font("ReportFont", size=_PDF_HEADER_FONT_SIZE)
         for offset, (label, width) in zip(x_offsets, zip(col_headers, col_widths, strict=True), strict=True):
             align = "R" if label in ("Debit", "Credit", "Balance") else "L"
-            _pdf_draw_cell_text(
-                pdf,
-                x + offset,
-                y,
-                width,
-                _PDF_HEADER_H,
-                label,
-                align=align,
-                line_h=_PDF_TEXT_LINE_H,
-            )
+            if offset == x_offsets[0] or offset >= x_offsets[4]:
+                _pdf_draw_single_line_cell(
+                    pdf,
+                    x + offset,
+                    y,
+                    width,
+                    _PDF_HEADER_H,
+                    label,
+                    align=align,
+                )
+            else:
+                _pdf_draw_cell_text(
+                    pdf,
+                    x + offset,
+                    y,
+                    width,
+                    _PDF_HEADER_H,
+                    label,
+                    align=align,
+                    line_h=_PDF_TEXT_LINE_H,
+                )
         _pdf_draw_horizontal_rule(pdf, x, y + _PDF_HEADER_H, table_width)
         pdf.set_xy(x, y + _PDF_HEADER_H)
 
@@ -255,7 +417,7 @@ def account_statement_report_pdf_bytes(report: AccountStatementReportOut) -> byt
     _draw_title_block()
     _draw_column_headers()
 
-    pdf.set_font("ReportFont", size=8)
+    pdf.set_font("ReportFont", size=_PDF_BODY_FONT_SIZE)
     for row in report.rows:
         row_height = _pdf_statement_row_height(
             pdf,
