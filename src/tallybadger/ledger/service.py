@@ -31,6 +31,8 @@ from tallybadger.ledger.schedule import DateIncrement, generate_schedule, roll_f
 from tallybadger.ledger.journal_settlement_preview import build_journal_entry_settlement_preview
 from tallybadger.ledger.settlement_utils import (
     accrual_plan_bridge_account_id,
+    is_early_payment_obligation,
+    is_early_receipt_obligation,
     payment_bridge_account_id,
     receipt_bridge_account_id,
 )
@@ -86,6 +88,7 @@ from tallybadger.ledger.models import (
     SettlementWrite,
     JournalEntryAttachmentOut,
     JournalEntryOut,
+    JournalEntrySettlementAllocationOut,
     JournalEntryListItem,
     JournalEntryReviewMessageOut,
     JournalEntrySettlementPreviewOut,
@@ -1618,6 +1621,7 @@ class LedgerService:
                         )
 
                         touched_entry_ids: set[int] = set()
+                        obligation_line_ids: dict[int, int] | None = None
                         if collapse_same_day:
                             primary_entry_id: int | None = None
                             if payload.settlement_type == "receipt":
@@ -1690,12 +1694,14 @@ class LedgerService:
                                 ),
                             )
                             entry_id = cur.fetchone()["id"]
-                            self._insert_settlement_journal_lines(
+                            obligation_line_ids = self._insert_settlement_journal_lines(
                                 cur,
                                 payload,
                                 settings,
                                 entry_id,
                                 allocated_total,
+                                obligations,
+                                allocation_by_id,
                                 due_allocated=due_allocated,
                                 early_allocated=early_allocated,
                             )
@@ -1706,6 +1712,9 @@ class LedgerService:
                             entry_id,
                             obligations,
                             allocation_by_id,
+                            obligation_line_ids=obligation_line_ids,
+                            collapse_same_day=collapse_same_day,
+                            cash_account_id=payload.cash_account_id,
                         )
                         self._relink_accrual_attachments_to_settlement_entry(
                             cur,
@@ -4121,10 +4130,12 @@ class LedgerService:
             with conn.cursor(row_factory=dict_row) as cur:
                 cur.execute(
                     """
-                    SELECT id, entry_date, summary, description, requires_review, cheque_id,
-                           created_at, updated_at
-                    FROM journal_entries
-                    WHERE id = %s
+                    SELECT je.id, je.entry_date, je.summary, je.description, je.requires_review,
+                           je.cheque_id, je.created_at, je.updated_at,
+                           je.accrual_plan_id, ap.name AS accrual_plan_name
+                    FROM journal_entries je
+                    LEFT JOIN accrual_plans ap ON ap.id = je.accrual_plan_id
+                    WHERE je.id = %s
                     """,
                     (entry_id,),
                 )
@@ -4139,11 +4150,14 @@ class LedgerService:
                         jl.account_id,
                         jl.party_id,
                         jl.amount,
+                        jl.settlement_allocation_id,
+                        sa.obligation_id,
                         a.name AS account_name,
                         p.name AS party_name
                     FROM journal_lines jl
                     INNER JOIN accounts a ON a.id = jl.account_id
                     LEFT JOIN parties p ON p.id = jl.party_id
+                    LEFT JOIN settlement_allocations sa ON sa.id = jl.settlement_allocation_id
                     WHERE jl.entry_id = %s
                     ORDER BY jl.id ASC
                     """,
@@ -4162,8 +4176,27 @@ class LedgerService:
                 )
                 review_rows = cur.fetchall()
                 review_messages = [JournalEntryReviewMessageOut.model_validate(r) for r in review_rows]
+
+                cur.execute(
+                    """
+                    SELECT id, obligation_id, amount
+                    FROM settlement_allocations
+                    WHERE entry_id = %s
+                    ORDER BY id ASC
+                    """,
+                    (entry_id,),
+                )
+                settlement_allocations = [
+                    JournalEntrySettlementAllocationOut.model_validate(row)
+                    for row in cur.fetchall()
+                ]
             return JournalEntryOut.model_validate(
-                {**header, "lines": lines, "review_messages": review_messages},
+                {
+                    **header,
+                    "lines": lines,
+                    "review_messages": review_messages,
+                    "settlement_allocations": settlement_allocations,
+                },
             )
         finally:
             if owns_connection:
@@ -5157,11 +5190,23 @@ class LedgerService:
                 if early_allocated > Decimal("0") and settings["prepaid_expenses_account_id"] is None:
                     raise LedgerValidationError("configure prepaid expenses account for early payments")
 
+        cash_line = next(
+            line
+            for line in payload.lines
+            if line.obligation_id is None
+            and (
+                (settlement_type == "receipt" and line.amount > Decimal("0"))
+                or (settlement_type == "payment" and line.amount < Decimal("0"))
+            )
+        )
         self._insert_settlement_allocations_and_update_obligations(
             cur,
             entry_id,
             obligations,
             allocation_by_id,
+            journal_payload=None if collapse_same_day else payload,
+            collapse_same_day=collapse_same_day,
+            cash_account_id=int(cash_line.account_id),
         )
         self._relink_accrual_attachments_to_settlement_entry(
             cur,
@@ -5225,11 +5270,115 @@ class LedgerService:
         )
 
     @staticmethod
+    def _link_settlement_allocation_to_bridge_line(
+        cur,
+        allocation_id: int,
+        line_id: int,
+    ) -> None:
+        cur.execute(
+            """
+            UPDATE journal_lines
+            SET settlement_allocation_id = %s
+            WHERE id = %s
+              AND settlement_allocation_id IS NULL
+            """,
+            (allocation_id, line_id),
+        )
+        if cur.rowcount != 1:
+            raise LedgerValidationError(
+                f"could not link settlement allocation {allocation_id} to journal line {line_id}"
+            )
+
+    @staticmethod
+    def _bridge_line_id_from_journal_payload(
+        cur,
+        entry_id: int,
+        payload: JournalEntryWrite,
+        obligation_id: int,
+    ) -> int:
+        for line in payload.lines:
+            if line.obligation_id != obligation_id:
+                continue
+            cur.execute(
+                """
+                SELECT id
+                FROM journal_lines
+                WHERE entry_id = %s
+                  AND account_id = %s
+                  AND party_id IS NOT DISTINCT FROM %s
+                  AND amount = %s
+                  AND settlement_allocation_id IS NULL
+                ORDER BY id ASC
+                LIMIT 1
+                """,
+                (entry_id, line.account_id, line.party_id, line.amount),
+            )
+            row = cur.fetchone()
+            if row:
+                return int(row["id"])
+        raise LedgerValidationError(
+            f"settlement bridge line for obligation {obligation_id} not found on entry {entry_id}"
+        )
+
+    @staticmethod
+    def _bridge_line_id_for_collapsed_allocation(
+        cur,
+        entry_id: int,
+        obligation: dict,
+        alloc_amt: Decimal,
+        cash_account_id: int,
+    ) -> int:
+        source_line_id = obligation.get("source_line_id")
+        if source_line_id is not None:
+            cur.execute(
+                """
+                SELECT id, account_id, amount
+                FROM journal_lines
+                WHERE id = %s
+                  AND entry_id = %s
+                  AND settlement_allocation_id IS NULL
+                """,
+                (source_line_id, entry_id),
+            )
+            source = cur.fetchone()
+            if source and int(source["account_id"]) == cash_account_id:
+                if abs(Decimal(source["amount"])) == alloc_amt:
+                    return int(source["id"])
+        cur.execute(
+            """
+            SELECT id
+            FROM journal_lines
+            WHERE entry_id = %s
+              AND party_id = %s
+              AND account_id = %s
+              AND ABS(amount) = %s
+              AND settlement_allocation_id IS NULL
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (entry_id, obligation["party_id"], cash_account_id, alloc_amt),
+        )
+        row = cur.fetchone()
+        if row:
+            return int(row["id"])
+        if source_line_id is not None:
+            return int(source_line_id)
+        raise LedgerValidationError(
+            f"collapsed settlement bridge line for obligation {obligation['id']} "
+            f"not found on entry {entry_id}"
+        )
+
+    @staticmethod
     def _insert_settlement_allocations_and_update_obligations(
         cur,
         entry_id: int,
         obligations: list[dict],
         allocation_by_id: dict[int, Decimal],
+        *,
+        obligation_line_ids: dict[int, int] | None = None,
+        journal_payload: JournalEntryWrite | None = None,
+        collapse_same_day: bool = False,
+        cash_account_id: int | None = None,
     ) -> list[int]:
         allocation_ids: list[int] = []
         for obligation in obligations:
@@ -5244,7 +5393,40 @@ class LedgerService:
                 """,
                 (entry_id, obligation["id"], alloc_amt),
             )
-            allocation_ids.append(int(cur.fetchone()["id"]))
+            allocation_id = int(cur.fetchone()["id"])
+            allocation_ids.append(allocation_id)
+
+            if obligation_line_ids and obligation["id"] in obligation_line_ids:
+                line_id = obligation_line_ids[obligation["id"]]
+            elif collapse_same_day:
+                if cash_account_id is None:
+                    raise LedgerValidationError(
+                        "cash account is required to link collapsed settlement allocations"
+                    )
+                line_id = LedgerService._bridge_line_id_for_collapsed_allocation(
+                    cur,
+                    entry_id,
+                    obligation,
+                    alloc_amt,
+                    cash_account_id,
+                )
+            elif journal_payload is not None:
+                line_id = LedgerService._bridge_line_id_from_journal_payload(
+                    cur,
+                    entry_id,
+                    journal_payload,
+                    int(obligation["id"]),
+                )
+            else:
+                raise LedgerValidationError(
+                    f"no bridge line mapping for obligation {obligation['id']} on entry {entry_id}"
+                )
+            LedgerService._link_settlement_allocation_to_bridge_line(
+                cur,
+                allocation_id,
+                line_id,
+            )
+
             open_after = Decimal(obligation["open_amount"]) - alloc_amt
             new_status = "settled" if open_after == Decimal("0") else "partially_settled"
             cur.execute(
@@ -5321,39 +5503,118 @@ class LedgerService:
         settings,
         entry_id: int,
         allocated_total: Decimal,
+        obligations: list[dict],
+        allocation_by_id: dict[int, Decimal],
         *,
         due_allocated: Decimal = Decimal("0"),
         early_allocated: Decimal = Decimal("0"),
-    ) -> None:
+    ) -> dict[int, int]:
+        """Insert cash and per-obligation bridge lines; return obligation_id → line id."""
+        del due_allocated, early_allocated
+        obligation_line_ids: dict[int, int] = {}
+        self._assert_account_active(cur, payload.cash_account_id)
+
         if payload.settlement_type == "receipt":
-            ar_account_id = settings["accounts_receivable_account_id"]
-            ur_account_id = settings["unearned_revenue_account_id"]
-            lines = [(payload.cash_account_id, payload.party_id, payload.amount)]
-            if due_allocated > Decimal("0"):
-                lines.append((ar_account_id, payload.party_id, -due_allocated))
-            unapplied = payload.amount - allocated_total
-            ur_total = early_allocated + unapplied
-            if ur_total > Decimal("0"):
-                lines.append((ur_account_id, payload.party_id, -ur_total))
-        else:
-            ap_account_id = settings["accounts_payable_account_id"]
-            prepaid_account_id = settings["prepaid_expenses_account_id"]
-            unapplied = payload.amount - allocated_total
-            lines = [(payload.cash_account_id, payload.party_id, -payload.amount)]
-            if due_allocated > Decimal("0"):
-                lines.append((ap_account_id, payload.party_id, due_allocated))
-            prepaid_total = early_allocated + unapplied
-            if prepaid_total > Decimal("0"):
-                lines.append((prepaid_account_id, payload.party_id, prepaid_total))
-        for account_id, party_id, amount in lines:
-            self._assert_account_active(cur, account_id)
             cur.execute(
                 """
                 INSERT INTO journal_lines (entry_id, account_id, party_id, amount)
                 VALUES (%s, %s, %s, %s)
                 """,
-                (entry_id, account_id, party_id, amount),
+                (entry_id, payload.cash_account_id, payload.party_id, payload.amount),
             )
+            for obligation in obligations:
+                alloc = allocation_by_id.get(obligation["id"], Decimal("0"))
+                if alloc <= Decimal("0"):
+                    continue
+                bridge_id = receipt_bridge_account_id(
+                    payload.event_date,
+                    obligation.get("source_entry_date"),
+                    accounts_receivable_account_id=settings["accounts_receivable_account_id"],
+                    unearned_revenue_account_id=settings["unearned_revenue_account_id"],
+                )
+                if bridge_id is None:
+                    if is_early_receipt_obligation(
+                        payload.event_date,
+                        obligation.get("source_entry_date"),
+                    ):
+                        raise LedgerValidationError(
+                            "configure unearned revenue account for early/over receipts"
+                        )
+                    raise LedgerValidationError(
+                        "configure accounts receivable account in ledger settings first"
+                    )
+                self._assert_account_active(cur, bridge_id)
+                cur.execute(
+                    """
+                    INSERT INTO journal_lines (entry_id, account_id, party_id, amount)
+                    VALUES (%s, %s, %s, %s)
+                    RETURNING id
+                    """,
+                    (entry_id, bridge_id, payload.party_id, -alloc),
+                )
+                obligation_line_ids[int(obligation["id"])] = int(cur.fetchone()["id"])
+            unapplied = payload.amount - allocated_total
+            if unapplied > Decimal("0"):
+                ur_account_id = settings["unearned_revenue_account_id"]
+                self._assert_account_active(cur, ur_account_id)
+                cur.execute(
+                    """
+                    INSERT INTO journal_lines (entry_id, account_id, party_id, amount)
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    (entry_id, ur_account_id, payload.party_id, -unapplied),
+                )
+        else:
+            cur.execute(
+                """
+                INSERT INTO journal_lines (entry_id, account_id, party_id, amount)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (entry_id, payload.cash_account_id, payload.party_id, -payload.amount),
+            )
+            for obligation in obligations:
+                alloc = allocation_by_id.get(obligation["id"], Decimal("0"))
+                if alloc <= Decimal("0"):
+                    continue
+                bridge_id = payment_bridge_account_id(
+                    payload.event_date,
+                    obligation.get("source_entry_date"),
+                    accounts_payable_account_id=settings["accounts_payable_account_id"],
+                    prepaid_expenses_account_id=settings["prepaid_expenses_account_id"],
+                )
+                if bridge_id is None:
+                    if is_early_payment_obligation(
+                        payload.event_date,
+                        obligation.get("source_entry_date"),
+                    ):
+                        raise LedgerValidationError(
+                            "configure prepaid expenses account for early/over payments"
+                        )
+                    raise LedgerValidationError(
+                        "configure accounts payable account in ledger settings first"
+                    )
+                self._assert_account_active(cur, bridge_id)
+                cur.execute(
+                    """
+                    INSERT INTO journal_lines (entry_id, account_id, party_id, amount)
+                    VALUES (%s, %s, %s, %s)
+                    RETURNING id
+                    """,
+                    (entry_id, bridge_id, payload.party_id, alloc),
+                )
+                obligation_line_ids[int(obligation["id"])] = int(cur.fetchone()["id"])
+            unapplied = payload.amount - allocated_total
+            if unapplied > Decimal("0"):
+                prepaid_account_id = settings["prepaid_expenses_account_id"]
+                self._assert_account_active(cur, prepaid_account_id)
+                cur.execute(
+                    """
+                    INSERT INTO journal_lines (entry_id, account_id, party_id, amount)
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    (entry_id, prepaid_account_id, payload.party_id, unapplied),
+                )
+        return obligation_line_ids
 
     @staticmethod
     def _reclassify_receivable_line_to_unearned(

@@ -45,6 +45,7 @@ erDiagram
         bigint account_id FK
         bigint party_id FK "nullable"
         numeric amount
+        bigint settlement_allocation_id FK "nullable — bridge line ↔ allocation (#270)"
     }
 
     accrual_plans {
@@ -72,6 +73,8 @@ erDiagram
         bigint obligation_id FK
         numeric amount "applied to this obligation"
     }
+
+    journal_lines ||--o| settlement_allocations : "settlement_allocation_id (optional bridge)"
 ```
 
 Each journal entry must have **at least two lines** and **line amounts that sum to zero**; PostgreSQL enforces this at **transaction commit** via deferrable constraint triggers (migration `027`), in addition to application validation in `LedgerService`.
@@ -81,6 +84,8 @@ Each journal entry must have **at least two lines** and **line amounts that sum 
 ## Settlements are allocations grouped by `entry_id`
 
 There is **no** separate settlement header table. A settlement is one or more **`settlement_allocations`** rows that share the same **`entry_id`** — the journal entry that carries the settlement GL (a dedicated settlement JE, the import row's JE once [#151](https://github.com/brettski74/TallyBadger/issues/151) lands, or the accrual JE after same-day collapse).
+
+**Line ↔ allocation linkage (#270):** each applied obligation amount has a matching **bridge journal line** on that `entry_id` (A/R, A/P, unearned, or prepaid role account). `journal_lines.settlement_allocation_id` points at the corresponding `settlement_allocations` row (`ON DELETE SET NULL`, unique when not null). `GET /journal-entries/:id` exposes `settlement_allocations` on the entry and `obligation_id` on each linked line via that FK — no heuristic matching.
 
 | Former `settlement_events` column | Where it lives now |
 |-----------------------------------|-------------------|
