@@ -210,7 +210,7 @@ settlement_allocations.json
 
 **`export_type: complete`**, **1.8.0** — union of **1.8.0** `financial` members (same as **1.7.0** `financial`) and **1.8.0** `configuration` members (including `journal_entry_filter_presets.json` and `cheque_register_filter_presets.json`).
 
-**`format_version` 2.1.0** — same members and container as **2.0.0** (tar.gz envelopes). **`accrual_plans.json`** rows no longer include **`bridge_account_id`** ([#235](https://github.com/brettski74/TallyBadger/issues/235)); the accrual bridge is on **`journal_lines`** (and obligations reference that line). Importers **strip** `bridge_account_id` from older archives when present.
+**`format_version` 2.1.0** — same members and container as **2.0.0** (tar.gz envelopes). **`accrual_plans.json`** rows no longer include **`bridge_account_id`** ([#235](https://github.com/brettski74/TallyBadger/issues/235)); the accrual bridge is on **`journal_lines`** (and obligations reference that line). Importers **strip** `bridge_account_id` from older archives when present. From schema **`032_journal_lines_settlement_allocation_id`**, **`journal_lines.json`** may include nullable **`settlement_allocation_id`** ([#270](https://github.com/brettski74/TallyBadger/issues/270)); older archives without the column import as `NULL`. Import requires a target database at or after that migration (`schema_version` gate).
 
 Example `accounts.json` snippet:
 

@@ -1098,6 +1098,23 @@ def _normalize_legacy_settlement_payloads(
     payloads.pop("settlement_events", None)
 
 
+def _validate_journal_line_settlement_allocation_fks(
+    payloads: dict[str, list[dict[str, Any]]],
+    *,
+    allocation_ids: set[int],
+    allocation_label: str,
+) -> None:
+    for i, row in enumerate(payloads.get("journal_lines", [])):
+        said = row.get("settlement_allocation_id")
+        if said is None:
+            continue
+        if int(said) not in allocation_ids:
+            raise SnapshotValidationError(
+                f"journal_lines[{i}] settlement_allocation_id={said} "
+                f"has no matching row in {allocation_label}"
+            )
+
+
 def _validate_settlement_allocations_fks(
     payloads: dict[str, list[dict[str, Any]]],
     *,
@@ -1269,6 +1286,12 @@ def _validate_complete_fk_graph(
             je=je,
         )
 
+    sa = {int(r["id"]) for r in payloads.get("settlement_allocations", [])}
+    _validate_journal_line_settlement_allocation_fks(
+        payloads,
+        allocation_ids=sa,
+        allocation_label="settlement_allocations.json",
+    )
     _validate_settlement_allocations_fks(
         payloads,
         je=je,
@@ -1437,6 +1460,12 @@ def _validate_financial_fks(
             account_scope_label="target database",
         )
 
+    sa = {int(r["id"]) for r in payloads.get("settlement_allocations", [])}
+    _validate_journal_line_settlement_allocation_fks(
+        payloads,
+        allocation_ids=sa,
+        allocation_label="settlement_allocations.json",
+    )
     _validate_settlement_allocations_fks(
         payloads,
         je=je,

@@ -104,6 +104,8 @@ class JournalLineOut(BaseModel):
     party_id: int | None
     party_name: str | None
     amount: Decimal
+    settlement_allocation_id: int | None = None
+    obligation_id: int | None = None
 
 
 class JournalEntryReviewMessageOut(BaseModel):
@@ -129,6 +131,12 @@ class JournalEntryWrite(BaseModel):
     """Optional link to a row in ``cheques`` (clearing / register linkage)."""
 
 
+class JournalEntrySettlementAllocationOut(BaseModel):
+    id: int
+    obligation_id: int
+    amount: Decimal
+
+
 class JournalEntryOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -142,6 +150,9 @@ class JournalEntryOut(BaseModel):
     updated_at: datetime
     lines: list[JournalLineOut]
     review_messages: list[JournalEntryReviewMessageOut] = Field(default_factory=list)
+    settlement_allocations: list[JournalEntrySettlementAllocationOut] = Field(default_factory=list)
+    accrual_plan_id: int | None = None
+    accrual_plan_name: str | None = None
 
 
 class JournalEntryListItem(BaseModel):
