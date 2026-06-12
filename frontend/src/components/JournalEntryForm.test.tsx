@@ -820,6 +820,47 @@ describe("JournalEntryForm", () => {
       ]);
     });
 
+    it("labels saved obligations with source summary instead of id only", () => {
+      vi.spyOn(global, "fetch").mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
+
+      const initialLines: LineDraft[] = [
+        {
+          key: "a",
+          account_id: 10,
+          party_id: 1,
+          amount: "100.00",
+          obligation_id: 48,
+          obligation_source_entry_summary: "Snow removal 2026-02",
+        },
+        { key: "b", account_id: 1, party_id: "", amount: "-100.00", obligation_id: "" },
+      ];
+      render(
+        <JournalEntryForm
+          mode="edit"
+          accounts={[...accounts, arAccount]}
+          parties={parties}
+          initialEntryDate="2026-04-20"
+          initialSummary="Rent receipt"
+          initialDescription=""
+          reviewMessages={[]}
+          initialLines={initialLines}
+          ledgerSettings={ledgerSettings}
+          planTargetAccountByPlanId={planTargetAccountByPlanId}
+          onSubmit={vi.fn()}
+          onCancel={() => {}}
+          onRevert={() => {}}
+        />,
+      );
+
+      const obligationSelect = screen
+        .getAllByRole("combobox")
+        .find((el) => String(el.getAttribute("aria-label")).startsWith("Obligation for line"));
+      expect(obligationSelect).toHaveValue("48");
+      expect(
+        obligationSelect?.querySelector('option[value="48"]')?.textContent,
+      ).toBe("#48 — Snow removal 2026-02 (saved)");
+    });
+
     it("locks account and party while obligation is set", async () => {
       vi.spyOn(global, "fetch").mockResolvedValue(
         new Response(

@@ -10,6 +10,7 @@ export interface JournalLineOut {
   amount: string;
   settlement_allocation_id?: number | null;
   obligation_id?: number | null;
+  obligation_source_entry_summary?: string | null;
 }
 
 export interface JournalEntrySettlementAllocationOut {

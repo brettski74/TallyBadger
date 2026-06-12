@@ -14,6 +14,7 @@ import { accountsForLinePicker } from "../journal/accountSelect";
 import {
   applyObligationSelection,
   filterObligationsForLine,
+  formatObligationOptionLabel,
 } from "../journal/settlementUtils";
 import { useJournalEntryFormShortcuts } from "../hooks/useJournalEntryFormShortcuts";
 import {
@@ -31,6 +32,8 @@ export interface LineDraft {
   party_id: number | "";
   amount: string;
   obligation_id?: number | "";
+  /** From GET /journal-entries/:id for saved obligation dropdown labels. */
+  obligation_source_entry_summary?: string | null;
   /** From GET /journal-entries/:id so the row stays labeled if chart cache is stale. */
   account_name?: string;
   party_name?: string;
@@ -376,7 +379,9 @@ export function JournalEntryForm({
       }
       const line = prev[index]!;
       if (obligationId === "") {
-        return prev.map((l) => (l.key === key ? { ...l, obligation_id: "" } : l));
+        return prev.map((l) =>
+          l.key === key ? { ...l, obligation_id: "", obligation_source_entry_summary: null } : l,
+        );
       }
       const obligation = obligationById.get(obligationId);
       if (obligation == null) {
@@ -392,6 +397,7 @@ export function JournalEntryForm({
       const updated: LineDraft = {
         ...line,
         obligation_id: obligationId,
+        obligation_source_entry_summary: obligation.source_entry_summary,
         account_id: applied.account_id,
         party_id: applied.party_id,
         amount: applied.amount,
@@ -866,14 +872,22 @@ export function JournalEntryForm({
                         <option value="">No obligation</option>
                         {obligationOptions.map((o) => (
                           <option key={o.id} value={o.id}>
-                            #{o.id} — {o.source_entry_summary ?? "obligation"} ({o.open_amount}{" "}
-                            open)
+                            {formatObligationOptionLabel(o.id, o.source_entry_summary, {
+                              kind: "open",
+                              openAmount: o.open_amount,
+                            })}
                           </option>
                         ))}
                         {selectedObligationId !== "" &&
                         !obligationOptions.some((o) => String(o.id) === selectedObligationId) ? (
                           <option value={selectedObligationId}>
-                            #{selectedObligationId} (saved)
+                            {formatObligationOptionLabel(
+                              Number(selectedObligationId),
+                              line.obligation_source_entry_summary ??
+                                obligationById.get(Number(selectedObligationId))
+                                  ?.source_entry_summary,
+                              { kind: "saved" },
+                            )}
                           </option>
                         ) : null}
                       </select>

@@ -76,6 +76,18 @@ export function bridgeSignForObligationType(
   return null;
 }
 
+export function formatObligationOptionLabel(
+  id: number,
+  sourceEntrySummary: string | null | undefined,
+  trailing: { kind: "open"; openAmount: string } | { kind: "saved" },
+): string {
+  const summary = sourceEntrySummary?.trim() || "obligation";
+  if (trailing.kind === "open") {
+    return `#${id} — ${summary} (${trailing.openAmount} open)`;
+  }
+  return `#${id} — ${summary} (saved)`;
+}
+
 export function formatSignedAmount(magnitude: string, positive: boolean): string {
   const n = parseDecimal(magnitude);
   if (n === null) {

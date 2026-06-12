@@ -6,6 +6,7 @@ import {
   applyObligationSelection,
   bridgeAccountIdForObligation,
   filterObligationsForLine,
+  formatObligationOptionLabel,
   formatSignedAmount,
   isEarlyPaymentObligation,
   isEarlyReceiptObligation,
@@ -132,6 +133,21 @@ describe("applyObligationSelection", () => {
 
   it("resolves bridge from obligation type", () => {
     expect(bridgeAccountIdForObligation(receivableObligation, "2026-03-15", settings)).toBe(10);
+  });
+});
+
+describe("formatObligationOptionLabel", () => {
+  it("formats open and saved obligation options", () => {
+    expect(
+      formatObligationOptionLabel(48, "Snow removal 2026-02", {
+        kind: "open",
+        openAmount: "1500.00",
+      }),
+    ).toBe("#48 — Snow removal 2026-02 (1500.00 open)");
+    expect(formatObligationOptionLabel(48, "Snow removal 2026-02", { kind: "saved" })).toBe(
+      "#48 — Snow removal 2026-02 (saved)",
+    );
+    expect(formatObligationOptionLabel(48, null, { kind: "saved" })).toBe("#48 — obligation (saved)");
   });
 });
 

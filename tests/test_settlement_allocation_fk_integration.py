@@ -178,6 +178,7 @@ def test_get_manual_settlement_links_allocation_and_obligation_on_bridge_line(
     bridge = bridge_lines[0]
     assert bridge["settlement_allocation_id"] == alloc["id"]
     assert bridge["obligation_id"] == obligation_id
+    assert bridge["obligation_source_entry_summary"] == "July rent"
 
 
 def test_get_same_day_collapse_links_allocation_to_source_bridge_line(
