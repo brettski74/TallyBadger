@@ -1003,6 +1003,70 @@ describe("JournalEntryForm", () => {
       expect(screen.getAllByPlaceholderText("100.00 or -100.00")[0]).toHaveValue("100.00");
     });
 
+    it("restores plan P&L when clearing obligation from a bridge line", async () => {
+      vi.spyOn(global, "fetch").mockResolvedValue(
+        new Response(
+          JSON.stringify([
+            {
+              id: 55,
+              party_id: 1,
+              accrual_plan_id: 7,
+              source_entry_id: 1,
+              source_entry_date: "2026-03-01",
+              source_entry_summary: "March rent",
+              obligation_type: "receivable",
+              status: "partially_settled",
+              original_amount: "100.00",
+              open_amount: "50.00",
+              due_date: null,
+            },
+          ]),
+          { status: 200 },
+        ),
+      );
+
+      render(
+        <JournalEntryForm
+          mode="edit"
+          accounts={[...accounts, arAccount]}
+          parties={parties}
+          initialEntryDate="2026-04-20"
+          initialSummary="Rent receipt"
+          initialDescription=""
+          reviewMessages={[]}
+          initialLines={[
+            {
+              key: "a",
+              account_id: 10,
+              party_id: 1,
+              amount: "50.00",
+              obligation_id: 55,
+              obligation_source_entry_summary: "March rent",
+              obligation_target_account_id: 2,
+            },
+            { key: "b", account_id: 1, party_id: "", amount: "-50.00", obligation_id: "" },
+          ]}
+          ledgerSettings={ledgerSettings}
+          planTargetAccountByPlanId={planTargetAccountByPlanId}
+          onSubmit={vi.fn()}
+          onCancel={() => {}}
+          onRevert={() => {}}
+        />,
+      );
+
+      const user = userEvent.setup();
+      const obligationSelect = screen
+        .getAllByRole("combobox")
+        .find((el) => String(el.getAttribute("aria-label")).startsWith("Obligation for line"));
+      const accountSelect = screen
+        .getAllByRole("combobox")
+        .find((el) => String(el.getAttribute("aria-label")).startsWith("Account for line"));
+
+      await user.selectOptions(obligationSelect!, "");
+      expect(accountSelect).toHaveValue("2");
+      expect(accountSelect).not.toBeDisabled();
+    });
+
     it("shows read-only accrual banner and hides save for accrual plan entries", () => {
       render(
         <JournalEntryForm

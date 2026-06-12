@@ -4410,13 +4410,15 @@ class LedgerService:
                         sa.obligation_id,
                         a.name AS account_name,
                         p.name AS party_name,
-                        NULLIF(BTRIM(src_je.summary), '') AS obligation_source_entry_summary
+                        NULLIF(BTRIM(src_je.summary), '') AS obligation_source_entry_summary,
+                        ap.target_account_id AS obligation_target_account_id
                     FROM journal_lines jl
                     INNER JOIN accounts a ON a.id = jl.account_id
                     LEFT JOIN parties p ON p.id = jl.party_id
                     LEFT JOIN settlement_allocations sa ON sa.id = jl.settlement_allocation_id
                     LEFT JOIN accrual_obligations ao ON ao.id = sa.obligation_id
                     LEFT JOIN journal_entries src_je ON src_je.id = ao.source_entry_id
+                    LEFT JOIN accrual_plans ap ON ap.id = ao.accrual_plan_id
                     WHERE jl.entry_id = %s
                     ORDER BY jl.id ASC
                     """,

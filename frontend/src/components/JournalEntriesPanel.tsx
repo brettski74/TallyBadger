@@ -219,6 +219,7 @@ function linesFromEntry(
     party_name?: string | null;
     obligation_id?: number | null;
     obligation_source_entry_summary?: string | null;
+    obligation_target_account_id?: number | null;
   }[],
 ): LineDraft[] {
   return lines.map((l) => ({
@@ -228,6 +229,7 @@ function linesFromEntry(
     amount: l.amount,
     obligation_id: l.obligation_id ?? "",
     obligation_source_entry_summary: l.obligation_source_entry_summary ?? null,
+    obligation_target_account_id: l.obligation_target_account_id ?? null,
     account_name: l.account_name,
     party_name: l.party_name ?? undefined,
   }));

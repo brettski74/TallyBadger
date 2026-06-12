@@ -13,8 +13,10 @@ import { listOpenObligations, type LedgerSettings, type Obligation } from "../ap
 import { accountsForLinePicker } from "../journal/accountSelect";
 import {
   applyObligationSelection,
+  clearObligationSelection,
   filterObligationsForLine,
   formatObligationOptionLabel,
+  plAccountIdForObligation,
 } from "../journal/settlementUtils";
 import { useJournalEntryFormShortcuts } from "../hooks/useJournalEntryFormShortcuts";
 import {
@@ -34,6 +36,8 @@ export interface LineDraft {
   obligation_id?: number | "";
   /** From GET /journal-entries/:id for saved obligation dropdown labels. */
   obligation_source_entry_summary?: string | null;
+  /** From GET /journal-entries/:id — plan P&L account when clearing a saved obligation. */
+  obligation_target_account_id?: number | null;
   /** From GET /journal-entries/:id so the row stays labeled if chart cache is stale. */
   account_name?: string;
   party_name?: string;
@@ -379,25 +383,48 @@ export function JournalEntryForm({
       }
       const line = prev[index]!;
       if (obligationId === "") {
+        const priorObligationId = line.obligation_id;
+        const removedObligation =
+          priorObligationId !== "" && priorObligationId != null
+            ? (obligationById.get(priorObligationId) ?? null)
+            : null;
+        const cleared = clearObligationSelection({
+          line,
+          removedObligation,
+          obligationTargetAccountId: line.obligation_target_account_id ?? null,
+          settings: ledgerSettings,
+          planTargetAccountByPlanId,
+        });
         return prev.map((l) =>
-          l.key === key ? { ...l, obligation_id: "", obligation_source_entry_summary: null } : l,
+          l.key === key
+            ? {
+                ...l,
+                obligation_id: "",
+                obligation_source_entry_summary: null,
+                obligation_target_account_id: null,
+                account_id: cleared.account_id,
+              }
+            : l,
         );
       }
       const obligation = obligationById.get(obligationId);
       if (obligation == null) {
         return prev;
       }
+      const plAccountId = plAccountIdForObligation(obligation, planTargetAccountByPlanId);
       const applied = applyObligationSelection({
         line,
         obligation,
         entryDate,
         settings: ledgerSettings,
         accountsById,
+        planTargetAccountByPlanId,
       });
       const updated: LineDraft = {
         ...line,
         obligation_id: obligationId,
         obligation_source_entry_summary: obligation.source_entry_summary,
+        obligation_target_account_id: plAccountId === "" ? null : plAccountId,
         account_id: applied.account_id,
         party_id: applied.party_id,
         amount: applied.amount,

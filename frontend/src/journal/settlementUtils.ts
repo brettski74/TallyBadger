@@ -102,6 +102,34 @@ export function isPlAccount(account: Account | undefined): boolean {
   return account?.type === "revenue" || account?.type === "expense";
 }
 
+export function plAccountIdForObligation(
+  obligation: Pick<Obligation, "accrual_plan_id">,
+  planTargetAccountByPlanId: Map<number, number>,
+): number | "" {
+  if (obligation.accrual_plan_id == null) {
+    return "";
+  }
+  return planTargetAccountByPlanId.get(obligation.accrual_plan_id) ?? "";
+}
+
+export function isBridgeAccountId(
+  accountId: number,
+  settings: Pick<
+    LedgerSettings,
+    | "accounts_receivable_account_id"
+    | "accounts_payable_account_id"
+    | "unearned_revenue_account_id"
+    | "prepaid_expenses_account_id"
+  >,
+): boolean {
+  return (
+    accountId === settings.accounts_receivable_account_id ||
+    accountId === settings.accounts_payable_account_id ||
+    accountId === settings.unearned_revenue_account_id ||
+    accountId === settings.prepaid_expenses_account_id
+  );
+}
+
 export function filterObligationsForLine(
   allForParty: Obligation[],
   line: { party_id: number | ""; account_id: number | "" },
@@ -142,6 +170,7 @@ export interface ApplyObligationSelectionInput {
   entryDate: string;
   settings: LedgerSettings;
   accountsById: Map<number, Account>;
+  planTargetAccountByPlanId: Map<number, number>;
 }
 
 export interface ApplyObligationSelectionResult {
@@ -155,21 +184,24 @@ export interface ApplyObligationSelectionResult {
 export function applyObligationSelection(
   input: ApplyObligationSelectionInput,
 ): ApplyObligationSelectionResult {
-  const { line, obligation, entryDate, settings, accountsById } = input;
+  const { line, obligation, entryDate, settings, accountsById, planTargetAccountByPlanId } =
+    input;
   const priorAccountId = line.account_id;
   const sign = bridgeSignForObligationType(obligation.obligation_type);
   const bridgeId = bridgeAccountIdForObligation(obligation, entryDate, settings);
+  const plAccountId = plAccountIdForObligation(obligation, planTargetAccountByPlanId);
 
   let account_id: number | "" = line.account_id;
-  if (account_id === "" && bridgeId != null) {
-    account_id = bridgeId;
-  } else if (
-    priorAccountId !== "" &&
-    isPlAccount(accountsById.get(priorAccountId)) &&
-    bridgeId != null
-  ) {
+  if (bridgeId != null) {
     account_id = bridgeId;
   }
+
+  const remainderAccountId =
+    priorAccountId !== "" &&
+    !isBridgeAccountId(priorAccountId, settings) &&
+    isPlAccount(accountsById.get(priorAccountId))
+      ? priorAccountId
+      : plAccountId;
 
   const openAmount = parseDecimal(obligation.open_amount) ?? 0;
   const parsedAmount = parseDecimal(line.amount);
@@ -185,7 +217,7 @@ export function applyObligationSelection(
     const remainderMag = (Math.abs(parsedAmount) - openAmount).toFixed(2);
     const remainderPositive = parsedAmount > 0;
     remainderLine = {
-      account_id: priorAccountId === "" ? "" : priorAccountId,
+      account_id: remainderAccountId,
       party_id: obligation.party_id,
       amount: formatSignedAmount(remainderMag, remainderPositive),
     };
@@ -197,4 +229,36 @@ export function applyObligationSelection(
     amount,
     remainderLine,
   };
+}
+
+export interface ClearObligationSelectionInput {
+  line: { account_id: number | "" };
+  removedObligation: Obligation | null;
+  obligationTargetAccountId: number | null;
+  settings: LedgerSettings;
+  planTargetAccountByPlanId: Map<number, number>;
+}
+
+/** Restore P&L account when clearing obligation from a bridge/settlement line (#272). */
+export function clearObligationSelection(input: ClearObligationSelectionInput): {
+  account_id: number | "";
+} {
+  const { line, removedObligation, obligationTargetAccountId, settings, planTargetAccountByPlanId } =
+    input;
+  if (line.account_id === "" || !isBridgeAccountId(line.account_id, settings)) {
+    return { account_id: line.account_id };
+  }
+
+  const plAccountId =
+    removedObligation != null
+      ? plAccountIdForObligation(removedObligation, planTargetAccountByPlanId)
+      : obligationTargetAccountId != null && obligationTargetAccountId > 0
+        ? obligationTargetAccountId
+        : "";
+
+  if (plAccountId === "") {
+    return { account_id: line.account_id };
+  }
+
+  return { account_id: plAccountId };
 }

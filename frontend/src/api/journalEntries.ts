@@ -11,6 +11,7 @@ export interface JournalLineOut {
   settlement_allocation_id?: number | null;
   obligation_id?: number | null;
   obligation_source_entry_summary?: string | null;
+  obligation_target_account_id?: number | null;
 }
 
 export interface JournalEntrySettlementAllocationOut {

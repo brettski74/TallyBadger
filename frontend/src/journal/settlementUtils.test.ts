@@ -5,6 +5,7 @@ import type { LedgerSettings, Obligation } from "../api/settlements";
 import {
   applyObligationSelection,
   bridgeAccountIdForObligation,
+  clearObligationSelection,
   filterObligationsForLine,
   formatObligationOptionLabel,
   formatSignedAmount,
@@ -42,6 +43,8 @@ const revenueAccount: Account = {
   updated_at: "2026-01-01T00:00:00Z",
 };
 
+const planTargetAccountByPlanId = new Map<number, number>([[7, 20], [8, 21]]);
+
 const receivableObligation: Obligation = {
   id: 55,
   party_id: 1,
@@ -53,6 +56,20 @@ const receivableObligation: Obligation = {
   status: "open",
   original_amount: "500.00",
   open_amount: "500.00",
+  due_date: null,
+};
+
+const payableObligation: Obligation = {
+  id: 66,
+  party_id: 1,
+  accrual_plan_id: 8,
+  source_entry_id: 101,
+  source_entry_date: "2026-03-01",
+  source_entry_summary: "Repair bill",
+  obligation_type: "payable",
+  status: "open",
+  original_amount: "200.00",
+  open_amount: "200.00",
   due_date: null,
 };
 
@@ -107,6 +124,7 @@ describe("applyObligationSelection", () => {
       entryDate: "2026-03-15",
       settings,
       accountsById: new Map(),
+      planTargetAccountByPlanId,
     });
     expect(result.amount).toBe("500.00");
     expect(result.account_id).toBe(10);
@@ -121,6 +139,7 @@ describe("applyObligationSelection", () => {
       entryDate: "2026-03-15",
       settings,
       accountsById: new Map([[20, revenueAccount]]),
+      planTargetAccountByPlanId,
     });
     expect(result.amount).toBe("500.00");
     expect(result.account_id).toBe(10);
@@ -131,8 +150,73 @@ describe("applyObligationSelection", () => {
     });
   });
 
+  it("replaces an existing bridge account when switching obligations", () => {
+    const futurePayable: Obligation = {
+      ...payableObligation,
+      source_entry_date: "2026-06-01",
+    };
+    const result = applyObligationSelection({
+      line: { account_id: 11, party_id: 1, amount: "200.00" },
+      obligation: futurePayable,
+      entryDate: "2026-03-15",
+      settings,
+      accountsById: new Map(),
+      planTargetAccountByPlanId,
+    });
+    expect(result.account_id).toBe(13);
+  });
+
+  it("uses plan P&L for remainder when prior account was a bridge", () => {
+    const expenseAccount: Account = {
+      id: 21,
+      name: "Repairs",
+      type: "expense",
+      is_active: true,
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    };
+    const result = applyObligationSelection({
+      line: { account_id: 11, party_id: 1, amount: "300.00" },
+      obligation: payableObligation,
+      entryDate: "2026-03-15",
+      settings,
+      accountsById: new Map([[21, expenseAccount]]),
+      planTargetAccountByPlanId,
+    });
+    expect(result.account_id).toBe(11);
+    expect(result.remainderLine).toEqual({
+      account_id: 21,
+      party_id: 1,
+      amount: "100.00",
+    });
+  });
+
   it("resolves bridge from obligation type", () => {
     expect(bridgeAccountIdForObligation(receivableObligation, "2026-03-15", settings)).toBe(10);
+  });
+});
+
+describe("clearObligationSelection", () => {
+  it("restores plan P&L when clearing a bridge account line", () => {
+    const result = clearObligationSelection({
+      line: { account_id: 11 },
+      removedObligation: payableObligation,
+      obligationTargetAccountId: null,
+      settings,
+      planTargetAccountByPlanId,
+    });
+    expect(result.account_id).toBe(21);
+  });
+
+  it("uses saved target account when the obligation is no longer open", () => {
+    const result = clearObligationSelection({
+      line: { account_id: 11 },
+      removedObligation: null,
+      obligationTargetAccountId: 21,
+      settings,
+      planTargetAccountByPlanId,
+    });
+    expect(result.account_id).toBe(21);
   });
 });
 
