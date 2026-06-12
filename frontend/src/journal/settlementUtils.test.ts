@@ -5,6 +5,7 @@ import type { LedgerSettings, Obligation } from "../api/settlements";
 import {
   applyObligationSelection,
   bridgeAccountIdForObligation,
+  bridgeSignForObligationType,
   clearObligationSelection,
   filterObligationsForLine,
   formatObligationOptionLabel,
@@ -116,8 +117,16 @@ describe("filterObligationsForLine", () => {
   });
 });
 
+describe("bridgeSignForObligationType", () => {
+  it("credits receivable bridges and debits payable bridges", () => {
+    expect(bridgeSignForObligationType("receivable")).toBe(-1);
+    expect(bridgeSignForObligationType("payable")).toBe(1);
+    expect(bridgeSignForObligationType("unearned")).toBeNull();
+  });
+});
+
 describe("applyObligationSelection", () => {
-  it("fills amount and bridge account when empty", () => {
+  it("fills receivable bridge with negative open amount when empty", () => {
     const result = applyObligationSelection({
       line: { account_id: "", party_id: 1, amount: "" },
       obligation: receivableObligation,
@@ -126,10 +135,23 @@ describe("applyObligationSelection", () => {
       accountsById: new Map(),
       planTargetAccountByPlanId,
     });
-    expect(result.amount).toBe("500.00");
+    expect(result.amount).toBe("-500.00");
     expect(result.account_id).toBe(10);
     expect(result.party_id).toBe(1);
     expect(result.remainderLine).toBeNull();
+  });
+
+  it("fills payable bridge with positive open amount when empty", () => {
+    const result = applyObligationSelection({
+      line: { account_id: "", party_id: 1, amount: "" },
+      obligation: payableObligation,
+      entryDate: "2026-03-15",
+      settings,
+      accountsById: new Map(),
+      planTargetAccountByPlanId,
+    });
+    expect(result.amount).toBe("200.00");
+    expect(result.account_id).toBe(11);
   });
 
   it("replaces P&L account with bridge and caps excess with remainder line", () => {
@@ -141,7 +163,7 @@ describe("applyObligationSelection", () => {
       accountsById: new Map([[20, revenueAccount]]),
       planTargetAccountByPlanId,
     });
-    expect(result.amount).toBe("500.00");
+    expect(result.amount).toBe("-500.00");
     expect(result.account_id).toBe(10);
     expect(result.remainderLine).toEqual({
       account_id: 20,
@@ -183,6 +205,7 @@ describe("applyObligationSelection", () => {
       accountsById: new Map([[21, expenseAccount]]),
       planTargetAccountByPlanId,
     });
+    expect(result.amount).toBe("200.00");
     expect(result.account_id).toBe(11);
     expect(result.remainderLine).toEqual({
       account_id: 21,

@@ -1000,7 +1000,7 @@ describe("JournalEntryForm", () => {
       expect(accountSelects[0]).toBeDisabled();
       expect(partySelects[0]).toBeDisabled();
       expect(accountSelects[0]).toHaveValue("10");
-      expect(screen.getAllByPlaceholderText("100.00 or -100.00")[0]).toHaveValue("100.00");
+      expect(screen.getAllByPlaceholderText("100.00 or -100.00")[0]).toHaveValue("-100.00");
     });
 
     it("restores plan P&L when clearing obligation from a bridge line", async () => {

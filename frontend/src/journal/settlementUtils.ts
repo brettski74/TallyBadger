@@ -64,14 +64,15 @@ export function bridgeAccountIdForObligation(
   return null;
 }
 
+/** Bridge line sign: receivable settlements credit A/R (negative); payables debit A/P (positive). */
 export function bridgeSignForObligationType(
   obligationType: Obligation["obligation_type"],
 ): 1 | -1 | null {
   if (obligationType === "receivable") {
-    return 1;
+    return -1;
   }
   if (obligationType === "payable") {
-    return -1;
+    return 1;
   }
   return null;
 }
