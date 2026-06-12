@@ -877,17 +877,6 @@ export function JournalEntryForm({
                           </option>
                         ) : null}
                       </select>
-                      {line.party_id !== "" && filtered.mode === "party-only" ? (
-                        <p className="muted journal-obligation-hint">
-                          Showing all open obligations for this party. Set a revenue or expense
-                          account to narrow the list.
-                        </p>
-                      ) : null}
-                      {obligationLocked ? (
-                        <p className="muted journal-obligation-hint">
-                          Clear the obligation to change account or party on this line.
-                        </p>
-                      ) : null}
                     </>
                   )}
                 </td>
