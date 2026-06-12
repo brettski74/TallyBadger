@@ -22,9 +22,11 @@ import {
   type ChequeAssociation,
   type JournalEntryListItem,
   type JournalEntryReviewMessage,
+  type JournalEntrySettlementAllocationOut,
   type JournalEntrySettlementPreviewOut,
   type JournalEntryWrite,
 } from "../api/journalEntries";
+import { getLedgerSettings, type LedgerSettings } from "../api/settlements";
 import { listImportBatches, type ImportBatchListItem } from "../api/importBatches";
 import {
   createJournalEntryFilterPreset,
@@ -215,6 +217,7 @@ function linesFromEntry(
     account_name: string;
     party_id?: number | null;
     party_name?: string | null;
+    obligation_id?: number | null;
   }[],
 ): LineDraft[] {
   return lines.map((l) => ({
@@ -222,6 +225,7 @@ function linesFromEntry(
     account_id: l.account_id,
     party_id: l.party_id ?? "",
     amount: l.amount,
+    obligation_id: l.obligation_id ?? "",
     account_name: l.account_name,
     party_name: l.party_name ?? undefined,
   }));
@@ -281,6 +285,12 @@ export function JournalEntriesPanel({
   const [formInitialChequeId, setFormInitialChequeId] = useState<number | null>(null);
   const [attachmentsEntryId, setAttachmentsEntryId] = useState<number | null>(null);
   const [formResetKey, setFormResetKey] = useState(0);
+  const [formLedgerSettings, setFormLedgerSettings] = useState<LedgerSettings | null>(null);
+  const [formAccrualPlanId, setFormAccrualPlanId] = useState<number | null>(null);
+  const [formAccrualPlanName, setFormAccrualPlanName] = useState<string | null>(null);
+  const [formSettlementAllocations, setFormSettlementAllocations] = useState<
+    JournalEntrySettlementAllocationOut[]
+  >([]);
   const [settlementDialogOpen, setSettlementDialogOpen] = useState(false);
   const [settlementPending, setSettlementPending] = useState<{
     preview: JournalEntrySettlementPreviewOut;
@@ -289,6 +299,11 @@ export function JournalEntriesPanel({
   const [settlementSaving, setSettlementSaving] = useState(false);
   const [settlementSaveError, setSettlementSaveError] = useState<string | null>(null);
   const isMac = useMemo(() => isMacLikeUserAgent(), []);
+
+  const planTargetAccountByPlanId = useMemo(
+    () => new Map(accrualPlans.map((plan) => [plan.id, plan.target_account_id])),
+    [accrualPlans],
+  );
 
   const listParams = useMemo(
     () => ({
@@ -497,6 +512,12 @@ export function JournalEntriesPanel({
     }
   }
 
+  function resetAccrualFormMeta() {
+    setFormAccrualPlanId(null);
+    setFormAccrualPlanName(null);
+    setFormSettlementAllocations([]);
+  }
+
   async function openCreate() {
     setEditingId(null);
     setFormInitialChequeId(null);
@@ -506,13 +527,19 @@ export function JournalEntriesPanel({
     setFormReviewMessages([]);
     setFormLines(null);
     setFormLoadError(null);
+    resetAccrualFormMeta();
     setView("form");
     setFormLoading(true);
     try {
-      const open = await listCheques({ status: "open" });
+      const [open, settings] = await Promise.all([
+        listCheques({ status: "open" }),
+        getLedgerSettings(),
+      ]);
       setFormChequeChoices(open);
+      setFormLedgerSettings(settings);
     } catch {
       setFormChequeChoices([]);
+      setFormLedgerSettings(null);
     } finally {
       setFormLoading(false);
     }
@@ -524,10 +551,15 @@ export function JournalEntriesPanel({
     setFormLoading(true);
     setView("form");
     try {
-      const [entry, open] = await Promise.all([
+      const [entry, open, settings] = await Promise.all([
         getJournalEntry(id),
         listCheques({ status: "open" }),
+        getLedgerSettings(),
       ]);
+      setFormLedgerSettings(settings);
+      setFormAccrualPlanId(entry.accrual_plan_id ?? null);
+      setFormAccrualPlanName(entry.accrual_plan_name ?? null);
+      setFormSettlementAllocations(entry.settlement_allocations ?? []);
       let choices = [...open];
       const cid = entry.cheque_id ?? null;
       if (cid != null) {
@@ -569,12 +601,15 @@ export function JournalEntriesPanel({
 
   async function handleSubmit(payload: JournalEntryWrite) {
     if (editingId == null) {
-      const preview = await previewJournalEntrySettlement(payload);
-      if (preview != null) {
-        setSettlementPending({ preview, originalPayload: payload });
-        setSettlementSaveError(null);
-        setSettlementDialogOpen(true);
-        return;
+      const hasManualObligation = payload.lines.some((line) => line.obligation_id != null);
+      if (!hasManualObligation) {
+        const preview = await previewJournalEntrySettlement(payload);
+        if (preview != null) {
+          setSettlementPending({ preview, originalPayload: payload });
+          setSettlementSaveError(null);
+          setSettlementDialogOpen(true);
+          return;
+        }
       }
       await finishCreate(payload);
       return;
@@ -632,6 +667,8 @@ export function JournalEntriesPanel({
     setFormLoadError(null);
     setFormChequeChoices([]);
     setFormInitialChequeId(null);
+    setFormLedgerSettings(null);
+    resetAccrualFormMeta();
   }
 
   async function revertFormEditor() {
@@ -641,20 +678,38 @@ export function JournalEntriesPanel({
       setFormDescription("");
       setFormReviewMessages([]);
       setFormLines([
-        { key: `revert-${Date.now()}-a`, account_id: "", party_id: "", amount: "" },
-        { key: `revert-${Date.now()}-b`, account_id: "", party_id: "", amount: "" },
+        {
+          key: `revert-${Date.now()}-a`,
+          account_id: "",
+          party_id: "",
+          amount: "",
+          obligation_id: "",
+        },
+        {
+          key: `revert-${Date.now()}-b`,
+          account_id: "",
+          party_id: "",
+          amount: "",
+          obligation_id: "",
+        },
       ]);
       setFormInitialChequeId(null);
+      resetAccrualFormMeta();
       setFormResetKey((k) => k + 1);
       return;
     }
     setFormLoading(true);
     setFormLoadError(null);
     try {
-      const [entry, open] = await Promise.all([
+      const [entry, open, settings] = await Promise.all([
         getJournalEntry(editingId),
         listCheques({ status: "open" }),
+        getLedgerSettings(),
       ]);
+      setFormLedgerSettings(settings);
+      setFormAccrualPlanId(entry.accrual_plan_id ?? null);
+      setFormAccrualPlanName(entry.accrual_plan_name ?? null);
+      setFormSettlementAllocations(entry.settlement_allocations ?? []);
       let choices = [...open];
       const cid = entry.cheque_id ?? null;
       if (cid != null) {
@@ -790,6 +845,11 @@ export function JournalEntriesPanel({
             }
             chequeLinkChoices={formChequeChoices}
             initialChequeId={formInitialChequeId}
+            ledgerSettings={formLedgerSettings}
+            planTargetAccountByPlanId={planTargetAccountByPlanId}
+            accrualPlanId={formAccrualPlanId}
+            accrualPlanName={formAccrualPlanName}
+            settlementAllocations={formSettlementAllocations}
           />
         </section>
       </>

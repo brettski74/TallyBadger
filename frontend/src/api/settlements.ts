@@ -43,6 +43,7 @@ export interface LedgerSettings {
 export interface Obligation {
   id: number;
   party_id: number;
+  accrual_plan_id: number | null;
   source_entry_id: number | null;
   source_entry_date: string | null;
   source_entry_summary: string | null;
