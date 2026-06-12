@@ -870,14 +870,23 @@ export function JournalEntryForm({
                         }}
                       >
                         <option value="">No obligation</option>
-                        {obligationOptions.map((o) => (
-                          <option key={o.id} value={o.id}>
-                            {formatObligationOptionLabel(o.id, o.source_entry_summary, {
-                              kind: "open",
-                              openAmount: o.open_amount,
-                            })}
-                          </option>
-                        ))}
+                        {obligationOptions.map((o) => {
+                          const linkedOnEdit =
+                            mode === "edit" &&
+                            line.obligation_id !== "" &&
+                            line.obligation_id === o.id;
+                          return (
+                            <option key={o.id} value={o.id}>
+                              {formatObligationOptionLabel(
+                                o.id,
+                                o.source_entry_summary,
+                                linkedOnEdit
+                                  ? { kind: "saved" }
+                                  : { kind: "open", openAmount: o.open_amount },
+                              )}
+                            </option>
+                          );
+                        })}
                         {selectedObligationId !== "" &&
                         !obligationOptions.some((o) => String(o.id) === selectedObligationId) ? (
                           <option value={selectedObligationId}>

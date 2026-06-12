@@ -861,6 +861,84 @@ describe("JournalEntryForm", () => {
       ).toBe("#48 — Snow removal 2026-02 (saved)");
     });
 
+    it("marks the linked obligation (saved) when it is still in the open list", async () => {
+      vi.spyOn(global, "fetch").mockResolvedValue(
+        new Response(
+          JSON.stringify([
+            {
+              id: 48,
+              party_id: 1,
+              accrual_plan_id: 7,
+              source_entry_id: 1,
+              source_entry_date: "2026-02-01",
+              source_entry_summary: "Snow removal 2026-02",
+              obligation_type: "receivable",
+              status: "partially_settled",
+              original_amount: "1500.00",
+              open_amount: "500.00",
+              due_date: null,
+            },
+            {
+              id: 49,
+              party_id: 1,
+              accrual_plan_id: 7,
+              source_entry_id: 2,
+              source_entry_date: "2026-03-01",
+              source_entry_summary: "March rent",
+              obligation_type: "receivable",
+              status: "open",
+              original_amount: "1000.00",
+              open_amount: "1000.00",
+              due_date: null,
+            },
+          ]),
+          { status: 200 },
+        ),
+      );
+
+      const initialLines: LineDraft[] = [
+        {
+          key: "a",
+          account_id: 10,
+          party_id: 1,
+          amount: "100.00",
+          obligation_id: 48,
+          obligation_source_entry_summary: "Snow removal 2026-02",
+        },
+        { key: "b", account_id: 1, party_id: "", amount: "-100.00", obligation_id: "" },
+      ];
+      render(
+        <JournalEntryForm
+          mode="edit"
+          accounts={[...accounts, arAccount]}
+          parties={parties}
+          initialEntryDate="2026-04-20"
+          initialSummary="Rent receipt"
+          initialDescription=""
+          reviewMessages={[]}
+          initialLines={initialLines}
+          ledgerSettings={ledgerSettings}
+          planTargetAccountByPlanId={planTargetAccountByPlanId}
+          onSubmit={vi.fn()}
+          onCancel={() => {}}
+          onRevert={() => {}}
+        />,
+      );
+
+      const obligationSelect = screen
+        .getAllByRole("combobox")
+        .find((el) => String(el.getAttribute("aria-label")).startsWith("Obligation for line"));
+      await waitFor(() => {
+        expect(obligationSelect?.querySelector('option[value="49"]')).toBeTruthy();
+      });
+      expect(obligationSelect?.querySelector('option[value="48"]')?.textContent).toBe(
+        "#48 — Snow removal 2026-02 (saved)",
+      );
+      expect(obligationSelect?.querySelector('option[value="49"]')?.textContent).toBe(
+        "#49 — March rent (1000.00 open)",
+      );
+    });
+
     it("locks account and party while obligation is set", async () => {
       vi.spyOn(global, "fetch").mockResolvedValue(
         new Response(
