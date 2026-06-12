@@ -3344,12 +3344,44 @@ class LedgerService:
                 settings,
             )
 
+    def _reverse_settlement_allocations_for_entry(
+        self,
+        cur: Any,
+        entry_id: int,
+        settings: dict,
+    ) -> None:
+        """Reverse allocations and side effects for one entry; keep the journal entry (#271)."""
+        self._reverse_settlement_entry_core(
+            cur,
+            entry_id,
+            settings,
+            batch_entry_ids=set(),
+            finalize_import_unload=False,
+        )
+
     def _reverse_settlement_entry_for_import_unload(
         self,
         cur: Any,
         entry_id: int,
         batch_entry_ids: set[int],
         settings: dict,
+    ) -> None:
+        self._reverse_settlement_entry_core(
+            cur,
+            entry_id,
+            settings,
+            batch_entry_ids=batch_entry_ids,
+            finalize_import_unload=True,
+        )
+
+    def _reverse_settlement_entry_core(
+        self,
+        cur: Any,
+        entry_id: int,
+        settings: dict,
+        *,
+        batch_entry_ids: set[int],
+        finalize_import_unload: bool,
     ) -> None:
         cur.execute(
             """
@@ -3445,11 +3477,12 @@ class LedgerService:
                         cash_account_id,
                         int(ap_id),
                     )
-                self._finalize_settlement_entry_after_import_unload(
+                self._maybe_finalize_settlement_entry_after_import_unload(
                     cur,
                     entry_id,
                     entry_header,
                     batch_entry_ids,
+                    finalize_import_unload=finalize_import_unload,
                 )
                 return
 
@@ -3459,11 +3492,12 @@ class LedgerService:
                 if sd is not None and sd > event_date and amt > Decimal("0"):
                     self._reverse_early_payment_line_reclassification(cur, ob, amt, settings)
 
-            self._finalize_settlement_entry_after_import_unload(
+            self._maybe_finalize_settlement_entry_after_import_unload(
                 cur,
                 entry_id,
                 entry_header,
                 batch_entry_ids,
+                finalize_import_unload=finalize_import_unload,
             )
             return
 
@@ -3496,11 +3530,12 @@ class LedgerService:
                     cash_account_id,
                     int(ar_id),
                 )
-            self._finalize_settlement_entry_after_import_unload(
+            self._maybe_finalize_settlement_entry_after_import_unload(
                 cur,
                 entry_id,
                 entry_header,
                 batch_entry_ids,
+                finalize_import_unload=finalize_import_unload,
             )
             return
 
@@ -3510,12 +3545,30 @@ class LedgerService:
             if sd is not None and sd > event_date and amt > Decimal("0"):
                 self._reverse_early_receipt_line_reclassification(cur, ob, amt, settings)
 
-        self._finalize_settlement_entry_after_import_unload(
+        self._maybe_finalize_settlement_entry_after_import_unload(
             cur,
             entry_id,
             entry_header,
             batch_entry_ids,
+            finalize_import_unload=finalize_import_unload,
         )
+
+    @staticmethod
+    def _maybe_finalize_settlement_entry_after_import_unload(
+        cur: Any,
+        entry_id: int,
+        entry_header: dict,
+        batch_entry_ids: set[int],
+        *,
+        finalize_import_unload: bool,
+    ) -> None:
+        if finalize_import_unload:
+            LedgerService._finalize_settlement_entry_after_import_unload(
+                cur,
+                entry_id,
+                entry_header,
+                batch_entry_ids,
+            )
 
     @staticmethod
     def _settlement_type_from_obligations(obligations: list[dict]) -> str:
@@ -3976,6 +4029,208 @@ class LedgerService:
         )
         cur.execute("DELETE FROM journal_lines WHERE id = %s", (sl_id,))
 
+    @staticmethod
+    def _update_journal_entry_header(cur: Any, entry_id: int, payload: JournalEntryWrite) -> None:
+        cur.execute(
+            """
+            UPDATE journal_entries
+            SET entry_date = %s,
+                summary = %s,
+                description = %s,
+                cheque_id = %s,
+                updated_at = NOW()
+            WHERE id = %s
+            """,
+            (
+                payload.entry_date,
+                payload.summary.strip(),
+                payload.description,
+                payload.cheque_id,
+                entry_id,
+            ),
+        )
+
+    def _replace_journal_entry_lines(
+        self,
+        cur: Any,
+        entry_id: int,
+        payload: JournalEntryWrite,
+        prior_pairs: Counter,
+    ) -> None:
+        cur.execute("DELETE FROM journal_lines WHERE entry_id = %s", (entry_id,))
+        for line in payload.lines:
+            key = (line.account_id, line.party_id)
+            if prior_pairs[key] > 0:
+                prior_pairs[key] -= 1
+            else:
+                self._assert_account_active(cur, line.account_id)
+                self._assert_party_active(cur, line.party_id)
+            cur.execute(
+                """
+                INSERT INTO journal_lines (entry_id, account_id, party_id, amount)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (entry_id, line.account_id, line.party_id, line.amount),
+            )
+
+    def _update_entry_apply_settlements(
+        self,
+        cur: Any,
+        entry_id: int,
+        payload: JournalEntryWrite,
+        settings: dict,
+        prior_pairs: Counter,
+        *,
+        old_cheque_id: int | None,
+    ) -> int:
+        """Replace lines and apply obligation settlements on update (#271). May change entry_id on collapse."""
+        allocation_by_id = self._allocation_by_id_from_settlement_lines(payload)
+        obligations = self._load_obligations_by_ids_for_settlement(cur, list(allocation_by_id.keys()))
+        settlement_type = self._settlement_type_from_obligations(obligations)
+        self._validate_obligation_types_for_settlement(settlement_type, obligations)
+        open_by_id = {row["id"]: Decimal(row["open_amount"]) for row in obligations}
+        for oid, alloc in allocation_by_id.items():
+            if alloc > open_by_id[oid]:
+                ob_row = next(r for r in obligations if r["id"] == oid)
+                ob_party = self._party_name_label(cur, int(ob_row["party_id"]))
+                raise LedgerValidationError(
+                    f"allocation {alloc} for obligation {oid} ({ob_party}) "
+                    f"exceeds open amount {open_by_id[oid]}"
+                )
+        self._validate_settlement_line_accounts(
+            cur,
+            payload,
+            obligations,
+            allocation_by_id,
+            settlement_type,
+            settings,
+        )
+
+        collapse_same_day = self._eligible_for_same_day_receipt_collapse(
+            payload,
+            obligations,
+            allocation_by_id,
+            settings,
+        )
+        if not collapse_same_day:
+            collapse_same_day = self._eligible_for_same_day_payment_collapse(
+                payload,
+                obligations,
+                allocation_by_id,
+                settings,
+            )
+
+        settlement_entry_id = entry_id
+        prev_cheque_for_sync = old_cheque_id
+
+        if collapse_same_day:
+            obligation = obligations[0]
+            alloc_amt = allocation_by_id[int(obligation["id"])]
+            if settlement_type == "receipt":
+                bridge_id = settings["accounts_receivable_account_id"]
+                cash_line = next(
+                    line
+                    for line in payload.lines
+                    if line.obligation_id is None and line.amount > Decimal("0")
+                )
+                self._same_day_settle_receivable_obligation(
+                    cur,
+                    obligation,
+                    alloc_amt,
+                    cash_line.account_id,
+                    int(bridge_id),
+                )
+            else:
+                bridge_id = settings["accounts_payable_account_id"]
+                cash_line = next(
+                    line
+                    for line in payload.lines
+                    if line.obligation_id is None and line.amount < Decimal("0")
+                )
+                self._same_day_settle_payable_obligation(
+                    cur,
+                    obligation,
+                    alloc_amt,
+                    cash_line.account_id,
+                    int(bridge_id),
+                )
+            entry_id = int(obligation["source_entry_id"])
+            cur.execute(
+                "SELECT cheque_id FROM journal_entries WHERE id = %s",
+                (entry_id,),
+            )
+            accrual_cheque_row = cur.fetchone()
+            prev_cheque_for_sync = (
+                accrual_cheque_row.get("cheque_id") if accrual_cheque_row else None
+            )
+            cur.execute("DELETE FROM journal_entries WHERE id = %s", (settlement_entry_id,))
+            if old_cheque_id != payload.cheque_id and old_cheque_id is not None:
+                self._reopen_cleared_cheque_if_unreferenced(cur, old_cheque_id)
+            self._update_journal_entry_header(cur, entry_id, payload)
+        else:
+            if settlement_type == "receipt":
+                _, early_allocated = self._split_receipt_allocations(
+                    payload.entry_date,
+                    obligations,
+                    allocation_by_id,
+                )
+                if early_allocated > Decimal("0") and settings["unearned_revenue_account_id"] is None:
+                    raise LedgerValidationError("configure unearned revenue account for early receipts")
+            elif settlement_type == "payment":
+                _, early_allocated = self._split_payment_allocations(
+                    payload.entry_date,
+                    obligations,
+                    allocation_by_id,
+                )
+                if early_allocated > Decimal("0") and settings["prepaid_expenses_account_id"] is None:
+                    raise LedgerValidationError("configure prepaid expenses account for early payments")
+            self._update_journal_entry_header(cur, entry_id, payload)
+            self._replace_journal_entry_lines(cur, entry_id, payload, prior_pairs)
+
+        cash_line = next(
+            line
+            for line in payload.lines
+            if line.obligation_id is None
+            and (
+                (settlement_type == "receipt" and line.amount > Decimal("0"))
+                or (settlement_type == "payment" and line.amount < Decimal("0"))
+            )
+        )
+        self._insert_settlement_allocations_and_update_obligations(
+            cur,
+            entry_id,
+            obligations,
+            allocation_by_id,
+            journal_payload=None if collapse_same_day else payload,
+            collapse_same_day=collapse_same_day,
+            cash_account_id=int(cash_line.account_id),
+        )
+        self._relink_accrual_attachments_to_settlement_entry(
+            cur,
+            entry_id,
+            obligations,
+            allocation_by_id,
+        )
+        self._apply_early_settlement_reclassifications(
+            cur,
+            settlement_type=settlement_type,
+            collapse_same_day=collapse_same_day,
+            event_date=payload.entry_date,
+            obligations=obligations,
+            allocation_by_id=allocation_by_id,
+            settings=settings,
+        )
+        self._assert_entry_balanced(cur, entry_id)
+        if not collapse_same_day and old_cheque_id != payload.cheque_id and old_cheque_id is not None:
+            self._reopen_cleared_cheque_if_unreferenced(cur, old_cheque_id)
+        self._sync_cheque_register_after_journal_save(
+            cur,
+            entry_date=payload.entry_date,
+            new_cheque_id=payload.cheque_id,
+            prev_cheque_id=prev_cheque_for_sync,
+        )
+        return entry_id
+
     def update_entry(self, entry_id: int, payload: JournalEntryWrite) -> JournalEntryOut:
         self._validate_summary(payload.summary)
         self._validate_lines(payload.lines)
@@ -3998,12 +4253,29 @@ class LedgerService:
                         self._assert_all_line_accounts_exist(cur, payload.lines)
                         self._assert_all_line_parties_exist(cur, payload.lines)
                         cur.execute(
-                            "SELECT cheque_id FROM journal_entries WHERE id = %s",
+                            """
+                            SELECT je.cheque_id,
+                                   je.accrual_plan_id,
+                                   ap.name AS accrual_plan_name
+                            FROM journal_entries je
+                            LEFT JOIN accrual_plans ap ON ap.id = je.accrual_plan_id
+                            WHERE je.id = %s
+                            FOR UPDATE OF je
+                            """,
                             (entry_id,),
                         )
                         prev_header = cur.fetchone()
                         if not prev_header:
                             raise LedgerNotFoundError(f"journal entry {entry_id} not found")
+                        if prev_header.get("accrual_plan_id") is not None:
+                            plan_label = (
+                                prev_header.get("accrual_plan_name")
+                                or prev_header["accrual_plan_id"]
+                            )
+                            raise LedgerValidationError(
+                                f"journal entry {entry_id} (accrual plan {plan_label!r}) "
+                                "cannot be modified via PUT"
+                            )
                         old_cheque_id = prev_header.get("cheque_id")
 
                         self._assert_journal_cheque_reference(cur, payload.cheque_id)
@@ -4012,24 +4284,9 @@ class LedgerService:
                             cheque_id=payload.cheque_id,
                             entry_date=payload.entry_date,
                         )
-                        cur.execute(
-                            """
-                            UPDATE journal_entries
-                            SET entry_date = %s,
-                                summary = %s,
-                                description = %s,
-                                cheque_id = %s,
-                                updated_at = NOW()
-                            WHERE id = %s
-                            """,
-                            (
-                                payload.entry_date,
-                                payload.summary.strip(),
-                                payload.description,
-                                payload.cheque_id,
-                                entry_id,
-                            ),
-                        )
+
+                        settings = self._fetch_settings_row(cur)
+                        self._reverse_settlement_allocations_for_entry(cur, entry_id, settings)
 
                         cur.execute(
                             """
@@ -4044,35 +4301,34 @@ class LedgerService:
                             (int(r["account_id"]), r["party_id"]) for r in cur.fetchall()
                         )
 
-                        cur.execute(
-                            "DELETE FROM journal_lines WHERE entry_id = %s",
-                            (entry_id,),
-                        )
-                        for line in payload.lines:
-                            key = (line.account_id, line.party_id)
-                            if prior_pairs[key] > 0:
-                                prior_pairs[key] -= 1
-                            else:
-                                self._assert_account_active(cur, line.account_id)
-                                self._assert_party_active(cur, line.party_id)
-                            cur.execute(
-                                """
-                                INSERT INTO journal_lines (entry_id, account_id, party_id, amount)
-                                VALUES (%s, %s, %s, %s)
-                                """,
-                                (entry_id, line.account_id, line.party_id, line.amount),
+                        settlement_lines = self._settlement_lines_from_payload(payload)
+                        if settlement_lines:
+                            final_entry_id = self._update_entry_apply_settlements(
+                                cur,
+                                entry_id,
+                                payload,
+                                settings,
+                                prior_pairs,
+                                old_cheque_id=old_cheque_id,
                             )
-                        self._assert_entry_balanced(cur, entry_id)
-                        self._insert_review_messages(cur, entry_id, new_review)
-                        if old_cheque_id != payload.cheque_id and old_cheque_id is not None:
-                            self._reopen_cleared_cheque_if_unreferenced(cur, old_cheque_id)
-                        self._sync_cheque_register_after_journal_save(
-                            cur,
-                            entry_date=payload.entry_date,
-                            new_cheque_id=payload.cheque_id,
-                            prev_cheque_id=old_cheque_id,
-                        )
-                    return self.get_entry(entry_id, conn=conn)
+                        else:
+                            self._update_journal_entry_header(cur, entry_id, payload)
+                            self._replace_journal_entry_lines(
+                                cur, entry_id, payload, prior_pairs
+                            )
+                            self._assert_entry_balanced(cur, entry_id)
+                            final_entry_id = entry_id
+                            if old_cheque_id != payload.cheque_id and old_cheque_id is not None:
+                                self._reopen_cleared_cheque_if_unreferenced(cur, old_cheque_id)
+                            self._sync_cheque_register_after_journal_save(
+                                cur,
+                                entry_date=payload.entry_date,
+                                new_cheque_id=payload.cheque_id,
+                                prev_cheque_id=old_cheque_id,
+                            )
+
+                        self._insert_review_messages(cur, final_entry_id, new_review)
+                    return self.get_entry(final_entry_id, conn=conn)
         except (errors.RaiseException, errors.ForeignKeyViolation) as exc:
             _reraise_ledger_journal_db_error(exc)
 

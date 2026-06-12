@@ -39,7 +39,7 @@ describe("backup API", () => {
     );
     const blob = await exportBackup("configuration");
     expect(blob.size).toBeGreaterThan(0);
-    expect(typeof blob.arrayBuffer).toBe("function");
+    expect(blob).toBeInstanceOf(Blob);
     const call = (globalThis.fetch as ReturnType<typeof vi.spyOn>).mock.calls[0];
     expect(call[0]).toContain("/backup/export");
     expect(call[0]).toContain("export_type=configuration");
