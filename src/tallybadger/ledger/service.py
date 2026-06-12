@@ -3588,21 +3588,42 @@ class LedgerService:
         party_id: int,
         settlement_type: str,
     ) -> tuple[int, Decimal]:
+        """Locate the non-settlement cash/bank line for reversal (#271 / unallocated import)."""
         cur.execute(
             """
-            SELECT account_id, amount
+            SELECT account_id, amount, party_id, settlement_allocation_id
             FROM journal_lines
-            WHERE entry_id = %s AND party_id = %s
+            WHERE entry_id = %s
             ORDER BY id ASC
             """,
-            (entry_id, party_id),
+            (entry_id,),
         )
-        for row in cur.fetchall():
+        rows = cur.fetchall()
+
+        def _matches_cash_line(row: dict) -> bool:
+            if row["settlement_allocation_id"] is not None:
+                return False
             amount = Decimal(row["amount"])
-            if settlement_type == "receipt" and amount > Decimal("0"):
-                return int(row["account_id"]), amount
-            if settlement_type == "payment" and amount < Decimal("0"):
-                return int(row["account_id"]), -amount
+            if settlement_type == "receipt":
+                return amount > Decimal("0")
+            return amount < Decimal("0")
+
+        for row in rows:
+            if row["party_id"] == party_id and _matches_cash_line(row):
+                amount = Decimal(row["amount"])
+                return (
+                    int(row["account_id"]),
+                    amount if settlement_type == "receipt" else -amount,
+                )
+
+        for row in rows:
+            if _matches_cash_line(row):
+                amount = Decimal(row["amount"])
+                return (
+                    int(row["account_id"]),
+                    amount if settlement_type == "receipt" else -amount,
+                )
+
         raise LedgerValidationError(
             f"cannot locate cash line on settlement entry {entry_id} during import unload"
         )

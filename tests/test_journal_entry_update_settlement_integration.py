@@ -419,3 +419,108 @@ def test_put_same_day_collapse_merges_into_accrual_entry(
     entry = api_client.get(f"/journal-entries/{accrual_entry_id}").json()
     assert len(entry["settlement_allocations"]) == 1
     assert api_client.get(f"/journal-entries/{entry_id}").status_code == 404
+
+
+def _setup_early_payment_accrual(api_client: TestClient) -> tuple[int, int, int, int, int, int]:
+    for payload in (
+        {"name": "Chequing", "type": "asset", "is_active": True},
+        {"name": "Yard Maintenance", "type": "expense", "is_active": True},
+        {"name": "Accounts Payable", "type": "liability", "is_active": True},
+        {"name": "Prepaid Expenses", "type": "asset", "is_active": True},
+    ):
+        assert api_client.post("/accounts", json=payload).status_code == 201
+
+    accounts = api_client.get("/accounts").json()
+    by_name = {a["name"]: a["id"] for a in accounts}
+    cash_id = by_name["Chequing"]
+    ap_id = by_name["Accounts Payable"]
+    expense_id = by_name["Yard Maintenance"]
+    prepaid_id = by_name["Prepaid Expenses"]
+
+    pr = api_client.post(
+        "/parties",
+        json={"name": "Mower Man", "role": "vendor", "is_active": True},
+    )
+    assert pr.status_code == 201, pr.text
+    party_id = pr.json()["id"]
+
+    assert (
+        api_client.patch(
+            "/ledger-settings",
+            json={
+                "accounts_payable_account_id": ap_id,
+                "prepaid_expenses_account_id": prepaid_id,
+            },
+        ).status_code
+        == 200
+    )
+
+    plan = api_client.post(
+        "/accrual-plans",
+        json={
+            "name": "May yard",
+            "direction": "expense",
+            "party_id": party_id,
+            "target_account_id": expense_id,
+            "frequency": "monthly_day",
+            "start_date": "2026-05-01",
+            "end_date": "2026-05-31",
+            "amount": "101.00",
+            "summary_template": "{plan}",
+            "day_of_month": 1,
+        },
+    )
+    assert plan.status_code == 201, plan.text
+
+    obligations = api_client.get(f"/obligations/{party_id}").json()
+    assert len(obligations) == 1
+    obligation_id = obligations[0]["id"]
+    return party_id, cash_id, prepaid_id, obligation_id, expense_id, ap_id
+
+
+def test_put_clears_payment_settlement_when_cash_line_has_no_party(
+    api_client: TestClient,
+    integration_db_url: str,
+) -> None:
+    party_id, cash_id, prepaid_id, obligation_id, expense_id, _ = _setup_early_payment_accrual(
+        api_client
+    )
+
+    create = api_client.post(
+        "/journal-entries",
+        json={
+            "entry_date": "2026-04-28",
+            "summary": "CHEQUE - # 55",
+            "lines": [
+                {"account_id": cash_id, "party_id": None, "amount": "-101.00"},
+                {
+                    "account_id": prepaid_id,
+                    "party_id": party_id,
+                    "amount": "101.00",
+                    "obligation_id": obligation_id,
+                },
+            ],
+        },
+    )
+    assert create.status_code == 201, create.text
+    entry_id = int(create.json()["id"])
+
+    put = api_client.put(
+        f"/journal-entries/{entry_id}",
+        json={
+            "entry_date": "2026-04-28",
+            "summary": "CHEQUE - # 55",
+            "lines": [
+                {"account_id": cash_id, "party_id": None, "amount": "-101.00"},
+                {"account_id": expense_id, "party_id": party_id, "amount": "101.00"},
+            ],
+        },
+    )
+    assert put.status_code == 200, put.text
+
+    entry = api_client.get(f"/journal-entries/{entry_id}").json()
+    assert entry["settlement_allocations"] == []
+    obligations = api_client.get(f"/obligations/{party_id}").json()
+    assert len(obligations) == 1
+    assert obligations[0]["status"] == "open"
+    assert Decimal(obligations[0]["open_amount"]) == Decimal("101.00")

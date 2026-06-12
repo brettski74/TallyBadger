@@ -443,3 +443,47 @@ def test_list_party_subtype_suggestions_reads_dict_rows() -> None:
     cur.fetchall.return_value = [{"s": "Tenant"}, {"s": "utility"}]
 
     assert service.list_party_subtype_suggestions() == ["Tenant", "utility"]
+
+
+def test_cash_line_for_settlement_entry_prefers_party_matched_cash_line() -> None:
+    _, _, cur = _build_service_with_mocks()
+    cur.fetchall.return_value = [
+        {
+            "account_id": 10,
+            "amount": Decimal("101"),
+            "party_id": 3,
+            "settlement_allocation_id": 13,
+        },
+        {
+            "account_id": 7,
+            "amount": Decimal("-101"),
+            "party_id": 3,
+            "settlement_allocation_id": None,
+        },
+    ]
+
+    account_id, amount = LedgerService._cash_line_for_settlement_entry(cur, 71, 3, "payment")
+    assert account_id == 7
+    assert amount == Decimal("101")
+
+
+def test_cash_line_for_settlement_entry_falls_back_when_cash_line_has_no_party() -> None:
+    _, _, cur = _build_service_with_mocks()
+    cur.fetchall.return_value = [
+        {
+            "account_id": 25,
+            "amount": Decimal("101"),
+            "party_id": 3,
+            "settlement_allocation_id": 13,
+        },
+        {
+            "account_id": 7,
+            "amount": Decimal("-101"),
+            "party_id": None,
+            "settlement_allocation_id": None,
+        },
+    ]
+
+    account_id, amount = LedgerService._cash_line_for_settlement_entry(cur, 71, 3, "payment")
+    assert account_id == 7
+    assert amount == Decimal("101")
