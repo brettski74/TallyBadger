@@ -3601,8 +3601,6 @@ class LedgerService:
         rows = cur.fetchall()
 
         def _matches_cash_line(row: dict) -> bool:
-            if row["settlement_allocation_id"] is not None:
-                return False
             amount = Decimal(row["amount"])
             if settlement_type == "receipt":
                 return amount > Decimal("0")

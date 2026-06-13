@@ -1644,7 +1644,7 @@ describe("JournalEntriesPanel", () => {
       await user.selectOptions(accountSelects[1]!, "1");
       const amountInputs = screen.getAllByPlaceholderText("100.00 or -100.00");
       await user.clear(amountInputs[1]!);
-      await user.type(amountInputs[1]!, "-100.00");
+      await user.type(amountInputs[1]!, "100.00");
       await user.click(screen.getByRole("button", { name: /Post entry/ }));
 
       await waitFor(() => {
