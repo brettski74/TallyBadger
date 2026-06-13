@@ -6,9 +6,18 @@ import type { Party } from "../api/parties";
 import {
   deleteJournalEntryReviewMessage,
   type JournalEntryReviewMessage,
+  type JournalEntrySettlementAllocationOut,
   type JournalEntryWrite,
 } from "../api/journalEntries";
+import { listOpenObligations, type LedgerSettings, type Obligation } from "../api/settlements";
 import { accountsForLinePicker } from "../journal/accountSelect";
+import {
+  applyObligationSelection,
+  clearObligationSelection,
+  filterObligationsForLine,
+  formatObligationOptionLabel,
+  plAccountIdForObligation,
+} from "../journal/settlementUtils";
 import { useJournalEntryFormShortcuts } from "../hooks/useJournalEntryFormShortcuts";
 import {
   closeActionTooltip,
@@ -24,6 +33,11 @@ export interface LineDraft {
   account_id: number | "";
   party_id: number | "";
   amount: string;
+  obligation_id?: number | "";
+  /** From GET /journal-entries/:id for saved obligation dropdown labels. */
+  obligation_source_entry_summary?: string | null;
+  /** From GET /journal-entries/:id — plan P&L account when clearing a saved obligation. */
+  obligation_target_account_id?: number | null;
   /** From GET /journal-entries/:id so the row stays labeled if chart cache is stale. */
   account_name?: string;
   party_name?: string;
@@ -39,6 +53,7 @@ function emptyLines(count: number): LineDraft[] {
     account_id: "",
     party_id: "",
     amount: "",
+    obligation_id: "",
   }));
 }
 
@@ -180,6 +195,11 @@ export interface JournalEntryFormProps {
   /** Open cheques (and optionally the entry’s linked cleared cheque when editing). */
   chequeLinkChoices?: Cheque[];
   initialChequeId?: number | null;
+  ledgerSettings?: LedgerSettings | null;
+  planTargetAccountByPlanId?: Map<number, number>;
+  accrualPlanId?: number | null;
+  accrualPlanName?: string | null;
+  settlementAllocations?: JournalEntrySettlementAllocationOut[];
 }
 
 export function JournalEntryForm({
@@ -199,7 +219,13 @@ export function JournalEntryForm({
   onOpenAttachments,
   chequeLinkChoices = [],
   initialChequeId = null,
+  ledgerSettings = null,
+  planTargetAccountByPlanId = new Map(),
+  accrualPlanId = null,
+  accrualPlanName = null,
+  settlementAllocations = [],
 }: JournalEntryFormProps) {
+  const isAccrualEntry = accrualPlanId != null;
   const [entryDate, setEntryDate] = useState(initialEntryDate);
   const [summary, setSummary] = useState(initialSummary);
   const [description, setDescription] = useState(initialDescription);
@@ -212,6 +238,9 @@ export function JournalEntryForm({
   const [apiError, setApiError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [dismissingId, setDismissingId] = useState<number | null>(null);
+  const [obligationsByParty, setObligationsByParty] = useState<Map<number, Obligation[]>>(
+    () => new Map(),
+  );
   const formRef = useRef<HTMLFormElement | null>(null);
   const handleSubmitForShortcutRef = useRef<() => Promise<void>>(async () => {});
   const onRevertForShortcutRef = useRef(onRevert);
@@ -231,6 +260,59 @@ export function JournalEntryForm({
     }
     return m;
   }, [initialLines]);
+
+  const accountsById = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts]);
+
+  const partyIdsOnLines = useMemo(() => {
+    const ids = new Set<number>();
+    for (const line of lines) {
+      if (typeof line.party_id === "number" && line.party_id > 0) {
+        ids.add(line.party_id);
+      }
+    }
+    return [...ids];
+  }, [lines]);
+
+  const partyIdsKey = partyIdsOnLines.join(",");
+
+  useEffect(() => {
+    if (isAccrualEntry || partyIdsKey === "") {
+      return;
+    }
+    for (const partyId of partyIdsOnLines) {
+      void listOpenObligations(partyId)
+        .then((rows) => {
+          setObligationsByParty((prev) => {
+            if (prev.has(partyId)) {
+              return prev;
+            }
+            const next = new Map(prev);
+            next.set(partyId, rows);
+            return next;
+          });
+        })
+        .catch(() => {
+          setObligationsByParty((prev) => {
+            if (prev.has(partyId)) {
+              return prev;
+            }
+            const next = new Map(prev);
+            next.set(partyId, []);
+            return next;
+          });
+        });
+    }
+  }, [isAccrualEntry, partyIdsKey, partyIdsOnLines]);
+
+  const obligationById = useMemo(() => {
+    const map = new Map<number, Obligation>();
+    for (const rows of obligationsByParty.values()) {
+      for (const row of rows) {
+        map.set(row.id, row);
+      }
+    }
+    return map;
+  }, [obligationsByParty]);
 
   const selectableParties = useMemo(() => {
     const byId = new Map(parties.map((p) => [p.id, p]));
@@ -257,7 +339,10 @@ export function JournalEntryForm({
   const hasMinimumMaterialLines = material.length >= 2;
 
   function addLine() {
-    setLines((prev) => [...prev, { key: newLineKey(), account_id: "", party_id: "", amount: "" }]);
+    setLines((prev) => [
+      ...prev,
+      { key: newLineKey(), account_id: "", party_id: "", amount: "", obligation_id: "" },
+    ]);
   }
 
   function removeLine(key: string) {
@@ -275,19 +360,93 @@ export function JournalEntryForm({
         account_id: ch.debit_account_id,
         party_id: debitParty,
         amount: face.startsWith("-") ? face.slice(1) : face,
+        obligation_id: "",
       },
       {
         key: newLineKey(),
         account_id: ch.credit_account_id,
         party_id: "",
         amount: creditAmountFromChequeFace(face),
+        obligation_id: "",
       },
     ]);
   }
 
+  function setObligationForLine(key: string, obligationId: number | "") {
+    if (ledgerSettings == null) {
+      return;
+    }
+    setLines((prev) => {
+      const index = prev.findIndex((l) => l.key === key);
+      if (index === -1) {
+        return prev;
+      }
+      const line = prev[index]!;
+      if (obligationId === "") {
+        const priorObligationId = line.obligation_id;
+        const removedObligation =
+          priorObligationId !== "" && priorObligationId != null
+            ? (obligationById.get(priorObligationId) ?? null)
+            : null;
+        const cleared = clearObligationSelection({
+          line,
+          removedObligation,
+          obligationTargetAccountId: line.obligation_target_account_id ?? null,
+          settings: ledgerSettings,
+          planTargetAccountByPlanId,
+        });
+        return prev.map((l) =>
+          l.key === key
+            ? {
+                ...l,
+                obligation_id: "",
+                obligation_source_entry_summary: null,
+                obligation_target_account_id: null,
+                account_id: cleared.account_id,
+              }
+            : l,
+        );
+      }
+      const obligation = obligationById.get(obligationId);
+      if (obligation == null) {
+        return prev;
+      }
+      const plAccountId = plAccountIdForObligation(obligation, planTargetAccountByPlanId);
+      const applied = applyObligationSelection({
+        line,
+        obligation,
+        entryDate,
+        settings: ledgerSettings,
+        accountsById,
+        planTargetAccountByPlanId,
+      });
+      const updated: LineDraft = {
+        ...line,
+        obligation_id: obligationId,
+        obligation_source_entry_summary: obligation.source_entry_summary,
+        obligation_target_account_id: plAccountId === "" ? null : plAccountId,
+        account_id: applied.account_id,
+        party_id: applied.party_id,
+        amount: applied.amount,
+      };
+      const next = [...prev];
+      next[index] = updated;
+      if (applied.remainderLine != null) {
+        next.splice(index + 1, 0, {
+          key: newLineKey(),
+          account_id: applied.remainderLine.account_id,
+          party_id: applied.remainderLine.party_id,
+          amount: applied.remainderLine.amount,
+          obligation_id: "",
+        });
+      }
+      return next;
+    });
+  }
+
   function updateLine(
     key: string,
-    patch: Partial<Pick<LineDraft, "account_id" | "party_id" | "amount">>,
+    patch: Partial<Pick<LineDraft, "account_id" | "party_id" | "amount" | "obligation_id">>,
   ) {
     setLines((prev) =>
       prev.map((l) => {
@@ -343,11 +502,17 @@ export function JournalEntryForm({
       entry_date: entryDate,
       summary: summary.trim(),
       description: description.trim() === "" ? null : description.trim(),
-      lines: material.map((l) => ({
-        account_id: l.account_id as number,
-        party_id: l.party_id === "" ? null : l.party_id,
-        amount: l.amount.trim(),
-      })),
+      lines: material.map((l) => {
+        const row = {
+          account_id: l.account_id as number,
+          party_id: l.party_id === "" ? null : l.party_id,
+          amount: l.amount.trim(),
+          ...(l.obligation_id !== "" && l.obligation_id != null
+            ? { obligation_id: l.obligation_id }
+            : {}),
+        };
+        return row;
+      }),
       requires_review: requiresReview,
       review_messages: trimmedNote ? [trimmedNote] : [],
       cheque_id: linkedChequeId,
@@ -428,6 +593,35 @@ export function JournalEntryForm({
         </div>
       </div>
 
+      {isAccrualEntry ? (
+        <div className="banner-info journal-accrual-banner" role="status">
+          Accrual plan entry: <strong>{accrualPlanName ?? `Plan #${accrualPlanId}`}</strong> — fields
+          are read-only. Settlement changes are not available here.
+        </div>
+      ) : null}
+
+      {isAccrualEntry && settlementAllocations.length > 0 ? (
+        <div className="journal-settlement-allocations-readonly">
+          <h3>Settlement allocations</h3>
+          <table className="journal-entry-list" aria-label="Settlement allocations on this entry">
+            <thead>
+              <tr>
+                <th>Obligation</th>
+                <th>Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {settlementAllocations.map((row) => (
+                <tr key={row.id}>
+                  <td>#{row.obligation_id}</td>
+                  <td>{row.amount}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+
       <label>
         Entry date
         <input
@@ -436,6 +630,7 @@ export function JournalEntryForm({
           value={entryDate}
           onChange={(e) => setEntryDate(e.target.value)}
           required
+          disabled={isAccrualEntry}
         />
       </label>
 
@@ -448,6 +643,7 @@ export function JournalEntryForm({
           placeholder="e.g. June 2026 Rent Accrual - Acme Yard Maintenance"
           maxLength={200}
           required
+          disabled={isAccrualEntry}
         />
       </label>
 
@@ -459,6 +655,7 @@ export function JournalEntryForm({
           onChange={(e) => setDescription(e.target.value)}
           placeholder="e.g. April rent — Unit 2"
           maxLength={500}
+          disabled={isAccrualEntry}
         />
       </label>
 
@@ -466,6 +663,7 @@ export function JournalEntryForm({
         Link open cheque (optional)
         <select
           aria-label="Link open cheque"
+          disabled={isAccrualEntry}
           value={linkedChequeId == null ? "" : String(linkedChequeId)}
           onChange={(e) => {
             const v = e.target.value;
@@ -582,6 +780,7 @@ export function JournalEntryForm({
           value={newReviewNote}
           onChange={(e) => setNewReviewNote(e.target.value)}
           placeholder="Each save can append one new reason (e.g. confirm allocation)."
+          disabled={isAccrualEntry}
         />
       </label>
       <p className="muted journal-review-hint">
@@ -597,9 +796,11 @@ export function JournalEntryForm({
 
       <div className="journal-lines-header">
         <h3>Lines</h3>
-        <button type="button" className="button-secondary" onClick={addLine}>
-          Add line
-        </button>
+        {!isAccrualEntry ? (
+          <button type="button" className="button-secondary" onClick={addLine}>
+            Add line
+          </button>
+        ) : null}
       </div>
 
       <table className="journal-lines">
@@ -607,76 +808,153 @@ export function JournalEntryForm({
           <tr>
             <th>Account</th>
             <th>Party (optional)</th>
+            {!isAccrualEntry ? <th>Obligation (optional)</th> : <th>Obligation</th>}
             <th>Amount (+ debit, − credit)</th>
             <th aria-label="actions" />
           </tr>
         </thead>
         <tbody>
-          {lines.map((line) => (
-            <tr key={line.key}>
-              <td>
-                <select
-                  aria-label={`Account for line ${line.key}`}
-                  value={line.account_id === "" ? "" : String(line.account_id)}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    updateLine(line.key, { account_id: v === "" ? "" : Number(v) });
-                  }}
-                >
-                  <option value="">Select account…</option>
-                  {accountsForLinePicker(
-                    accounts,
-                    line,
-                    loadedAccountIdByLineKey.get(line.key) ?? null,
-                  ).map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.name}
-                      {!a.is_active ? " (inactive)" : ""}
-                    </option>
-                  ))}
-                </select>
-              </td>
-              <td>
-                <select
-                  aria-label={`Party for line ${line.key}`}
-                  value={line.party_id === "" ? "" : String(line.party_id)}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    updateLine(line.key, { party_id: v === "" ? "" : Number(v) });
-                  }}
-                >
-                  <option value="">No party</option>
-                  {selectableParties
-                    .filter((p) => p.is_active || p.id === line.party_id)
-                    .map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}
-                        {!p.is_active ? " (inactive)" : ""}
+          {lines.map((line) => {
+            const obligationLocked =
+              !isAccrualEntry && line.obligation_id !== "" && line.obligation_id != null;
+            const partyObligations =
+              typeof line.party_id === "number"
+                ? (obligationsByParty.get(line.party_id) ?? [])
+                : [];
+            const filtered = filterObligationsForLine(
+              partyObligations,
+              line,
+              accountsById,
+              planTargetAccountByPlanId,
+            );
+            const obligationOptions = filtered.obligations;
+            const selectedObligationId =
+              line.obligation_id === "" || line.obligation_id == null
+                ? ""
+                : String(line.obligation_id);
+            return (
+              <tr key={line.key}>
+                <td>
+                  <select
+                    aria-label={`Account for line ${line.key}`}
+                    value={line.account_id === "" ? "" : String(line.account_id)}
+                    disabled={isAccrualEntry || obligationLocked}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      updateLine(line.key, { account_id: v === "" ? "" : Number(v) });
+                    }}
+                  >
+                    <option value="">Select account…</option>
+                    {accountsForLinePicker(
+                      accounts,
+                      line,
+                      loadedAccountIdByLineKey.get(line.key) ?? null,
+                    ).map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name}
+                        {!a.is_active ? " (inactive)" : ""}
                       </option>
                     ))}
-                </select>
-              </td>
-              <td>
-                <input
-                  aria-label={`Amount for line ${line.key}`}
-                  inputMode="decimal"
-                  value={line.amount}
-                  onChange={(e) => updateLine(line.key, { amount: e.target.value })}
-                  placeholder="100.00 or -100.00"
-                />
-              </td>
-              <td>
-                <button
-                  type="button"
-                  className="button-secondary"
-                  disabled={lines.length <= 2}
-                  onClick={() => removeLine(line.key)}
-                >
-                  Remove
-                </button>
-              </td>
-            </tr>
-          ))}
+                  </select>
+                </td>
+                <td>
+                  <select
+                    aria-label={`Party for line ${line.key}`}
+                    value={line.party_id === "" ? "" : String(line.party_id)}
+                    disabled={isAccrualEntry || obligationLocked}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      updateLine(line.key, { party_id: v === "" ? "" : Number(v) });
+                    }}
+                  >
+                    <option value="">No party</option>
+                    {selectableParties
+                      .filter((p) => p.is_active || p.id === line.party_id)
+                      .map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                          {!p.is_active ? " (inactive)" : ""}
+                        </option>
+                      ))}
+                  </select>
+                </td>
+                <td>
+                  {isAccrualEntry ? (
+                    <span className="muted">
+                      {line.obligation_id !== "" && line.obligation_id != null
+                        ? `#${line.obligation_id}`
+                        : "—"}
+                    </span>
+                  ) : (
+                    <>
+                      <select
+                        aria-label={`Obligation for line ${line.key}`}
+                        value={selectedObligationId}
+                        disabled={line.party_id === "" || ledgerSettings == null}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setObligationForLine(line.key, v === "" ? "" : Number(v));
+                        }}
+                      >
+                        <option value="">No obligation</option>
+                        {obligationOptions.map((o) => {
+                          const linkedOnEdit =
+                            mode === "edit" &&
+                            line.obligation_id !== "" &&
+                            line.obligation_id === o.id;
+                          return (
+                            <option key={o.id} value={o.id}>
+                              {formatObligationOptionLabel(
+                                o.id,
+                                o.source_entry_summary,
+                                linkedOnEdit
+                                  ? { kind: "saved" }
+                                  : { kind: "open", openAmount: o.open_amount },
+                              )}
+                            </option>
+                          );
+                        })}
+                        {selectedObligationId !== "" &&
+                        !obligationOptions.some((o) => String(o.id) === selectedObligationId) ? (
+                          <option value={selectedObligationId}>
+                            {formatObligationOptionLabel(
+                              Number(selectedObligationId),
+                              line.obligation_source_entry_summary ??
+                                obligationById.get(Number(selectedObligationId))
+                                  ?.source_entry_summary,
+                              { kind: "saved" },
+                            )}
+                          </option>
+                        ) : null}
+                      </select>
+                    </>
+                  )}
+                </td>
+                <td>
+                  <input
+                    aria-label={`Amount for line ${line.key}`}
+                    inputMode="decimal"
+                    value={line.amount}
+                    onChange={(e) => updateLine(line.key, { amount: e.target.value })}
+                    placeholder="100.00 or -100.00"
+                    disabled={isAccrualEntry}
+                  />
+                </td>
+                <td>
+                  {!isAccrualEntry ? (
+                    <button
+                      type="button"
+                      className="button-secondary"
+                      disabled={lines.length <= 2}
+                      onClick={() => removeLine(line.key)}
+                    >
+                      Remove
+                    </button>
+                  ) : null}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
 
@@ -691,6 +969,7 @@ export function JournalEntryForm({
         </p>
       )}
 
+      {!isAccrualEntry ? (
       <button
         type="submit"
         disabled={submitting || !balanced}
@@ -710,6 +989,7 @@ export function JournalEntryForm({
       >
         {submitting ? "Saving…" : mode === "create" ? "Post entry" : "Save changes"}
       </button>
+      ) : null}
     </form>
   );
 }

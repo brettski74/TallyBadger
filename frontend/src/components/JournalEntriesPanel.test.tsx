@@ -9,6 +9,33 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+function maybeLedgerSettingsResponse(url: string): Response | undefined {
+  if (!url.includes("/ledger-settings")) {
+    return undefined;
+  }
+  return new Response(
+    JSON.stringify({
+      accounts_receivable_account_id: 3,
+      accounts_payable_account_id: 4,
+      unearned_revenue_account_id: 5,
+      prepaid_expenses_account_id: 6,
+      unallocated_debits_account_id: null,
+      unallocated_credits_account_id: null,
+      default_cheque_credit_account_id: null,
+      default_cheque_debit_account_id: null,
+      max_attachment_upload_bytes: 5_242_880,
+      max_cheque_series_count: 12,
+      scanner_device_uri: null,
+      max_scanned_pages: 1,
+      scan_dpi: 300,
+      scan_color_mode: "greyscale",
+      pdf_page_size: "us-letter",
+      updated_at: "2026-04-01T00:00:00Z",
+    }),
+    { status: 200 },
+  );
+}
+
 function maybeDateRangeResolveResponse(url: string): Response | undefined {
   if (!url.includes("/date-range/resolve")) {
     return undefined;
@@ -196,6 +223,10 @@ describe("JournalEntriesPanel", () => {
       }
       if (url.includes("/journal-entries")) {
         return new Response(JSON.stringify(listPayload), { status: 200 });
+      }
+      const ledgerSettings = maybeLedgerSettingsResponse(url);
+      if (ledgerSettings) {
+        return ledgerSettings;
       }
       const dateRange = maybeDateRangeResolveResponse(url);
       if (dateRange) {
@@ -415,6 +446,10 @@ describe("JournalEntriesPanel", () => {
       }
       if (url.includes("/journal-entries")) {
         return new Response(JSON.stringify(listPayload), { status: 200 });
+      }
+      const ledgerSettings = maybeLedgerSettingsResponse(url);
+      if (ledgerSettings) {
+        return ledgerSettings;
       }
       const dateRange = maybeDateRangeResolveResponse(url);
       if (dateRange) {
@@ -1048,6 +1083,25 @@ describe("JournalEntriesPanel", () => {
     };
     const panelAccounts = [...accounts, arAccount];
 
+    const ledgerSettingsPayload = {
+      accounts_receivable_account_id: 3,
+      accounts_payable_account_id: 4,
+      unearned_revenue_account_id: 5,
+      prepaid_expenses_account_id: 6,
+      unallocated_debits_account_id: null,
+      unallocated_credits_account_id: null,
+      default_cheque_credit_account_id: null,
+      default_cheque_debit_account_id: null,
+      max_attachment_upload_bytes: 5_242_880,
+      max_cheque_series_count: 12,
+      scanner_device_uri: null,
+      max_scanned_pages: 1,
+      scan_dpi: 300,
+      scan_color_mode: "greyscale",
+      pdf_page_size: "us-letter",
+      updated_at: "2026-04-01T00:00:00Z",
+    };
+
     const createdEntry = {
       id: 99,
       entry_date: "2026-04-20",
@@ -1084,6 +1138,9 @@ describe("JournalEntriesPanel", () => {
     };
 
     function defaultListFetch(url: string): Response | undefined {
+      if (url.includes("/ledger-settings")) {
+        return new Response(JSON.stringify(ledgerSettingsPayload), { status: 200 });
+      }
       if (url.includes("/cheques")) {
         return new Response(JSON.stringify({ cheques: [] }), { status: 200 });
       }
@@ -1489,6 +1546,120 @@ describe("JournalEntriesPanel", () => {
       });
       expect(screen.queryByRole("dialog", { name: "Confirm obligation settlement" })).toBeNull();
       expect(fetchMock.mock.calls.filter(([u]) => String(u).includes("settlement-preview"))).toHaveLength(1);
+    });
+
+    it("skips settlement preview when a line has manual obligation_id (#272)", async () => {
+      const fetchMock = vi.spyOn(global, "fetch").mockImplementation(async (input, init) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (url.includes("/obligations/1")) {
+          return new Response(
+            JSON.stringify([
+              {
+                id: 55,
+                party_id: 1,
+                accrual_plan_id: 7,
+                source_entry_id: 10,
+                source_entry_date: "2026-01-01",
+                source_entry_summary: "January rent",
+                obligation_type: "receivable",
+                status: "open",
+                original_amount: "100.00",
+                open_amount: "100.00",
+                due_date: null,
+              },
+            ]),
+            { status: 200 },
+          );
+        }
+        if (url.includes("/accrual-plans")) {
+          return new Response(
+            JSON.stringify({
+              plans: [
+                {
+                  id: 7,
+                  name: "Rent plan",
+                  direction: "revenue",
+                  party_id: 1,
+                  target_account_id: 2,
+                  frequency: "monthly_day",
+                  start_date: "2026-01-01",
+                  end_date: "2026-12-31",
+                  amount: "100.00",
+                  summary_template: "Rent",
+                  description_template: null,
+                  day_of_week: null,
+                  day_of_month: 1,
+                  month_of_year: null,
+                  business_day_adjust: false,
+                  created_at: "2026-01-01T00:00:00Z",
+                  updated_at: "2026-01-01T00:00:00Z",
+                },
+              ],
+              filter_options: { party_ids: [1], target_account_ids: [2] },
+            }),
+            { status: 200 },
+          );
+        }
+        if (url.includes("/journal-entries/settlement-preview") && method === "POST") {
+          return new Response(JSON.stringify(previewOffer), { status: 200 });
+        }
+        if (url.includes("/journal-entries") && method === "POST") {
+          return new Response(JSON.stringify(createdEntry), { status: 201 });
+        }
+        const fallback = defaultListFetch(url);
+        if (fallback) {
+          return fallback;
+        }
+        return new Response("not mocked", { status: 500 });
+      });
+
+      render(
+        <JournalEntriesPanel
+          accounts={panelAccounts}
+          parties={parties}
+          accountsLoading={false}
+          accountsError={null}
+        />,
+      );
+
+      const user = userEvent.setup();
+      await openNewEntryForm(user);
+      await user.type(screen.getByLabelText("Entry summary"), "Manual settlement");
+      const accountSelects = screen
+        .getAllByRole("combobox")
+        .filter((el) => String(el.getAttribute("aria-label")).startsWith("Account for line"));
+      const partySelects = screen
+        .getAllByRole("combobox")
+        .filter((el) => String(el.getAttribute("aria-label")).startsWith("Party for line"));
+      const obligationSelects = screen
+        .getAllByRole("combobox")
+        .filter((el) => String(el.getAttribute("aria-label")).startsWith("Obligation for line"));
+      await user.selectOptions(accountSelects[0]!, "2");
+      await user.selectOptions(partySelects[0]!, "1");
+      await waitFor(() => {
+        expect(obligationSelects[0]!.querySelectorAll("option").length).toBeGreaterThan(1);
+      });
+      await user.selectOptions(obligationSelects[0]!, "55");
+      await user.selectOptions(accountSelects[1]!, "1");
+      const amountInputs = screen.getAllByPlaceholderText("100.00 or -100.00");
+      await user.clear(amountInputs[1]!);
+      await user.type(amountInputs[1]!, "100.00");
+      await user.click(screen.getByRole("button", { name: /Post entry/ }));
+
+      await waitFor(() => {
+        expect(screen.queryByRole("heading", { name: "New journal entry" })).not.toBeInTheDocument();
+      });
+      expect(
+        fetchMock.mock.calls.filter(([u]) => String(u).includes("settlement-preview")),
+      ).toHaveLength(0);
+      const createCalls = fetchMock.mock.calls.filter(([u, i]) => {
+        const s = String(u);
+        return s.includes("/journal-entries") && !s.includes("settlement-preview") && (i?.method ?? "GET") === "POST";
+      });
+      expect(createCalls).toHaveLength(1);
+      const body = JSON.parse(String(createCalls[0]![1]!.body));
+      expect(body.lines.some((l: { obligation_id?: number }) => l.obligation_id === 55)).toBe(true);
     });
   });
 });

@@ -106,6 +106,8 @@ class JournalLineOut(BaseModel):
     amount: Decimal
     settlement_allocation_id: int | None = None
     obligation_id: int | None = None
+    obligation_source_entry_summary: str | None = None
+    obligation_target_account_id: int | None = None
 
 
 class JournalEntryReviewMessageOut(BaseModel):

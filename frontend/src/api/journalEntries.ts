@@ -8,6 +8,16 @@ export interface JournalLineOut {
   account_name: string;
   party_name?: string | null;
   amount: string;
+  settlement_allocation_id?: number | null;
+  obligation_id?: number | null;
+  obligation_source_entry_summary?: string | null;
+  obligation_target_account_id?: number | null;
+}
+
+export interface JournalEntrySettlementAllocationOut {
+  id: number;
+  obligation_id: number;
+  amount: string;
 }
 
 export interface JournalEntryReviewMessage {
@@ -27,6 +37,9 @@ export interface JournalEntryOut {
   updated_at: string;
   lines: JournalLineOut[];
   review_messages: JournalEntryReviewMessage[];
+  settlement_allocations?: JournalEntrySettlementAllocationOut[];
+  accrual_plan_id?: number | null;
+  accrual_plan_name?: string | null;
 }
 
 export interface JournalEntryListItem {

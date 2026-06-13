@@ -13,6 +13,7 @@ import {
   type LineDraft,
 } from "./JournalEntryForm";
 import type { Party } from "../api/parties";
+import type { LedgerSettings } from "../api/settlements";
 
 const accounts: Account[] = [
   {
@@ -52,6 +53,36 @@ const parties: Party[] = [
     updated_at: "2026-04-01T00:00:00Z",
   },
 ];
+
+const arAccount: Account = {
+  id: 10,
+  name: "Accounts Receivable",
+  type: "asset",
+  is_active: true,
+  created_at: "2026-04-01T00:00:00Z",
+  updated_at: "2026-04-01T00:00:00Z",
+};
+
+const ledgerSettings: LedgerSettings = {
+  accounts_receivable_account_id: 10,
+  accounts_payable_account_id: 11,
+  unearned_revenue_account_id: 12,
+  prepaid_expenses_account_id: 13,
+  unallocated_debits_account_id: null,
+  unallocated_credits_account_id: null,
+  default_cheque_credit_account_id: null,
+  default_cheque_debit_account_id: null,
+  max_attachment_upload_bytes: 5_242_880,
+  max_cheque_series_count: 12,
+  scanner_device_uri: null,
+  max_scanned_pages: 1,
+  scan_dpi: 300,
+  scan_color_mode: "greyscale",
+  pdf_page_size: "us-letter",
+  updated_at: "2026-04-01T00:00:00Z",
+};
+
+const planTargetAccountByPlanId = new Map<number, number>([[7, 2]]);
 
 describe("isBalanced", () => {
   it("requires two lines, accounts, non-zero amounts, and zero sum", () => {
@@ -745,5 +776,325 @@ describe("JournalEntryForm", () => {
     expect(screen.getByLabelText("Entry summary")).toHaveValue("Supplier payment");
 
     confirmSpy.mockRestore();
+  });
+
+  describe("manual obligation settlement (#272)", () => {
+    it("includes obligation_id on bridge lines in the submit payload", async () => {
+      const onSubmit = vi.fn().mockResolvedValue(undefined);
+      const initialLines: LineDraft[] = [
+        {
+          key: "a",
+          account_id: 10,
+          party_id: 1,
+          amount: "100.00",
+          obligation_id: 55,
+        },
+        { key: "b", account_id: 1, party_id: "", amount: "-100.00", obligation_id: "" },
+      ];
+      render(
+        <JournalEntryForm
+          mode="edit"
+          accounts={[...accounts, arAccount]}
+          parties={parties}
+          initialEntryDate="2026-04-20"
+          initialSummary="Rent receipt"
+          initialDescription=""
+          reviewMessages={[]}
+          initialLines={initialLines}
+          ledgerSettings={ledgerSettings}
+          planTargetAccountByPlanId={planTargetAccountByPlanId}
+          onSubmit={onSubmit}
+          onCancel={() => {}}
+          onRevert={() => {}}
+        />,
+      );
+
+      const user = userEvent.setup();
+      await user.click(screen.getByRole("button", { name: /Save changes/ }));
+
+      await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+      const payload = onSubmit.mock.calls[0]![0];
+      expect(payload.lines).toEqual([
+        { account_id: 10, party_id: 1, amount: "100.00", obligation_id: 55 },
+        { account_id: 1, party_id: null, amount: "-100.00" },
+      ]);
+    });
+
+    it("labels saved obligations with source summary instead of id only", () => {
+      vi.spyOn(global, "fetch").mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
+
+      const initialLines: LineDraft[] = [
+        {
+          key: "a",
+          account_id: 10,
+          party_id: 1,
+          amount: "100.00",
+          obligation_id: 48,
+          obligation_source_entry_summary: "Snow removal 2026-02",
+        },
+        { key: "b", account_id: 1, party_id: "", amount: "-100.00", obligation_id: "" },
+      ];
+      render(
+        <JournalEntryForm
+          mode="edit"
+          accounts={[...accounts, arAccount]}
+          parties={parties}
+          initialEntryDate="2026-04-20"
+          initialSummary="Rent receipt"
+          initialDescription=""
+          reviewMessages={[]}
+          initialLines={initialLines}
+          ledgerSettings={ledgerSettings}
+          planTargetAccountByPlanId={planTargetAccountByPlanId}
+          onSubmit={vi.fn()}
+          onCancel={() => {}}
+          onRevert={() => {}}
+        />,
+      );
+
+      const obligationSelect = screen
+        .getAllByRole("combobox")
+        .find((el) => String(el.getAttribute("aria-label")).startsWith("Obligation for line"));
+      expect(obligationSelect).toHaveValue("48");
+      expect(
+        obligationSelect?.querySelector('option[value="48"]')?.textContent,
+      ).toBe("#48 — Snow removal 2026-02 (saved)");
+    });
+
+    it("marks the linked obligation (saved) when it is still in the open list", async () => {
+      vi.spyOn(global, "fetch").mockResolvedValue(
+        new Response(
+          JSON.stringify([
+            {
+              id: 48,
+              party_id: 1,
+              accrual_plan_id: 7,
+              source_entry_id: 1,
+              source_entry_date: "2026-02-01",
+              source_entry_summary: "Snow removal 2026-02",
+              obligation_type: "receivable",
+              status: "partially_settled",
+              original_amount: "1500.00",
+              open_amount: "500.00",
+              due_date: null,
+            },
+            {
+              id: 49,
+              party_id: 1,
+              accrual_plan_id: 7,
+              source_entry_id: 2,
+              source_entry_date: "2026-03-01",
+              source_entry_summary: "March rent",
+              obligation_type: "receivable",
+              status: "open",
+              original_amount: "1000.00",
+              open_amount: "1000.00",
+              due_date: null,
+            },
+          ]),
+          { status: 200 },
+        ),
+      );
+
+      const initialLines: LineDraft[] = [
+        {
+          key: "a",
+          account_id: 10,
+          party_id: 1,
+          amount: "100.00",
+          obligation_id: 48,
+          obligation_source_entry_summary: "Snow removal 2026-02",
+        },
+        { key: "b", account_id: 1, party_id: "", amount: "-100.00", obligation_id: "" },
+      ];
+      render(
+        <JournalEntryForm
+          mode="edit"
+          accounts={[...accounts, arAccount]}
+          parties={parties}
+          initialEntryDate="2026-04-20"
+          initialSummary="Rent receipt"
+          initialDescription=""
+          reviewMessages={[]}
+          initialLines={initialLines}
+          ledgerSettings={ledgerSettings}
+          planTargetAccountByPlanId={planTargetAccountByPlanId}
+          onSubmit={vi.fn()}
+          onCancel={() => {}}
+          onRevert={() => {}}
+        />,
+      );
+
+      const obligationSelect = screen
+        .getAllByRole("combobox")
+        .find((el) => String(el.getAttribute("aria-label")).startsWith("Obligation for line"));
+      await waitFor(() => {
+        expect(obligationSelect?.querySelector('option[value="49"]')).toBeTruthy();
+      });
+      expect(obligationSelect?.querySelector('option[value="48"]')?.textContent).toBe(
+        "#48 — Snow removal 2026-02 (saved)",
+      );
+      expect(obligationSelect?.querySelector('option[value="49"]')?.textContent).toBe(
+        "#49 — March rent (1000.00 open)",
+      );
+    });
+
+    it("locks account and party while obligation is set", async () => {
+      vi.spyOn(global, "fetch").mockResolvedValue(
+        new Response(
+          JSON.stringify([
+            {
+              id: 55,
+              party_id: 1,
+              accrual_plan_id: 7,
+              source_entry_id: 1,
+              source_entry_date: "2026-03-01",
+              source_entry_summary: "March rent",
+              obligation_type: "receivable",
+              status: "open",
+              original_amount: "100.00",
+              open_amount: "100.00",
+              due_date: null,
+            },
+          ]),
+          { status: 200 },
+        ),
+      );
+
+      render(
+        <JournalEntryForm
+          mode="create"
+          accounts={[...accounts, arAccount]}
+          parties={parties}
+          initialEntryDate="2026-04-20"
+          initialSummary="Rent receipt"
+          initialDescription=""
+          reviewMessages={[]}
+          initialLines={null}
+          ledgerSettings={ledgerSettings}
+          planTargetAccountByPlanId={planTargetAccountByPlanId}
+          onSubmit={vi.fn()}
+          onCancel={() => {}}
+          onRevert={() => {}}
+        />,
+      );
+
+      const user = userEvent.setup();
+      const accountSelects = screen
+        .getAllByRole("combobox")
+        .filter((el) => String(el.getAttribute("aria-label")).startsWith("Account for line"));
+      const partySelects = screen
+        .getAllByRole("combobox")
+        .filter((el) => String(el.getAttribute("aria-label")).startsWith("Party for line"));
+      const obligationSelects = screen
+        .getAllByRole("combobox")
+        .filter((el) => String(el.getAttribute("aria-label")).startsWith("Obligation for line"));
+
+      await user.selectOptions(accountSelects[0]!, "2");
+      await user.selectOptions(partySelects[0]!, "1");
+      await waitFor(() => {
+        expect(obligationSelects[0]!.querySelectorAll("option").length).toBeGreaterThan(1);
+      });
+      await user.selectOptions(obligationSelects[0]!, "55");
+
+      expect(accountSelects[0]).toBeDisabled();
+      expect(partySelects[0]).toBeDisabled();
+      expect(accountSelects[0]).toHaveValue("10");
+      expect(screen.getAllByPlaceholderText("100.00 or -100.00")[0]).toHaveValue("-100.00");
+    });
+
+    it("restores plan P&L when clearing obligation from a bridge line", async () => {
+      vi.spyOn(global, "fetch").mockResolvedValue(
+        new Response(
+          JSON.stringify([
+            {
+              id: 55,
+              party_id: 1,
+              accrual_plan_id: 7,
+              source_entry_id: 1,
+              source_entry_date: "2026-03-01",
+              source_entry_summary: "March rent",
+              obligation_type: "receivable",
+              status: "partially_settled",
+              original_amount: "100.00",
+              open_amount: "50.00",
+              due_date: null,
+            },
+          ]),
+          { status: 200 },
+        ),
+      );
+
+      render(
+        <JournalEntryForm
+          mode="edit"
+          accounts={[...accounts, arAccount]}
+          parties={parties}
+          initialEntryDate="2026-04-20"
+          initialSummary="Rent receipt"
+          initialDescription=""
+          reviewMessages={[]}
+          initialLines={[
+            {
+              key: "a",
+              account_id: 10,
+              party_id: 1,
+              amount: "50.00",
+              obligation_id: 55,
+              obligation_source_entry_summary: "March rent",
+              obligation_target_account_id: 2,
+            },
+            { key: "b", account_id: 1, party_id: "", amount: "-50.00", obligation_id: "" },
+          ]}
+          ledgerSettings={ledgerSettings}
+          planTargetAccountByPlanId={planTargetAccountByPlanId}
+          onSubmit={vi.fn()}
+          onCancel={() => {}}
+          onRevert={() => {}}
+        />,
+      );
+
+      const user = userEvent.setup();
+      const obligationSelect = screen
+        .getAllByRole("combobox")
+        .find((el) => String(el.getAttribute("aria-label")).startsWith("Obligation for line"));
+      const accountSelect = screen
+        .getAllByRole("combobox")
+        .find((el) => String(el.getAttribute("aria-label")).startsWith("Account for line"));
+
+      await user.selectOptions(obligationSelect!, "");
+      expect(accountSelect).toHaveValue("2");
+      expect(accountSelect).not.toBeDisabled();
+    });
+
+    it("shows read-only accrual banner and hides save for accrual plan entries", () => {
+      render(
+        <JournalEntryForm
+          mode="edit"
+          accounts={accounts}
+          parties={parties}
+          initialEntryDate="2026-04-20"
+          initialSummary="April accrual"
+          initialDescription=""
+          reviewMessages={[]}
+          initialLines={[
+            { key: "a", account_id: 1, party_id: 1, amount: "100.00", obligation_id: "" },
+            { key: "b", account_id: 2, party_id: 1, amount: "-100.00", obligation_id: "" },
+          ]}
+          accrualPlanId={9}
+          accrualPlanName="Monthly rent"
+          settlementAllocations={[{ id: 1, obligation_id: 44, amount: "100.00" }]}
+          onSubmit={vi.fn()}
+          onCancel={() => {}}
+          onRevert={() => {}}
+        />,
+      );
+
+      expect(screen.getByText(/Accrual plan entry/i)).toBeInTheDocument();
+      expect(screen.getByText("Monthly rent")).toBeInTheDocument();
+      expect(screen.getByLabelText("Entry summary")).toBeDisabled();
+      expect(screen.queryByRole("button", { name: /Save changes/ })).toBeNull();
+      expect(screen.getByRole("table", { name: "Settlement allocations on this entry" })).toBeInTheDocument();
+    });
   });
 });

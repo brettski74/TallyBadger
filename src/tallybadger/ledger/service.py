@@ -3588,21 +3588,40 @@ class LedgerService:
         party_id: int,
         settlement_type: str,
     ) -> tuple[int, Decimal]:
+        """Locate the non-settlement cash/bank line for reversal (#271 / unallocated import)."""
         cur.execute(
             """
-            SELECT account_id, amount
+            SELECT account_id, amount, party_id, settlement_allocation_id
             FROM journal_lines
-            WHERE entry_id = %s AND party_id = %s
+            WHERE entry_id = %s
             ORDER BY id ASC
             """,
-            (entry_id, party_id),
+            (entry_id,),
         )
-        for row in cur.fetchall():
+        rows = cur.fetchall()
+
+        def _matches_cash_line(row: dict) -> bool:
             amount = Decimal(row["amount"])
-            if settlement_type == "receipt" and amount > Decimal("0"):
-                return int(row["account_id"]), amount
-            if settlement_type == "payment" and amount < Decimal("0"):
-                return int(row["account_id"]), -amount
+            if settlement_type == "receipt":
+                return amount > Decimal("0")
+            return amount < Decimal("0")
+
+        for row in rows:
+            if row["party_id"] == party_id and _matches_cash_line(row):
+                amount = Decimal(row["amount"])
+                return (
+                    int(row["account_id"]),
+                    amount if settlement_type == "receipt" else -amount,
+                )
+
+        for row in rows:
+            if _matches_cash_line(row):
+                amount = Decimal(row["amount"])
+                return (
+                    int(row["account_id"]),
+                    amount if settlement_type == "receipt" else -amount,
+                )
+
         raise LedgerValidationError(
             f"cannot locate cash line on settlement entry {entry_id} during import unload"
         )
@@ -4409,11 +4428,16 @@ class LedgerService:
                         jl.settlement_allocation_id,
                         sa.obligation_id,
                         a.name AS account_name,
-                        p.name AS party_name
+                        p.name AS party_name,
+                        NULLIF(BTRIM(src_je.summary), '') AS obligation_source_entry_summary,
+                        ap.target_account_id AS obligation_target_account_id
                     FROM journal_lines jl
                     INNER JOIN accounts a ON a.id = jl.account_id
                     LEFT JOIN parties p ON p.id = jl.party_id
                     LEFT JOIN settlement_allocations sa ON sa.id = jl.settlement_allocation_id
+                    LEFT JOIN accrual_obligations ao ON ao.id = sa.obligation_id
+                    LEFT JOIN journal_entries src_je ON src_je.id = ao.source_entry_id
+                    LEFT JOIN accrual_plans ap ON ap.id = ao.accrual_plan_id
                     WHERE jl.entry_id = %s
                     ORDER BY jl.id ASC
                     """,
