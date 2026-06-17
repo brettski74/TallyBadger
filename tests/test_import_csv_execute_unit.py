@@ -61,6 +61,7 @@ def _blank_ledger_settings(**overrides: object) -> LedgerSettingsOut:
         "unallocated_credits_account_id": None,
         "default_cheque_credit_account_id": None,
         "default_cheque_debit_account_id": None,
+        "default_cash_account_id": None,
         "max_attachment_upload_bytes": 5242880,
         "max_cheque_series_count": 60,
         "scanner_device_uri": None,

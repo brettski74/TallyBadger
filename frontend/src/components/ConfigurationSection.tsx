@@ -30,6 +30,8 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
   const [urBaseline, setUrBaseline] = useState("");
   const [prepaidId, setPrepaidId] = useState("");
   const [prepaidBaseline, setPrepaidBaseline] = useState("");
+  const [defaultCashId, setDefaultCashId] = useState("");
+  const [defaultCashBaseline, setDefaultCashBaseline] = useState("");
   const [unallocDrId, setUnallocDrId] = useState("");
   const [unallocDrBaseline, setUnallocDrBaseline] = useState("");
   const [unallocCrId, setUnallocCrId] = useState("");
@@ -59,6 +61,7 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
     setApId(apBaseline);
     setUrId(urBaseline);
     setPrepaidId(prepaidBaseline);
+    setDefaultCashId(defaultCashBaseline);
     setUnallocDrId(unallocDrBaseline);
     setUnallocCrId(unallocCrBaseline);
     setScannerDeviceUri(scannerDeviceUriBaseline);
@@ -87,7 +90,7 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
     };
     document.addEventListener("keydown", onKeyDown, true);
     return () => document.removeEventListener("keydown", onKeyDown, true);
-  }, [arBaseline, apBaseline, urBaseline, prepaidBaseline, unallocDrBaseline, unallocCrBaseline, maxScannedPagesBaseline, scanDpiBaseline, scannerDeviceUriBaseline, pdfPageSizeBaseline]);
+  }, [arBaseline, apBaseline, urBaseline, prepaidBaseline, defaultCashBaseline, unallocDrBaseline, unallocCrBaseline, maxScannedPagesBaseline, scanDpiBaseline, scannerDeviceUriBaseline, pdfPageSizeBaseline]);
 
   useEffect(() => {
     async function loadSettings() {
@@ -98,6 +101,9 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
         const ur = settings.unearned_revenue_account_id ? String(settings.unearned_revenue_account_id) : "";
         const prepaid = settings.prepaid_expenses_account_id
           ? String(settings.prepaid_expenses_account_id)
+          : "";
+        const defaultCash = settings.default_cash_account_id
+          ? String(settings.default_cash_account_id)
           : "";
         const udr = settings.unallocated_debits_account_id
           ? String(settings.unallocated_debits_account_id)
@@ -113,6 +119,8 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
         setUrBaseline(ur);
         setPrepaidId(prepaid);
         setPrepaidBaseline(prepaid);
+        setDefaultCashId(defaultCash);
+        setDefaultCashBaseline(defaultCash);
         setUnallocDrId(udr);
         setUnallocDrBaseline(udr);
         setUnallocCrId(ucr);
@@ -147,6 +155,7 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
         accounts_payable_account_id: apId ? Number(apId) : null,
         unearned_revenue_account_id: urId ? Number(urId) : null,
         prepaid_expenses_account_id: prepaidId ? Number(prepaidId) : null,
+        default_cash_account_id: defaultCashId ? Number(defaultCashId) : null,
         unallocated_debits_account_id: unallocDrId ? Number(unallocDrId) : null,
         unallocated_credits_account_id: unallocCrId ? Number(unallocCrId) : null,
         scanner_device_uri: scannerDeviceUri.trim() === "" ? null : scannerDeviceUri.trim(),
@@ -159,6 +168,9 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
       const ur = settings.unearned_revenue_account_id ? String(settings.unearned_revenue_account_id) : "";
       const prepaid = settings.prepaid_expenses_account_id
         ? String(settings.prepaid_expenses_account_id)
+        : "";
+      const defaultCash = settings.default_cash_account_id
+        ? String(settings.default_cash_account_id)
         : "";
       const udr = settings.unallocated_debits_account_id
         ? String(settings.unallocated_debits_account_id)
@@ -174,6 +186,8 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
       setUrBaseline(ur);
       setPrepaidId(prepaid);
       setPrepaidBaseline(prepaid);
+      setDefaultCashId(defaultCash);
+      setDefaultCashBaseline(defaultCash);
       setUnallocDrId(udr);
       setUnallocDrBaseline(udr);
       setUnallocCrId(ucr);
@@ -203,6 +217,15 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
 
   const assetAccounts = accounts.filter((a) => a.type === "asset");
   const liabilityAccounts = accounts.filter((a) => a.type === "liability");
+  const settlementRoleAccountIds = new Set(
+    [arId, apId, urId, prepaidId]
+      .map((id) => Number(id))
+      .filter((id) => Number.isFinite(id) && id > 0),
+  );
+  const cashDefaultAccounts = accounts.filter(
+    (a) =>
+      (a.type === "asset" || a.type === "liability") && !settlementRoleAccountIds.has(a.id),
+  );
   const suspenseAccounts = accounts.filter((a) => a.type === "suspense");
 
   return (
@@ -256,6 +279,18 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
           <select value={prepaidId} onChange={(e) => setPrepaidId(e.target.value)}>
             <option value="">Select asset account</option>
             {accountsForSettingPicker(assetAccounts, prepaidId, prepaidBaseline).map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+                {!a.is_active ? " (inactive)" : ""}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Default cash account (accrual settlement)
+          <select value={defaultCashId} onChange={(e) => setDefaultCashId(e.target.value)}>
+            <option value="">No default</option>
+            {accountsForSettingPicker(cashDefaultAccounts, defaultCashId, defaultCashBaseline).map((a) => (
               <option key={a.id} value={a.id}>
                 {a.name}
                 {!a.is_active ? " (inactive)" : ""}

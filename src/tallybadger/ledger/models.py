@@ -665,6 +665,7 @@ class LedgerSettingsUpdate(BaseModel):
     unallocated_credits_account_id: int | None = Field(default=None, gt=0)
     default_cheque_credit_account_id: int | None = Field(default=None, gt=0)
     default_cheque_debit_account_id: int | None = Field(default=None, gt=0)
+    default_cash_account_id: int | None = Field(default=None, gt=0)
     max_attachment_upload_bytes: Annotated[int | None, BeforeValidator(_optional_byte_size)] = Field(
         default=None,
         gt=0,
@@ -687,6 +688,7 @@ class LedgerSettingsOut(BaseModel):
     unallocated_credits_account_id: int | None
     default_cheque_credit_account_id: int | None
     default_cheque_debit_account_id: int | None
+    default_cash_account_id: int | None
     max_attachment_upload_bytes: int
     max_cheque_series_count: int
     scanner_device_uri: str | None

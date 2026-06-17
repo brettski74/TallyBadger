@@ -1418,6 +1418,47 @@ def test_prepaid_expenses_account_id_survives_complete_snapshot_round_trip(
     assert row["prepaid_expenses_account_id"] == prepaid.id
 
 
+def test_default_cash_account_id_survives_complete_snapshot_round_trip(
+    ledger_service: LedgerService,
+    integration_db_url: str,
+) -> None:
+    """#276: default cash account survives complete export/import."""
+    cash = ledger_service.create_account(AccountCreate(name="Chequing", type="asset"))
+
+    with connect(integration_db_url) as conn:
+        with conn.transaction():
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE ledger_settings
+                    SET default_cash_account_id = %s
+                    WHERE id = 1
+                    """,
+                    (cash.id,),
+                )
+
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        archive = export_complete_snapshot(conn)
+
+    _truncate_all_data(integration_db_url)
+
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        import_complete_snapshot(conn, archive)
+
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT default_cash_account_id
+                FROM ledger_settings
+                WHERE id = 1
+                """,
+            )
+            row = cur.fetchone()
+    assert row is not None
+    assert row["default_cash_account_id"] == cash.id
+
+
 def test_snapshot_rejects_prepaid_expenses_pointing_at_missing_account(
     ledger_service: LedgerService,
     integration_db_url: str,

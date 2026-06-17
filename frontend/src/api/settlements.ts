@@ -23,6 +23,8 @@ export interface LedgerSettings {
   default_cheque_credit_account_id: number | null;
   /** Last debit (counter-account) saved on a cheque; pre-fills the next new cheque when still eligible (#105). */
   default_cheque_debit_account_id: number | null;
+  /** Default cash/bank account for new accrual settlement cash lines (#276). */
+  default_cash_account_id: number | null;
   /** Maximum journal attachment upload size in bytes (default 5 MiB). PATCH may use a string with `k` or `M` suffix. */
   max_attachment_upload_bytes: number;
   /** Maximum cheques in one post-dated series (#141). */
