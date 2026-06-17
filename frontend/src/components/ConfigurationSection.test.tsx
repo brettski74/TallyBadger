@@ -194,6 +194,41 @@ describe("ConfigurationSection", () => {
     });
   });
 
+  it("excludes settlement role accounts from the default cash account picker", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          accounts_receivable_account_id: 2,
+          accounts_payable_account_id: 3,
+          unearned_revenue_account_id: 4,
+          prepaid_expenses_account_id: 5,
+          default_cash_account_id: null,
+          unallocated_debits_account_id: null,
+          unallocated_credits_account_id: null,
+          pdf_page_size: "us-letter",
+          updated_at: "2026-01-01T00:00:00Z",
+        }),
+        { status: 200 },
+      ),
+    );
+
+    render(<ConfigurationSection accounts={accounts} />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Default cash account (accrual settlement)")).toBeInTheDocument();
+    });
+
+    const cashOptions = Array.from(
+      screen.getByLabelText("Default cash account (accrual settlement)").querySelectorAll("option"),
+    ).map((o) => o.textContent);
+    expect(cashOptions).toContain("No default");
+    expect(cashOptions).toContain("Cash");
+    expect(cashOptions.some((t) => t?.includes("A/R"))).toBe(false);
+    expect(cashOptions.some((t) => t?.includes("A/P"))).toBe(false);
+    expect(cashOptions.some((t) => t?.includes("Unearned"))).toBe(false);
+    expect(cashOptions.some((t) => t?.includes("Prepaid"))).toBe(false);
+  });
+
   it("shows inactive account in a role dropdown only when that setting already points at it", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
       new Response(

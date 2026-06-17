@@ -217,7 +217,15 @@ export function ConfigurationSection({ accounts }: ConfigurationSectionProps) {
 
   const assetAccounts = accounts.filter((a) => a.type === "asset");
   const liabilityAccounts = accounts.filter((a) => a.type === "liability");
-  const cashDefaultAccounts = accounts.filter((a) => a.type === "asset" || a.type === "liability");
+  const settlementRoleAccountIds = new Set(
+    [arId, apId, urId, prepaidId]
+      .map((id) => Number(id))
+      .filter((id) => Number.isFinite(id) && id > 0),
+  );
+  const cashDefaultAccounts = accounts.filter(
+    (a) =>
+      (a.type === "asset" || a.type === "liability") && !settlementRoleAccountIds.has(a.id),
+  );
   const suspenseAccounts = accounts.filter((a) => a.type === "suspense");
 
   return (
