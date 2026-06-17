@@ -56,6 +56,7 @@ interface RouteMocks {
     unallocated_credits_account_id: number | null;
     default_cheque_credit_account_id: number | null;
     default_cheque_debit_account_id: number | null;
+    default_cash_account_id: number | null;
     max_attachment_upload_bytes: number;
     max_cheque_series_count: number;
     updated_at: string;
@@ -72,6 +73,7 @@ function defaultSettings(overrides: RouteMocks["settings"] = {}) {
     unallocated_credits_account_id: null,
     default_cheque_credit_account_id: null,
     default_cheque_debit_account_id: null,
+    default_cash_account_id: null,
     max_attachment_upload_bytes: 5_242_880,
     max_cheque_series_count: 60,
     updated_at: "2026-04-01T00:00:00Z",

@@ -72,6 +72,7 @@ const ledgerSettings: LedgerSettings = {
   unallocated_credits_account_id: null,
   default_cheque_credit_account_id: null,
   default_cheque_debit_account_id: null,
+  default_cash_account_id: null,
   max_attachment_upload_bytes: 5_242_880,
   max_cheque_series_count: 12,
   scanner_device_uri: null,

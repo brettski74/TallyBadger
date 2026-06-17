@@ -81,6 +81,7 @@ describe("ConfigurationSection", () => {
       accounts_payable_account_id: 3,
       unearned_revenue_account_id: 4,
       prepaid_expenses_account_id: 5,
+      default_cash_account_id: null,
       unallocated_debits_account_id: 10,
       unallocated_credits_account_id: 11,
       scanner_device_uri: null,
@@ -137,6 +138,60 @@ describe("ConfigurationSection", () => {
       (c) => (c[1] as RequestInit | undefined)?.method === "PATCH",
     );
     expect(JSON.parse(String(patchCall![1]!.body))).toMatchObject({ pdf_page_size: "a4" });
+  });
+
+  it("loads and saves default cash account for accrual settlement", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            accounts_receivable_account_id: null,
+            accounts_payable_account_id: null,
+            unearned_revenue_account_id: null,
+            prepaid_expenses_account_id: null,
+            default_cash_account_id: null,
+            unallocated_debits_account_id: null,
+            unallocated_credits_account_id: null,
+            pdf_page_size: "us-letter",
+            updated_at: "2026-01-01T00:00:00Z",
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            accounts_receivable_account_id: null,
+            accounts_payable_account_id: null,
+            unearned_revenue_account_id: null,
+            prepaid_expenses_account_id: null,
+            default_cash_account_id: 1,
+            unallocated_debits_account_id: null,
+            unallocated_credits_account_id: null,
+            pdf_page_size: "us-letter",
+            updated_at: "2026-01-02T00:00:00Z",
+          }),
+          { status: 200 },
+        ),
+      );
+
+    render(<ConfigurationSection accounts={accounts} />);
+    const user = userEvent.setup();
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Default cash account (accrual settlement)")).toBeInTheDocument();
+    });
+
+    await user.selectOptions(screen.getByLabelText("Default cash account (accrual settlement)"), "1");
+    await user.click(screen.getByRole("button", { name: /Save configuration/i }));
+
+    const patchCall = (globalThis.fetch as ReturnType<typeof vi.spyOn>).mock.calls.find(
+      (c) => (c[1] as RequestInit | undefined)?.method === "PATCH",
+    );
+    expect(patchCall).toBeTruthy();
+    expect(JSON.parse(String(patchCall![1]!.body))).toMatchObject({
+      default_cash_account_id: 1,
+    });
   });
 
   it("shows inactive account in a role dropdown only when that setting already points at it", async () => {

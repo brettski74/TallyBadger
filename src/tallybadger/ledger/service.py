@@ -795,10 +795,11 @@ class LedgerService:
                 OR unallocated_credits_account_id = %s
                 OR default_cheque_credit_account_id = %s
                 OR default_cheque_debit_account_id = %s
+                OR default_cash_account_id = %s
               )
             LIMIT 1
             """,
-            (account_id,) * 8,
+            (account_id,) * 9,
         )
         if cur.fetchone():
             raise LedgerConflictError(
@@ -1371,6 +1372,7 @@ class LedgerService:
                            unearned_revenue_account_id, prepaid_expenses_account_id,
                            unallocated_debits_account_id, unallocated_credits_account_id,
                            default_cheque_credit_account_id, default_cheque_debit_account_id,
+                           default_cash_account_id,
                            max_attachment_upload_bytes, max_cheque_series_count,
                            scanner_device_uri, max_scanned_pages, scan_dpi, scan_color_mode,
                            pdf_page_size, updated_at
@@ -1384,6 +1386,8 @@ class LedgerService:
         return LedgerSettingsOut.model_validate(row)
 
     def update_ledger_settings(self, payload: LedgerSettingsUpdate) -> LedgerSettingsOut:
+        fields_set = payload.model_fields_set
+        cash_default_update = "default_cash_account_id" in fields_set
         with self._connection_factory() as conn:
             with conn.transaction():
                 with conn.cursor(row_factory=dict_row) as cur:
@@ -1392,7 +1396,8 @@ class LedgerService:
                         SELECT accounts_receivable_account_id, accounts_payable_account_id,
                                unearned_revenue_account_id, prepaid_expenses_account_id,
                                unallocated_debits_account_id, unallocated_credits_account_id,
-                               default_cheque_credit_account_id, default_cheque_debit_account_id
+                               default_cheque_credit_account_id, default_cheque_debit_account_id,
+                               default_cash_account_id
                         FROM ledger_settings
                         WHERE id = 1
                         FOR UPDATE
@@ -1422,6 +1427,9 @@ class LedgerService:
                             default_cheque_debit_account_id = COALESCE(
                                 %s, default_cheque_debit_account_id
                             ),
+                            default_cash_account_id = CASE
+                                WHEN %s THEN %s ELSE default_cash_account_id
+                            END,
                             max_attachment_upload_bytes = COALESCE(
                                 %s, max_attachment_upload_bytes
                             ),
@@ -1437,6 +1445,7 @@ class LedgerService:
                                   unallocated_debits_account_id, unallocated_credits_account_id,
                                   default_cheque_credit_account_id,
                                   default_cheque_debit_account_id,
+                                  default_cash_account_id,
                                   max_attachment_upload_bytes,
                                   max_cheque_series_count,
                                   scanner_device_uri, max_scanned_pages, scan_dpi, scan_color_mode,
@@ -1451,6 +1460,8 @@ class LedgerService:
                             payload.unallocated_credits_account_id,
                             payload.default_cheque_credit_account_id,
                             payload.default_cheque_debit_account_id,
+                            cash_default_update,
+                            payload.default_cash_account_id,
                             payload.max_attachment_upload_bytes,
                             payload.scanner_device_uri,
                             payload.max_scanned_pages,
@@ -4620,7 +4631,22 @@ class LedgerService:
         )
 
     @staticmethod
+    def _ledger_setting_asset_or_liability_mismatch_message(
+        setting_kind: str,
+        setting_label: str,
+        account_name: str,
+        account_id: int,
+        actual_type: str,
+    ) -> str:
+        return (
+            f'{setting_kind} "{setting_label}" requires an asset or liability account. '
+            f'"{account_name}" ({account_id}) is '
+            f"{LedgerService._ledger_setting_account_type_article(actual_type)} account."
+        )
+
+    @staticmethod
     def _validate_ledger_settings_accounts(cur, payload, existing) -> None:
+        fields_set = payload.model_fields_set
         type_rules: list[tuple[str, str, str, str]] = [
             ("accounts_receivable_account_id", "Accounts receivable", "asset", "Settlement role"),
             ("accounts_payable_account_id", "Accounts payable", "liability", "Settlement role"),
@@ -4654,6 +4680,7 @@ class LedgerService:
                 active_checks.append((setting_kind, label, account_id))
 
         cheque_checks: list[tuple[str, int, str]] = []
+        cash_checks: list[tuple[str, int]] = []
         new_cr = payload.default_cheque_credit_account_id
         if new_cr is not None and new_cr != existing.get("default_cheque_credit_account_id"):
             account_ids.add(new_cr)
@@ -4662,6 +4689,16 @@ class LedgerService:
         if new_dr is not None and new_dr != existing.get("default_cheque_debit_account_id"):
             account_ids.add(new_dr)
             cheque_checks.append(("Default cheque debit account", new_dr, "debit"))
+
+        cash_label = "Default cash account"
+        new_cash = payload.default_cash_account_id
+        if (
+            "default_cash_account_id" in fields_set
+            and new_cash is not None
+            and new_cash != existing.get("default_cash_account_id")
+        ):
+            account_ids.add(new_cash)
+            cash_checks.append((cash_label, new_cash))
 
         if not account_ids:
             return
@@ -4746,6 +4783,37 @@ class LedgerService:
                 errors.append(
                     f'{ledger_setting_kind} "{label}" cannot use a suspense account. '
                     f'"{row["name"]}" ({account_id}) is a suspense account.'
+                )
+            elif not row["is_active"]:
+                errors.append(
+                    LedgerService._ledger_setting_inactive_message(
+                        ledger_setting_kind,
+                        label,
+                        row["name"],
+                        account_id,
+                    )
+                )
+
+        for label, account_id in cash_checks:
+            row = accounts_by_id.get(account_id)
+            if not row:
+                errors.append(
+                    LedgerService._ledger_setting_not_found_message(
+                        ledger_setting_kind,
+                        label,
+                        account_id,
+                    )
+                )
+                continue
+            if row["type"] not in ("asset", "liability"):
+                errors.append(
+                    LedgerService._ledger_setting_asset_or_liability_mismatch_message(
+                        ledger_setting_kind,
+                        label,
+                        row["name"],
+                        account_id,
+                        row["type"],
+                    )
                 )
             elif not row["is_active"]:
                 errors.append(
