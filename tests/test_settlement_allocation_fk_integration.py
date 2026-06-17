@@ -368,3 +368,147 @@ def test_snapshot_export_import_preserves_settlement_allocation_fk(
         line for line in restored.lines if line.settlement_allocation_id == alloc.id
     )
     assert linked.obligation_id == alloc.obligation_id
+
+
+def _insert_multi_cash_accrual_entry(
+    integration_db_url: str,
+    *,
+    rent_id: int,
+    cash_ids: list[int],
+    cash_amounts: list[Decimal],
+    party_id: int,
+    accrual_plan_id: int,
+) -> tuple[int, list[int]]:
+    assert len(cash_ids) == len(cash_amounts)
+    total_cash = sum(cash_amounts)
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        with conn.transaction():
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO journal_entries (entry_date, summary, accrual_plan_id)
+                    VALUES (%s, %s, %s)
+                    RETURNING id
+                    """,
+                    (date(2026, 7, 1), "Multi-cash collapse", accrual_plan_id),
+                )
+                entry_id = int(cur.fetchone()["id"])
+                cur.execute(
+                    """
+                    INSERT INTO journal_lines (entry_id, account_id, party_id, amount)
+                    VALUES (%s, %s, %s, %s)
+                    RETURNING id
+                    """,
+                    (entry_id, rent_id, party_id, -total_cash),
+                )
+                cur.fetchone()
+                cash_line_ids: list[int] = []
+                for cash_id, cash_amount in zip(cash_ids, cash_amounts, strict=True):
+                    cur.execute(
+                        """
+                        INSERT INTO journal_lines (entry_id, account_id, party_id, amount)
+                        VALUES (%s, %s, %s, %s)
+                        RETURNING id
+                        """,
+                        (entry_id, cash_id, party_id, cash_amount),
+                    )
+                    cash_line_ids.append(int(cur.fetchone()["id"]))
+    return entry_id, cash_line_ids
+
+
+def test_multi_line_allocation_linkage_valid_when_abs_sum_matches(
+    ledger_service: LedgerService,
+    integration_db_url: str,
+) -> None:
+    ids = _seed_chart(ledger_service)
+    cash_b = ledger_service.create_account(AccountCreate(name="Cash B", type="asset"))
+    obligation_id = _rent_obligation(ledger_service, ids, name="July rent")
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT accrual_plan_id FROM accrual_obligations WHERE id = %s",
+                (obligation_id,),
+            )
+            accrual_plan_id = int(cur.fetchone()["accrual_plan_id"])
+
+    entry_id, cash_line_ids = _insert_multi_cash_accrual_entry(
+        integration_db_url,
+        rent_id=ids["rent_id"],
+        cash_ids=[ids["cash_id"], cash_b.id],
+        cash_amounts=[Decimal("300.00"), Decimal("200.00")],
+        party_id=ids["party_id"],
+        accrual_plan_id=accrual_plan_id,
+    )
+
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        with conn.transaction():
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO settlement_allocations (entry_id, obligation_id, amount)
+                    VALUES (%s, %s, %s)
+                    RETURNING id
+                    """,
+                    (entry_id, obligation_id, Decimal("500.00")),
+                )
+                allocation_id = int(cur.fetchone()["id"])
+                cur.execute(
+                    """
+                    UPDATE journal_lines
+                    SET settlement_allocation_id = %s
+                    WHERE id = ANY(%s)
+                    """,
+                    (allocation_id, cash_line_ids),
+                )
+
+    entry = ledger_service.get_entry(entry_id)
+    linked = [line for line in entry.lines if line.settlement_allocation_id == allocation_id]
+    assert len(linked) == 2
+    assert sum(abs(line.amount) for line in linked) == Decimal("500.00")
+
+
+def test_multi_line_allocation_linkage_rejects_sum_mismatch(
+    ledger_service: LedgerService,
+    integration_db_url: str,
+) -> None:
+    ids = _seed_chart(ledger_service)
+    cash_b = ledger_service.create_account(AccountCreate(name="Cash B", type="asset"))
+    obligation_id = _rent_obligation(ledger_service, ids, name="July rent")
+    with connect(integration_db_url, row_factory=dict_row) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT accrual_plan_id FROM accrual_obligations WHERE id = %s",
+                (obligation_id,),
+            )
+            accrual_plan_id = int(cur.fetchone()["accrual_plan_id"])
+
+    entry_id, cash_line_ids = _insert_multi_cash_accrual_entry(
+        integration_db_url,
+        rent_id=ids["rent_id"],
+        cash_ids=[ids["cash_id"], cash_b.id],
+        cash_amounts=[Decimal("300.00"), Decimal("100.00")],
+        party_id=ids["party_id"],
+        accrual_plan_id=accrual_plan_id,
+    )
+
+    with pytest.raises(Exception, match="settlement allocation line amounts"):
+        with connect(integration_db_url, row_factory=dict_row) as conn:
+            with conn.transaction():
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO settlement_allocations (entry_id, obligation_id, amount)
+                        VALUES (%s, %s, %s)
+                        RETURNING id
+                        """,
+                        (entry_id, obligation_id, Decimal("500.00")),
+                    )
+                    allocation_id = int(cur.fetchone()["id"])
+                    cur.execute(
+                        """
+                        UPDATE journal_lines
+                        SET settlement_allocation_id = %s
+                        WHERE id = ANY(%s)
+                        """,
+                        (allocation_id, cash_line_ids),
+                    )
