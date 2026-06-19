@@ -155,6 +155,9 @@ class JournalEntryOut(BaseModel):
     settlement_allocations: list[JournalEntrySettlementAllocationOut] = Field(default_factory=list)
     accrual_plan_id: int | None = None
     accrual_plan_name: str | None = None
+    source_obligation_id: int | None = None
+    open_amount: Decimal | None = None
+    source_line_id: int | None = None
 
 
 class JournalEntryListItem(BaseModel):

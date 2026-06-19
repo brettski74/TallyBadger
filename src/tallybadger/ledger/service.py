@@ -4261,6 +4261,534 @@ class LedgerService:
         )
         return entry_id
 
+    @staticmethod
+    def _accrual_cash_settlement_lines(payload: JournalEntryWrite) -> list[JournalLineIn]:
+        return [line for line in payload.lines if line.obligation_id is not None]
+
+    @staticmethod
+    def _allocation_by_id_from_accrual_cash_lines(payload: JournalEntryWrite) -> dict[int, Decimal]:
+        allocation_by_id: dict[int, Decimal] = {}
+        for line in LedgerService._accrual_cash_settlement_lines(payload):
+            assert line.obligation_id is not None
+            alloc = abs(line.amount)
+            if alloc <= Decimal("0"):
+                raise LedgerValidationError("obligation settlement amount must be non-zero")
+            allocation_by_id[line.obligation_id] = (
+                allocation_by_id.get(line.obligation_id, Decimal("0")) + alloc
+            )
+        return allocation_by_id
+
+    @staticmethod
+    def _normalize_accrual_put_payload(payload: JournalEntryWrite) -> JournalEntryWrite:
+        non_zero = [line for line in payload.lines if line.amount != Decimal("0")]
+        merged: dict[tuple[int, int | None, int | None], JournalLineIn] = {}
+        order: list[tuple[int, int | None, int | None]] = []
+        for line in non_zero:
+            key = (line.account_id, line.party_id, line.obligation_id)
+            if key in merged:
+                merged[key] = JournalLineIn(
+                    account_id=line.account_id,
+                    party_id=line.party_id,
+                    amount=merged[key].amount + line.amount,
+                    obligation_id=line.obligation_id,
+                )
+            else:
+                merged[key] = line
+                order.append(key)
+        return JournalEntryWrite(
+            entry_date=payload.entry_date,
+            summary=payload.summary,
+            description=payload.description,
+            lines=[merged[key] for key in order],
+            requires_review=payload.requires_review,
+            review_messages=payload.review_messages,
+            cheque_id=payload.cheque_id,
+        )
+
+    def _load_accrual_obligation_for_entry(self, cur, entry_id: int) -> dict:
+        cur.execute(
+            """
+            SELECT ao.id, ao.party_id, ao.obligation_type, ao.status, ao.open_amount,
+                   ao.original_amount, ao.source_entry_id, ao.source_line_id,
+                   ao.accrual_plan_id, je.entry_date AS source_entry_date
+            FROM accrual_obligations ao
+            INNER JOIN journal_entries je ON je.id = ao.source_entry_id
+            WHERE ao.source_entry_id = %s
+            FOR UPDATE OF ao
+            """,
+            (entry_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise LedgerValidationError(
+                f"accrual journal entry {entry_id} has no linked obligation"
+            )
+        return dict(row)
+
+    def _validate_accrual_cash_settlement_line_accounts(
+        self,
+        cur,
+        payload: JournalEntryWrite,
+        obligation: dict,
+        allocation_by_id: dict[int, Decimal],
+        settings: dict,
+    ) -> None:
+        settlement_type = (
+            "receipt" if obligation["obligation_type"] == "receivable" else "payment"
+        )
+        party_id = int(obligation["party_id"])
+        oid = int(obligation["id"])
+        for line in self._accrual_cash_settlement_lines(payload):
+            if line.obligation_id != oid:
+                ob_party = self._party_name_label(cur, party_id)
+                raise LedgerValidationError(
+                    f"accrual entry only settles its own obligation {oid} ({ob_party}), "
+                    f"not obligation {line.obligation_id}"
+                )
+            if line.party_id is not None and line.party_id != party_id:
+                line_party = self._party_name_label(cur, line.party_id)
+                ob_party = self._party_name_label(cur, party_id)
+                raise LedgerValidationError(
+                    f"obligation {oid} line party {line_party} "
+                    f"does not match obligation party {ob_party}"
+                )
+            cur.execute(
+                "SELECT name, type FROM accounts WHERE id = %s",
+                (line.account_id,),
+            )
+            acct = cur.fetchone()
+            if not acct:
+                raise LedgerValidationError("journal line references unknown account")
+            if acct["type"] not in ("asset", "liability"):
+                raise LedgerValidationError(
+                    f"accrual settlement cash line must use an asset or liability account, "
+                    f'not "{acct["name"]}" ({acct["type"]})'
+                )
+            ar_id = settings.get("accounts_receivable_account_id")
+            ap_id = settings.get("accounts_payable_account_id")
+            if ar_id is not None and line.account_id == int(ar_id):
+                raise LedgerValidationError(
+                    "obligation_id must be on cash settlement lines, not accounts receivable"
+                )
+            if ap_id is not None and line.account_id == int(ap_id):
+                raise LedgerValidationError(
+                    "obligation_id must be on cash settlement lines, not accounts payable"
+                )
+            alloc = abs(line.amount)
+            if settlement_type == "receipt":
+                if line.amount <= Decimal("0"):
+                    raise LedgerValidationError(
+                        f"receipt settlement cash for obligation {oid} must be positive"
+                    )
+            elif line.amount >= Decimal("0"):
+                raise LedgerValidationError(
+                    f"payment settlement cash for obligation {oid} must be negative"
+                )
+            if alloc > allocation_by_id[oid]:
+                raise LedgerValidationError(
+                    "accrual settlement cash line exceeds total allocation for obligation"
+                )
+
+    def _validate_accrual_entry_put_payload(
+        self,
+        cur,
+        entry_id: int,
+        payload: JournalEntryWrite,
+        obligation: dict,
+        *,
+        open_amount_at_start: Decimal,
+        entry_allocation_at_start: Decimal,
+        entry_header: dict,
+        plan_row: dict,
+    ) -> None:
+        if payload.entry_date != entry_header["entry_date"]:
+            raise LedgerValidationError("accrual journal entry date cannot be changed")
+        if payload.summary.strip() != (entry_header["summary"] or "").strip():
+            raise LedgerValidationError("accrual journal entry summary cannot be changed")
+        if (payload.description or None) != (entry_header.get("description") or None):
+            raise LedgerValidationError("accrual journal entry description cannot be changed")
+
+        target_account_id = int(plan_row["target_account_id"])
+        plan_amount = Decimal(plan_row["amount"])
+        direction = str(plan_row["direction"])
+        pnl_amount = -plan_amount if direction == "revenue" else plan_amount
+
+        pnl_lines = [
+            line
+            for line in payload.lines
+            if line.account_id == target_account_id and line.obligation_id is None
+        ]
+        if len(pnl_lines) != 1 or pnl_lines[0].amount != pnl_amount:
+            raise LedgerValidationError("accrual P&L line cannot be changed")
+
+        source_line_id = int(obligation["source_line_id"])
+        cur.execute(
+            """
+            SELECT id, account_id, party_id, amount, settlement_allocation_id
+            FROM journal_lines
+            WHERE entry_id = %s
+            ORDER BY id ASC
+            """,
+            (entry_id,),
+        )
+        db_lines = cur.fetchall()
+        for db_line in db_lines:
+            if int(db_line["id"]) == source_line_id:
+                continue
+            if int(db_line["account_id"]) == target_account_id:
+                continue
+            if db_line.get("settlement_allocation_id") is not None:
+                continue
+            matches = [
+                line
+                for line in payload.lines
+                if line.obligation_id is None
+                and line.account_id == int(db_line["account_id"])
+                and line.party_id == db_line["party_id"]
+                and line.amount == Decimal(db_line["amount"])
+            ]
+            if not matches:
+                acct = self._account_name_label(cur, int(db_line["account_id"]))
+                raise LedgerValidationError(
+                    f"fixed accrual line on {acct} cannot be changed"
+                )
+
+        allocation_by_id = self._allocation_by_id_from_accrual_cash_lines(payload)
+        cash_lines = self._accrual_cash_settlement_lines(payload)
+        if allocation_by_id:
+            settings = self._fetch_settings_row(cur)
+            self._validate_accrual_cash_settlement_line_accounts(
+                cur,
+                payload,
+                obligation,
+                allocation_by_id,
+                settings,
+            )
+            total_new = sum(allocation_by_id.values(), Decimal("0"))
+            cap = open_amount_at_start + entry_allocation_at_start
+            if total_new > cap:
+                raise LedgerValidationError(
+                    f"accrual settlement total {total_new} exceeds allowed amount {cap}"
+                )
+
+        non_zero_cash = [line for line in cash_lines if line.amount != Decimal("0")]
+        if payload.cheque_id is not None and len(non_zero_cash) != 1:
+            raise LedgerValidationError(
+                "cheque_id is only allowed when exactly one non-zero settlement cash line is present"
+            )
+
+    def _reverse_accrual_entry_allocations(
+        self,
+        cur: Any,
+        entry_id: int,
+        settings: dict,
+    ) -> None:
+        cur.execute(
+            """
+            SELECT id, obligation_id, amount
+            FROM settlement_allocations
+            WHERE entry_id = %s
+            ORDER BY id ASC
+            """,
+            (entry_id,),
+        )
+        alloc_rows = cur.fetchall()
+        if not alloc_rows:
+            return
+
+        obligation_ids = [int(r["obligation_id"]) for r in alloc_rows]
+        allocation_by_id = {int(r["obligation_id"]): Decimal(r["amount"]) for r in alloc_rows}
+        cur.execute(
+            """
+            SELECT ao.id, ao.party_id, ao.obligation_type, ao.status, ao.open_amount,
+                   ao.original_amount, ao.source_entry_id, ao.source_line_id
+            FROM accrual_obligations ao
+            WHERE ao.id = ANY(%s::bigint[])
+            FOR UPDATE OF ao
+            """,
+            (obligation_ids,),
+        )
+        by_id = {int(r["id"]): dict(r) for r in cur.fetchall()}
+        obligations = [by_id[oid] for oid in obligation_ids if oid in by_id]
+        settlement_type = self._settlement_type_from_obligations(obligations)
+
+        self._restore_obligations_after_settlement_unload(cur, obligations, allocation_by_id)
+
+        bridge_id = (
+            int(settings["accounts_receivable_account_id"])
+            if settlement_type == "receipt"
+            else int(settings["accounts_payable_account_id"])
+        )
+
+        for alloc_row in reversed(alloc_rows):
+            allocation_id = int(alloc_row["id"])
+            obligation = by_id[int(alloc_row["obligation_id"])]
+            cur.execute(
+                """
+                SELECT id, account_id, amount
+                FROM journal_lines
+                WHERE settlement_allocation_id = %s
+                ORDER BY id DESC
+                """,
+                (allocation_id,),
+            )
+            linked = cur.fetchall()
+            if linked:
+                for line in linked:
+                    cash_account_id = int(line["account_id"])
+                    slice_amt = abs(Decimal(line["amount"]))
+                    if settlement_type == "receipt":
+                        self._reverse_same_day_settle_receivable_obligation(
+                            cur,
+                            obligation,
+                            slice_amt,
+                            cash_account_id,
+                            bridge_id,
+                        )
+                    else:
+                        self._reverse_same_day_settle_payable_obligation(
+                            cur,
+                            obligation,
+                            slice_amt,
+                            cash_account_id,
+                            bridge_id,
+                        )
+            else:
+                amt = Decimal(alloc_row["amount"])
+                cash_account_id, _ = self._cash_line_for_settlement_entry(
+                    cur,
+                    entry_id,
+                    int(obligation["party_id"]),
+                    settlement_type,
+                )
+                if settlement_type == "receipt":
+                    self._reverse_same_day_settle_receivable_obligation(
+                        cur, obligation, amt, cash_account_id, bridge_id
+                    )
+                else:
+                    self._reverse_same_day_settle_payable_obligation(
+                        cur, obligation, amt, cash_account_id, bridge_id
+                    )
+
+        cur.execute("DELETE FROM settlement_allocations WHERE entry_id = %s", (entry_id,))
+
+    def _apply_accrual_entry_cash_settlements(
+        self,
+        cur: Any,
+        entry_id: int,
+        payload: JournalEntryWrite,
+        obligation: dict,
+        settings: dict,
+    ) -> None:
+        settlement_type = (
+            "receipt" if obligation["obligation_type"] == "receivable" else "payment"
+        )
+        if settlement_type == "receipt":
+            bridge_id = int(settings["accounts_receivable_account_id"])
+            for line in self._accrual_cash_settlement_lines(payload):
+                self._same_day_settle_receivable_obligation(
+                    cur,
+                    obligation,
+                    abs(line.amount),
+                    line.account_id,
+                    bridge_id,
+                )
+        else:
+            bridge_id = int(settings["accounts_payable_account_id"])
+            for line in self._accrual_cash_settlement_lines(payload):
+                self._same_day_settle_payable_obligation(
+                    cur,
+                    obligation,
+                    abs(line.amount),
+                    line.account_id,
+                    bridge_id,
+                )
+
+    @staticmethod
+    def _cash_line_ids_for_accrual_allocation(
+        cur: Any,
+        entry_id: int,
+        cash_lines: list[JournalLineIn],
+    ) -> list[int]:
+        line_ids: list[int] = []
+        for line in cash_lines:
+            cur.execute(
+                """
+                SELECT id
+                FROM journal_lines
+                WHERE entry_id = %s
+                  AND account_id = %s
+                  AND party_id IS NOT DISTINCT FROM %s
+                  AND amount = %s
+                  AND settlement_allocation_id IS NULL
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (entry_id, line.account_id, line.party_id, line.amount),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise LedgerValidationError(
+                    "settlement cash line not found after applying accrual settlement"
+                )
+            line_ids.append(int(row["id"]))
+        return line_ids
+
+    @staticmethod
+    def _link_settlement_allocation_to_cash_lines(
+        cur: Any,
+        allocation_id: int,
+        line_ids: list[int],
+    ) -> None:
+        for line_id in line_ids:
+            cur.execute(
+                """
+                UPDATE journal_lines
+                SET settlement_allocation_id = %s
+                WHERE id = %s
+                  AND settlement_allocation_id IS NULL
+                """,
+                (allocation_id, line_id),
+            )
+            if cur.rowcount != 1:
+                raise LedgerValidationError(
+                    f"could not link settlement allocation {allocation_id} "
+                    f"to journal line {line_id}"
+                )
+
+    def _insert_accrual_entry_settlement_allocations(
+        self,
+        cur: Any,
+        entry_id: int,
+        obligation: dict,
+        payload: JournalEntryWrite,
+    ) -> None:
+        allocation_by_id = self._allocation_by_id_from_accrual_cash_lines(payload)
+        cash_lines = self._accrual_cash_settlement_lines(payload)
+        for oid, alloc_amt in allocation_by_id.items():
+            if alloc_amt <= Decimal("0"):
+                continue
+            cur.execute(
+                """
+                INSERT INTO settlement_allocations (entry_id, obligation_id, amount)
+                VALUES (%s, %s, %s)
+                RETURNING id
+                """,
+                (entry_id, oid, alloc_amt),
+            )
+            allocation_id = int(cur.fetchone()["id"])
+            obligation_cash_lines = [
+                line for line in cash_lines if line.obligation_id == oid
+            ]
+            line_ids = self._cash_line_ids_for_accrual_allocation(
+                cur, entry_id, obligation_cash_lines
+            )
+            self._link_settlement_allocation_to_cash_lines(cur, allocation_id, line_ids)
+
+            open_after = Decimal(obligation["open_amount"]) - alloc_amt
+            new_status = "settled" if open_after == Decimal("0") else "partially_settled"
+            cur.execute(
+                """
+                UPDATE accrual_obligations
+                SET open_amount = %s, status = %s, updated_at = NOW()
+                WHERE id = %s
+                """,
+                (open_after, new_status, oid),
+            )
+            obligation["open_amount"] = open_after
+
+    def _update_accrual_entry(
+        self,
+        cur: Any,
+        entry_id: int,
+        payload: JournalEntryWrite,
+        settings: dict,
+        *,
+        old_cheque_id: int | None,
+        new_review: list[str],
+    ) -> int:
+        obligation = self._load_accrual_obligation_for_entry(cur, entry_id)
+        open_amount_at_start = Decimal(obligation["open_amount"])
+
+        cur.execute(
+            """
+            SELECT entry_date, summary, description, accrual_plan_id
+            FROM journal_entries
+            WHERE id = %s
+            """,
+            (entry_id,),
+        )
+        entry_header = cur.fetchone()
+        assert entry_header is not None
+
+        cur.execute(
+            """
+            SELECT target_account_id, direction, amount
+            FROM accrual_plans
+            WHERE id = %s
+            """,
+            (entry_header["accrual_plan_id"],),
+        )
+        plan_row = cur.fetchone()
+        if not plan_row:
+            raise LedgerValidationError("accrual plan not found for journal entry")
+
+        cur.execute(
+            """
+            SELECT COALESCE(SUM(amount), 0) AS total
+            FROM settlement_allocations
+            WHERE entry_id = %s
+            """,
+            (entry_id,),
+        )
+        entry_allocation_at_start = Decimal(cur.fetchone()["total"])
+
+        normalized = self._normalize_accrual_put_payload(payload)
+        self._validate_accrual_entry_put_payload(
+            cur,
+            entry_id,
+            normalized,
+            obligation,
+            open_amount_at_start=open_amount_at_start,
+            entry_allocation_at_start=entry_allocation_at_start,
+            entry_header=entry_header,
+            plan_row=plan_row,
+        )
+
+        self._reverse_accrual_entry_allocations(cur, entry_id, settings)
+        obligation = self._load_accrual_obligation_for_entry(cur, entry_id)
+
+        cash_settlement_lines = self._accrual_cash_settlement_lines(normalized)
+        if cash_settlement_lines:
+            self._apply_accrual_entry_cash_settlements(
+                cur, entry_id, normalized, obligation, settings
+            )
+            self._insert_accrual_entry_settlement_allocations(
+                cur, entry_id, obligation, normalized
+            )
+
+        if old_cheque_id != normalized.cheque_id:
+            cur.execute(
+                """
+                UPDATE journal_entries
+                SET cheque_id = %s, updated_at = NOW()
+                WHERE id = %s
+                """,
+                (normalized.cheque_id, entry_id),
+            )
+            if old_cheque_id is not None:
+                self._reopen_cleared_cheque_if_unreferenced(cur, old_cheque_id)
+
+        self._assert_entry_balanced(cur, entry_id)
+        self._sync_cheque_register_after_journal_save(
+            cur,
+            entry_date=normalized.entry_date,
+            new_cheque_id=normalized.cheque_id,
+            prev_cheque_id=old_cheque_id,
+        )
+        self._insert_review_messages(cur, entry_id, new_review)
+        return entry_id
+
     def update_entry(self, entry_id: int, payload: JournalEntryWrite) -> JournalEntryOut:
         self._validate_summary(payload.summary)
         self._validate_lines(payload.lines)
@@ -4297,16 +4825,30 @@ class LedgerService:
                         prev_header = cur.fetchone()
                         if not prev_header:
                             raise LedgerNotFoundError(f"journal entry {entry_id} not found")
-                        if prev_header.get("accrual_plan_id") is not None:
-                            plan_label = (
-                                prev_header.get("accrual_plan_name")
-                                or prev_header["accrual_plan_id"]
-                            )
-                            raise LedgerValidationError(
-                                f"journal entry {entry_id} (accrual plan {plan_label!r}) "
-                                "cannot be modified via PUT"
-                            )
                         old_cheque_id = prev_header.get("cheque_id")
+
+                        if prev_header.get("accrual_plan_id") is not None:
+                            self._assert_journal_cheque_reference(cur, payload.cheque_id)
+                            self._assert_journal_cheque_clearing_dates(
+                                cur,
+                                cheque_id=payload.cheque_id,
+                                entry_date=payload.entry_date,
+                            )
+                            settings = self._fetch_settings_row(cur)
+                            normalized = self._normalize_accrual_put_payload(payload)
+                            self._validate_summary(normalized.summary)
+                            self._validate_lines(normalized.lines)
+                            self._assert_all_line_accounts_exist(cur, normalized.lines)
+                            self._assert_all_line_parties_exist(cur, normalized.lines)
+                            final_entry_id = self._update_accrual_entry(
+                                cur,
+                                entry_id,
+                                normalized,
+                                settings,
+                                old_cheque_id=old_cheque_id,
+                                new_review=new_review,
+                            )
+                            return self.get_entry(final_entry_id, conn=conn)
 
                         self._assert_journal_cheque_reference(cur, payload.cheque_id)
                         self._assert_journal_cheque_clearing_dates(
@@ -4481,12 +5023,34 @@ class LedgerService:
                     JournalEntrySettlementAllocationOut.model_validate(row)
                     for row in cur.fetchall()
                 ]
+
+                source_obligation_id = None
+                open_amount = None
+                source_line_id = None
+                if header.get("accrual_plan_id") is not None:
+                    cur.execute(
+                        """
+                        SELECT id, open_amount, source_line_id
+                        FROM accrual_obligations
+                        WHERE source_entry_id = %s
+                        LIMIT 1
+                        """,
+                        (entry_id,),
+                    )
+                    ob_row = cur.fetchone()
+                    if ob_row:
+                        source_obligation_id = int(ob_row["id"])
+                        open_amount = Decimal(ob_row["open_amount"])
+                        source_line_id = ob_row.get("source_line_id")
             return JournalEntryOut.model_validate(
                 {
                     **header,
                     "lines": lines,
                     "review_messages": review_messages,
                     "settlement_allocations": settlement_allocations,
+                    "source_obligation_id": source_obligation_id,
+                    "open_amount": open_amount,
+                    "source_line_id": source_line_id,
                 },
             )
         finally:
