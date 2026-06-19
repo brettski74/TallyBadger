@@ -40,6 +40,9 @@ export interface JournalEntryOut {
   settlement_allocations?: JournalEntrySettlementAllocationOut[];
   accrual_plan_id?: number | null;
   accrual_plan_name?: string | null;
+  source_obligation_id?: number | null;
+  open_amount?: string | null;
+  source_line_id?: number | null;
 }
 
 export interface JournalEntryListItem {

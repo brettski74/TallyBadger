@@ -20,6 +20,19 @@ import {
 } from "../journal/settlementUtils";
 import { useJournalEntryFormShortcuts } from "../hooks/useJournalEntryFormShortcuts";
 import {
+  accrualBannerKind,
+  accrualSettlementDirty,
+  accrualSettlementValid,
+  buildAccrualSettlementContext,
+  buildAccrualSettlementPayload,
+  canAddSettlementCashLine,
+  canEnableChequeLink,
+  classifyAccrualLineRole,
+  createSettlementCashLine,
+  rebalanceAccrualBridge,
+  type AccrualLineRole,
+} from "../journal/accrualSettlementUtils";
+import {
   closeActionTooltip,
   discardActionTooltip,
   discardAriaKeyShortcuts,
@@ -200,6 +213,9 @@ export interface JournalEntryFormProps {
   accrualPlanId?: number | null;
   accrualPlanName?: string | null;
   settlementAllocations?: JournalEntrySettlementAllocationOut[];
+  sourceObligationId?: number | null;
+  openAmount?: string | null;
+  sourceLineId?: number | null;
 }
 
 export function JournalEntryForm({
@@ -223,7 +239,10 @@ export function JournalEntryForm({
   planTargetAccountByPlanId = new Map(),
   accrualPlanId = null,
   accrualPlanName = null,
-  settlementAllocations = [],
+  settlementAllocations: _settlementAllocations = [],
+  sourceObligationId = null,
+  openAmount = null,
+  sourceLineId = null,
 }: JournalEntryFormProps) {
   const isAccrualEntry = accrualPlanId != null;
   const [entryDate, setEntryDate] = useState(initialEntryDate);
@@ -242,6 +261,7 @@ export function JournalEntryForm({
     () => new Map(),
   );
   const formRef = useRef<HTMLFormElement | null>(null);
+  const initialAccrualLinesRef = useRef<LineDraft[] | null>(null);
   const handleSubmitForShortcutRef = useRef<() => Promise<void>>(async () => {});
   const onRevertForShortcutRef = useRef(onRevert);
   onRevertForShortcutRef.current = onRevert;
@@ -262,6 +282,55 @@ export function JournalEntryForm({
   }, [initialLines]);
 
   const accountsById = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts]);
+
+  const planTargetAccountId = useMemo(() => {
+    if (accrualPlanId == null) {
+      return null;
+    }
+    const fromPlan = planTargetAccountByPlanId.get(accrualPlanId);
+    if (fromPlan != null) {
+      return fromPlan;
+    }
+    const fromLine = initialLines?.find(
+      (line) => line.obligation_target_account_id != null && line.obligation_target_account_id > 0,
+    )?.obligation_target_account_id;
+    return fromLine ?? null;
+  }, [accrualPlanId, initialLines, planTargetAccountByPlanId]);
+
+  const accrualSettlementCtx = useMemo(() => {
+    if (!isAccrualEntry || ledgerSettings == null || mode !== "edit") {
+      return null;
+    }
+    return buildAccrualSettlementContext({
+      accrualPlanId,
+      sourceObligationId,
+      sourceLineId,
+      openAmount,
+      planTargetAccountId,
+      lines,
+      accountsById,
+      ledgerSettings,
+    });
+  }, [
+    accrualPlanId,
+    accountsById,
+    isAccrualEntry,
+    ledgerSettings,
+    lines,
+    mode,
+    openAmount,
+    planTargetAccountId,
+    sourceLineId,
+    sourceObligationId,
+  ]);
+
+  const isAccrualSettlementMode = isAccrualEntry && mode === "edit" && accrualSettlementCtx != null;
+
+  useEffect(() => {
+    if (initialLines && initialLines.length > 0) {
+      initialAccrualLinesRef.current = initialLines;
+    }
+  }, [initialLines]);
 
   const partyIdsOnLines = useMemo(() => {
     const ids = new Set<number>();
@@ -337,8 +406,41 @@ export function JournalEntryForm({
   const { sum: runningSum, complete: amountsComplete } = sumParsedAmounts(lines);
   const balanced = isBalanced(lines);
   const hasMinimumMaterialLines = material.length >= 2;
+  const accrualValidation = useMemo(() => {
+    if (!isAccrualSettlementMode || accrualSettlementCtx == null) {
+      return null;
+    }
+    return accrualSettlementValid(lines, accrualSettlementCtx);
+  }, [accrualSettlementCtx, isAccrualSettlementMode, lines]);
+  const accrualDirty = useMemo(() => {
+    if (!isAccrualSettlementMode || accrualSettlementCtx == null || initialAccrualLinesRef.current == null) {
+      return false;
+    }
+    return accrualSettlementDirty(
+      initialAccrualLinesRef.current,
+      lines,
+      initialChequeId,
+      linkedChequeId,
+      accrualSettlementCtx,
+    );
+  }, [accrualSettlementCtx, initialChequeId, isAccrualSettlementMode, lines, linkedChequeId]);
+  const canSaveAccrual =
+    isAccrualSettlementMode &&
+    accrualDirty &&
+    accrualValidation?.ok === true &&
+    !submitting;
+  const canSaveStandard = !isAccrualEntry && balanced && !submitting;
 
   function addLine() {
+    if (isAccrualSettlementMode && accrualSettlementCtx != null) {
+      if (!canAddSettlementCashLine(accrualSettlementCtx.openAmount)) {
+        return;
+      }
+      setLines((prev) =>
+        rebalanceAccrualBridge([...prev, createSettlementCashLine(accrualSettlementCtx)], accrualSettlementCtx),
+      );
+      return;
+    }
     setLines((prev) => [
       ...prev,
       { key: newLineKey(), account_id: "", party_id: "", amount: "", obligation_id: "" },
@@ -346,7 +448,41 @@ export function JournalEntryForm({
   }
 
   function removeLine(key: string) {
+    if (isAccrualSettlementMode && accrualSettlementCtx != null) {
+      setLines((prev) =>
+        rebalanceAccrualBridge(
+          prev.filter((line) => line.key !== key),
+          accrualSettlementCtx,
+        ),
+      );
+      return;
+    }
     setLines((prev) => (prev.length <= 2 ? prev : prev.filter((l) => l.key !== key)));
+  }
+
+  function updateAccrualAwareLine(
+    key: string,
+    patch: Partial<Pick<LineDraft, "account_id" | "party_id" | "amount" | "obligation_id">>,
+  ) {
+    setLines((prev) => {
+      const updated = prev.map((line) => {
+        if (line.key !== key) {
+          return line;
+        }
+        const next: LineDraft = { ...line, ...patch };
+        if ("account_id" in patch && patch.account_id !== line.account_id) {
+          delete next.account_name;
+        }
+        if ("party_id" in patch && patch.party_id !== line.party_id) {
+          delete next.party_name;
+        }
+        return next;
+      });
+      if (accrualSettlementCtx == null) {
+        return updated;
+      }
+      return rebalanceAccrualBridge(updated, accrualSettlementCtx);
+    });
   }
 
   function applyChequeAutoFill(ch: Cheque) {
@@ -448,6 +584,10 @@ export function JournalEntryForm({
     key: string,
     patch: Partial<Pick<LineDraft, "account_id" | "party_id" | "amount" | "obligation_id">>,
   ) {
+    if (isAccrualSettlementMode) {
+      updateAccrualAwareLine(key, patch);
+      return;
+    }
     setLines((prev) =>
       prev.map((l) => {
         if (l.key !== key) {
@@ -470,6 +610,38 @@ export function JournalEntryForm({
     setApiError(null);
 
     const trimmedNote = newReviewNote.trim();
+
+    if (isAccrualSettlementMode && accrualSettlementCtx != null) {
+      const validation = accrualSettlementValid(lines, accrualSettlementCtx);
+      if (!validation.ok) {
+        setClientError(validation.message);
+        return;
+      }
+      if (!accrualDirty) {
+        setClientError("No settlement changes to save.");
+        return;
+      }
+      const requiresReview = reviewMessages.length > 0 || Boolean(trimmedNote);
+      const payload = buildAccrualSettlementPayload({
+        entryDate,
+        summary,
+        description,
+        lines,
+        requiresReview,
+        reviewMessages: trimmedNote ? [trimmedNote] : [],
+        chequeId: linkedChequeId,
+        ctx: accrualSettlementCtx,
+      });
+      setSubmitting(true);
+      try {
+        await onSubmit(payload);
+      } catch (err) {
+        setApiError(err instanceof Error ? err.message : "Save failed");
+      } finally {
+        setSubmitting(false);
+      }
+      return;
+    }
 
     for (const line of lines) {
       const hasAmt = line.amount.trim() !== "";
@@ -532,7 +704,7 @@ export function JournalEntryForm({
 
   useJournalEntryFormShortcuts({
     formActive: true,
-    canSave: balanced,
+    canSave: canSaveAccrual || canSaveStandard,
     saving: submitting,
     onSave: () => void handleSubmitForShortcutRef.current(),
     onRevert: () => onRevertForShortcutRef.current(),
@@ -595,30 +767,27 @@ export function JournalEntryForm({
 
       {isAccrualEntry ? (
         <div className="banner-info journal-accrual-banner" role="status">
-          Accrual plan entry: <strong>{accrualPlanName ?? `Plan #${accrualPlanId}`}</strong> — fields
-          are read-only. Settlement changes are not available here.
-        </div>
-      ) : null}
-
-      {isAccrualEntry && settlementAllocations.length > 0 ? (
-        <div className="journal-settlement-allocations-readonly">
-          <h3>Settlement allocations</h3>
-          <table className="journal-entry-list" aria-label="Settlement allocations on this entry">
-            <thead>
-              <tr>
-                <th>Obligation</th>
-                <th>Amount</th>
-              </tr>
-            </thead>
-            <tbody>
-              {settlementAllocations.map((row) => (
-                <tr key={row.id}>
-                  <td>#{row.obligation_id}</td>
-                  <td>{row.amount}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          Accrual plan entry: <strong>{accrualPlanName ?? `Plan #${accrualPlanId}`}</strong>
+          {isAccrualSettlementMode && accrualSettlementCtx != null ? (
+            <>
+              {" "}
+              — accrual content is read-only.
+              {accrualBannerKind(accrualSettlementCtx.openAmount, lines, accrualSettlementCtx) ===
+              "editable" ? (
+                <> Add or edit settlement cash lines below (open amount {openAmount}).</>
+              ) : null}
+              {accrualBannerKind(accrualSettlementCtx.openAmount, lines, accrualSettlementCtx) ===
+              "fully_settled" ? (
+                <> Obligation fully settled — no further settlement on this entry.</>
+              ) : null}
+              {accrualBannerKind(accrualSettlementCtx.openAmount, lines, accrualSettlementCtx) ===
+              "unsettle" ? (
+                <> Remove settlement cash lines and save to unsettle.</>
+              ) : null}
+            </>
+          ) : (
+            <> — fields are read-only. Settlement editing is unavailable until entry data loads.</>
+          )}
         </div>
       ) : null}
 
@@ -663,7 +832,13 @@ export function JournalEntryForm({
         Link open cheque (optional)
         <select
           aria-label="Link open cheque"
-          disabled={isAccrualEntry}
+          disabled={
+            isAccrualEntry
+              ? !isAccrualSettlementMode ||
+                accrualSettlementCtx == null ||
+                !canEnableChequeLink(lines, accrualSettlementCtx)
+              : false
+          }
           value={linkedChequeId == null ? "" : String(linkedChequeId)}
           onChange={(e) => {
             const v = e.target.value;
@@ -796,8 +971,17 @@ export function JournalEntryForm({
 
       <div className="journal-lines-header">
         <h3>Lines</h3>
-        {!isAccrualEntry ? (
-          <button type="button" className="button-secondary" onClick={addLine}>
+        {!isAccrualEntry || (isAccrualSettlementMode && accrualSettlementCtx != null) ? (
+          <button
+            type="button"
+            className="button-secondary"
+            onClick={addLine}
+            disabled={
+              isAccrualSettlementMode &&
+              accrualSettlementCtx != null &&
+              !canAddSettlementCashLine(accrualSettlementCtx.openAmount)
+            }
+          >
             Add line
           </button>
         ) : null}
@@ -814,7 +998,20 @@ export function JournalEntryForm({
           </tr>
         </thead>
         <tbody>
-          {lines.map((line) => {
+          {(accrualSettlementCtx != null
+            ? rebalanceAccrualBridge(lines, accrualSettlementCtx)
+            : lines
+          ).map((line) => {
+            const lineRole: AccrualLineRole | null =
+              accrualSettlementCtx != null
+                ? classifyAccrualLineRole(line, accrualSettlementCtx)
+                : null;
+            const isSettlementCashLine = lineRole === "settlement_cash";
+            const accountEditable =
+              !isAccrualEntry || (isAccrualSettlementMode && isSettlementCashLine);
+            const amountEditable =
+              !isAccrualEntry || (isAccrualSettlementMode && isSettlementCashLine);
+            const partyEditable = !isAccrualEntry && !(line.obligation_id !== "" && line.obligation_id != null);
             const obligationLocked =
               !isAccrualEntry && line.obligation_id !== "" && line.obligation_id != null;
             const partyObligations =
@@ -838,7 +1035,7 @@ export function JournalEntryForm({
                   <select
                     aria-label={`Account for line ${line.key}`}
                     value={line.account_id === "" ? "" : String(line.account_id)}
-                    disabled={isAccrualEntry || obligationLocked}
+                    disabled={!accountEditable || obligationLocked}
                     onChange={(e) => {
                       const v = e.target.value;
                       updateLine(line.key, { account_id: v === "" ? "" : Number(v) });
@@ -861,7 +1058,7 @@ export function JournalEntryForm({
                   <select
                     aria-label={`Party for line ${line.key}`}
                     value={line.party_id === "" ? "" : String(line.party_id)}
-                    disabled={isAccrualEntry || obligationLocked}
+                    disabled={!partyEditable || obligationLocked}
                     onChange={(e) => {
                       const v = e.target.value;
                       updateLine(line.key, { party_id: v === "" ? "" : Number(v) });
@@ -881,7 +1078,7 @@ export function JournalEntryForm({
                 <td>
                   {isAccrualEntry ? (
                     <span className="muted">
-                      {line.obligation_id !== "" && line.obligation_id != null
+                      {isSettlementCashLine && line.obligation_id !== "" && line.obligation_id != null
                         ? `#${line.obligation_id}`
                         : "—"}
                     </span>
@@ -937,7 +1134,7 @@ export function JournalEntryForm({
                     value={line.amount}
                     onChange={(e) => updateLine(line.key, { amount: e.target.value })}
                     placeholder="100.00 or -100.00"
-                    disabled={isAccrualEntry}
+                    disabled={!amountEditable}
                   />
                 </td>
                 <td>
@@ -946,6 +1143,14 @@ export function JournalEntryForm({
                       type="button"
                       className="button-secondary"
                       disabled={lines.length <= 2}
+                      onClick={() => removeLine(line.key)}
+                    >
+                      Remove
+                    </button>
+                  ) : isSettlementCashLine ? (
+                    <button
+                      type="button"
+                      className="button-secondary"
                       onClick={() => removeLine(line.key)}
                     >
                       Remove
@@ -969,10 +1174,10 @@ export function JournalEntryForm({
         </p>
       )}
 
-      {!isAccrualEntry ? (
+      {!isAccrualEntry || isAccrualSettlementMode ? (
       <button
         type="submit"
-        disabled={submitting || !balanced}
+        disabled={submitting || !(canSaveAccrual || canSaveStandard)}
         title={saveActionTooltip(isMac)}
         aria-label={
           submitting
