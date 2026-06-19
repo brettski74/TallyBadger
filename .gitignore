@@ -16,6 +16,7 @@ __pycache__/
 *.swp
 *.bak
 /examples/*.zip
+/examples/*.tar.gz
 /examples/expand
 /data/seed_data.tar.gz
 /data/metadata.json.*
