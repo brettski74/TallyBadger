@@ -295,6 +295,9 @@ export function JournalEntriesPanel({
   const [formSettlementAllocations, setFormSettlementAllocations] = useState<
     JournalEntrySettlementAllocationOut[]
   >([]);
+  const [formSourceObligationId, setFormSourceObligationId] = useState<number | null>(null);
+  const [formOpenAmount, setFormOpenAmount] = useState<string | null>(null);
+  const [formSourceLineId, setFormSourceLineId] = useState<number | null>(null);
   const [settlementDialogOpen, setSettlementDialogOpen] = useState(false);
   const [settlementPending, setSettlementPending] = useState<{
     preview: JournalEntrySettlementPreviewOut;
@@ -520,6 +523,9 @@ export function JournalEntriesPanel({
     setFormAccrualPlanId(null);
     setFormAccrualPlanName(null);
     setFormSettlementAllocations([]);
+    setFormSourceObligationId(null);
+    setFormOpenAmount(null);
+    setFormSourceLineId(null);
   }
 
   async function openCreate() {
@@ -564,6 +570,9 @@ export function JournalEntriesPanel({
       setFormAccrualPlanId(entry.accrual_plan_id ?? null);
       setFormAccrualPlanName(entry.accrual_plan_name ?? null);
       setFormSettlementAllocations(entry.settlement_allocations ?? []);
+      setFormSourceObligationId(entry.source_obligation_id ?? null);
+      setFormOpenAmount(entry.open_amount ?? null);
+      setFormSourceLineId(entry.source_line_id ?? null);
       let choices = [...open];
       const cid = entry.cheque_id ?? null;
       if (cid != null) {
@@ -714,6 +723,9 @@ export function JournalEntriesPanel({
       setFormAccrualPlanId(entry.accrual_plan_id ?? null);
       setFormAccrualPlanName(entry.accrual_plan_name ?? null);
       setFormSettlementAllocations(entry.settlement_allocations ?? []);
+      setFormSourceObligationId(entry.source_obligation_id ?? null);
+      setFormOpenAmount(entry.open_amount ?? null);
+      setFormSourceLineId(entry.source_line_id ?? null);
       let choices = [...open];
       const cid = entry.cheque_id ?? null;
       if (cid != null) {
@@ -854,6 +866,9 @@ export function JournalEntriesPanel({
             accrualPlanId={formAccrualPlanId}
             accrualPlanName={formAccrualPlanName}
             settlementAllocations={formSettlementAllocations}
+            sourceObligationId={formSourceObligationId}
+            openAmount={formOpenAmount}
+            sourceLineId={formSourceLineId}
           />
         </section>
       </>

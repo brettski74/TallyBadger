@@ -83,7 +83,51 @@ const ledgerSettings: LedgerSettings = {
   updated_at: "2026-04-01T00:00:00Z",
 };
 
-const planTargetAccountByPlanId = new Map<number, number>([[7, 2]]);
+const planTargetAccountByPlanId = new Map<number, number>([[7, 2], [9, 2]]);
+
+const urAccount: Account = {
+  id: 12,
+  name: "Unearned Revenue",
+  type: "liability",
+  is_active: true,
+  created_at: "2026-04-01T00:00:00Z",
+  updated_at: "2026-04-01T00:00:00Z",
+};
+
+const accrualAccounts = [...accounts, arAccount, urAccount];
+
+const accrualLedgerSettings: LedgerSettings = {
+  ...ledgerSettings,
+  default_cash_account_id: 1,
+};
+
+function accrualSettlementFormProps(overrides: Record<string, unknown> = {}) {
+  return {
+    mode: "edit" as const,
+    accounts: accrualAccounts,
+    parties,
+    initialEntryDate: "2026-07-01",
+    initialSummary: "July rent",
+    initialDescription: "",
+    reviewMessages: [],
+    initialLines: [
+      { key: "pl", account_id: 2, party_id: 1, amount: "-1500.00", obligation_id: "" },
+      { key: "jl-20", account_id: 10, party_id: 1, amount: "1500.00", obligation_id: "" },
+    ],
+    accrualPlanId: 9,
+    accrualPlanName: "Monthly rent",
+    settlementAllocations: [],
+    sourceObligationId: 44,
+    openAmount: "1500.00",
+    sourceLineId: 20,
+    ledgerSettings: accrualLedgerSettings,
+    planTargetAccountByPlanId,
+    onSubmit: vi.fn().mockResolvedValue(undefined),
+    onCancel: () => {},
+    onRevert: () => {},
+    ...overrides,
+  };
+}
 
 describe("isBalanced", () => {
   it("requires two lines, accounts, non-zero amounts, and zero sum", () => {
@@ -1068,34 +1112,150 @@ describe("JournalEntryForm", () => {
       expect(accountSelect).not.toBeDisabled();
     });
 
-    it("shows read-only accrual banner and hides save for accrual plan entries", () => {
+    it("enables settlement editing for accrual entries with open amount", async () => {
+      render(<JournalEntryForm {...accrualSettlementFormProps()} />);
+
+      expect(screen.getByText(/accrual content is read-only/i)).toBeInTheDocument();
+      expect(screen.getByText(/open amount 1500.00/i)).toBeInTheDocument();
+      expect(screen.getByLabelText("Entry summary")).toBeDisabled();
+      expect(screen.getByRole("button", { name: /Add line/ })).toBeEnabled();
+      expect(screen.getByRole("button", { name: /Save changes/ })).toBeDisabled();
+
+      const user = userEvent.setup();
+      await user.click(screen.getByRole("button", { name: /Add line/ }));
+
+      const amountInputs = screen.getAllByPlaceholderText("100.00 or -100.00");
+      const cashAmount = amountInputs.find((input) => !input.hasAttribute("disabled"));
+      expect(cashAmount).toBeDefined();
+      expect(screen.getByText("#44")).toBeInTheDocument();
+
+      await user.clear(cashAmount!);
+      await user.type(cashAmount!, "500.00");
+
+      await waitFor(() => {
+        const bridgeAmount = screen
+          .getAllByPlaceholderText("100.00 or -100.00")
+          .find(
+            (input) =>
+              input.hasAttribute("disabled") && (input as HTMLInputElement).value === "1000.00",
+          );
+        expect(bridgeAmount).toBeDefined();
+      });
+      expect(screen.getByRole("button", { name: /Save changes/ })).toBeEnabled();
+    });
+
+    it("disables add line when open amount is zero", () => {
       render(
         <JournalEntryForm
-          mode="edit"
-          accounts={accounts}
-          parties={parties}
-          initialEntryDate="2026-04-20"
-          initialSummary="April accrual"
-          initialDescription=""
-          reviewMessages={[]}
-          initialLines={[
-            { key: "a", account_id: 1, party_id: 1, amount: "100.00", obligation_id: "" },
-            { key: "b", account_id: 2, party_id: 1, amount: "-100.00", obligation_id: "" },
-          ]}
-          accrualPlanId={9}
-          accrualPlanName="Monthly rent"
-          settlementAllocations={[{ id: 1, obligation_id: 44, amount: "100.00" }]}
-          onSubmit={vi.fn()}
-          onCancel={() => {}}
-          onRevert={() => {}}
+          {...accrualSettlementFormProps({
+            openAmount: "0.00",
+            initialLines: [
+              { key: "pl", account_id: 2, party_id: 1, amount: "-1500.00", obligation_id: "" },
+              { key: "jl-20", account_id: 10, party_id: 1, amount: "1500.00", obligation_id: "" },
+            ],
+          })}
         />,
       );
 
-      expect(screen.getByText(/Accrual plan entry/i)).toBeInTheDocument();
-      expect(screen.getByText("Monthly rent")).toBeInTheDocument();
-      expect(screen.getByLabelText("Entry summary")).toBeDisabled();
-      expect(screen.queryByRole("button", { name: /Save changes/ })).toBeNull();
-      expect(screen.getByRole("table", { name: "Settlement allocations on this entry" })).toBeInTheDocument();
+      expect(screen.getByText(/Obligation fully settled/i)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /Add line/ })).toBeDisabled();
+    });
+
+    it("prefills default cash account on new settlement cash lines", async () => {
+      render(<JournalEntryForm {...accrualSettlementFormProps()} />);
+      const user = userEvent.setup();
+      await user.click(screen.getByRole("button", { name: /Add line/ }));
+
+      const accountSelects = screen
+        .getAllByRole("combobox")
+        .filter((el) => String(el.getAttribute("aria-label")).startsWith("Account for line"));
+      const editableAccount = accountSelects.find((el) => !(el as HTMLSelectElement).disabled);
+      expect(editableAccount).toHaveValue("1");
+    });
+
+    it("keeps P&L and prepaid lines read-only", () => {
+      render(
+        <JournalEntryForm
+          {...accrualSettlementFormProps({
+            initialLines: [
+              { key: "pl", account_id: 2, party_id: 1, amount: "-1500.00", obligation_id: "" },
+              { key: "ur", account_id: 12, party_id: 1, amount: "500.00", obligation_id: "" },
+              { key: "jl-20", account_id: 10, party_id: 1, amount: "1000.00", obligation_id: "" },
+            ],
+            openAmount: "1000.00",
+          })}
+        />,
+      );
+
+      const amountInputs = screen.getAllByPlaceholderText("100.00 or -100.00");
+      const disabledAmounts = amountInputs.filter((input) => input.hasAttribute("disabled"));
+      expect(disabledAmounts.map((input) => (input as HTMLInputElement).value)).toEqual(
+        expect.arrayContaining(["-1500.00", "500.00", "1000.00"]),
+      );
+    });
+
+    it("merges same-account cash lines on save", async () => {
+      const onSubmit = vi.fn().mockResolvedValue(undefined);
+      render(
+        <JournalEntryForm
+          {...accrualSettlementFormProps({
+            onSubmit,
+            initialLines: [
+              { key: "pl", account_id: 2, party_id: 1, amount: "-1500.00", obligation_id: "" },
+              { key: "jl-20", account_id: 10, party_id: 1, amount: "700.00", obligation_id: "" },
+              { key: "cash-a", account_id: 1, party_id: 1, amount: "400.00", obligation_id: 44 },
+            ],
+          })}
+        />,
+      );
+
+      const user = userEvent.setup();
+      await user.click(screen.getByRole("button", { name: /Add line/ }));
+      const amountInputs = screen.getAllByPlaceholderText("100.00 or -100.00");
+      const editableAmounts = amountInputs.filter((input) => !input.hasAttribute("disabled"));
+      const newCashAmount = editableAmounts[editableAmounts.length - 1]!;
+      await user.clear(newCashAmount);
+      await user.type(newCashAmount, "100.00");
+
+      await user.click(screen.getByRole("button", { name: /Save changes/ }));
+
+      await waitFor(() => {
+        expect(onSubmit).toHaveBeenCalledTimes(1);
+      });
+      const payload = onSubmit.mock.calls[0]![0] as { lines: { obligation_id?: number; amount: string }[] };
+      const cashLines = payload.lines.filter((line) => line.obligation_id === 44);
+      expect(cashLines).toHaveLength(1);
+      expect(cashLines[0]?.amount).toBe("500.00");
+    });
+
+    it("enables cheque control only with one non-zero settlement cash line", async () => {
+      render(<JournalEntryForm {...accrualSettlementFormProps()} />);
+      expect(screen.getByLabelText("Link open cheque")).toBeDisabled();
+
+      const user = userEvent.setup();
+      await user.click(screen.getByRole("button", { name: /Add line/ }));
+      const amountInputs = screen.getAllByPlaceholderText("100.00 or -100.00");
+      const cashAmount = amountInputs.find((input) => !input.hasAttribute("disabled"));
+      await user.clear(cashAmount!);
+      await user.type(cashAmount!, "500.00");
+
+      expect(screen.getByLabelText("Link open cheque")).toBeEnabled();
+    });
+
+    it("shows unsettle banner when obligation is closed but cash lines remain", () => {
+      render(
+        <JournalEntryForm
+          {...accrualSettlementFormProps({
+            openAmount: "0.00",
+            initialLines: [
+              { key: "pl", account_id: 2, party_id: 1, amount: "-1500.00", obligation_id: "" },
+              { key: "jl-30", account_id: 1, party_id: 1, amount: "1500.00", obligation_id: 44 },
+            ],
+          })}
+        />,
+      );
+
+      expect(screen.getByText(/Remove settlement cash lines and save to unsettle/i)).toBeInTheDocument();
     });
   });
 });
