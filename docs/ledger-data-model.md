@@ -171,6 +171,8 @@ sequenceDiagram
 
 **Manual vs CSV `line[]`:** same `settlement_allocations` / obligation updates. Manual **`POST /settlements`** may create a settlement journal entry or collapse into an accrual entry; CSV import supplies GL via **`line[]`** and reuses that entry (or collapses when eligible) ([#151](https://github.com/brettski74/TallyBadger/issues/151)).
 
+**Accrual journal entry PUT settlement ([#278](https://github.com/brettski74/TallyBadger/issues/278)):** `PUT /journal-entries/:id` on entries with `accrual_plan_id` allows settlement edits only — cash lines carry `obligation_id` (not the A/R or A/P bridge). The server reverses existing allocations on that entry and re-applies from the payload. `GET /journal-entries/:id` exposes `source_obligation_id`, `open_amount`, and `source_line_id` on accrual entries for the journal form ([#279](https://github.com/brettski74/TallyBadger/issues/279)).
+
 ---
 
 ## Import batch unload — discovery and scope

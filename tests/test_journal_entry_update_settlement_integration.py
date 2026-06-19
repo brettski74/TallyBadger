@@ -298,26 +298,32 @@ def test_put_clears_obligation_lines_and_restores_open_balance(
     assert Decimal(obligations[0]["open_amount"]) == Decimal("1500.00")
 
 
-def test_put_rejects_accrual_plan_journal_entry(
+def test_put_rejects_bridge_shape_on_accrual_plan_journal_entry(
     api_client: TestClient,
 ) -> None:
-    party_id, cash_id, ar_id, obligation_id, accrual_entry_id, _ = _setup_rent_accrual(api_client)
+    party_id, cash_id, ar_id, obligation_id, accrual_entry_id, rent_id = _setup_rent_accrual(api_client)
 
     put = api_client.put(
         f"/journal-entries/{accrual_entry_id}",
-        json=_settlement_payload(
-            entry_date=date(2026, 7, 1),
-            cash_id=cash_id,
-            ar_id=ar_id,
-            party_id=party_id,
-            obligation_id=obligation_id,
-            amount=Decimal("1500.00"),
-        ),
+        json={
+            "entry_date": "2026-07-01",
+            "summary": "July rent",
+            "lines": [
+                {"account_id": rent_id, "party_id": party_id, "amount": "-1500.00"},
+                {"account_id": ar_id, "party_id": party_id, "amount": "1500.00"},
+                {"account_id": cash_id, "party_id": party_id, "amount": "500.00"},
+                {
+                    "account_id": ar_id,
+                    "party_id": party_id,
+                    "amount": "-500.00",
+                    "obligation_id": obligation_id,
+                },
+            ],
+        },
     )
     assert put.status_code == 422, put.text
     detail = put.json()["detail"].lower()
-    assert "accrual plan" in detail
-    assert "july rent" in detail
+    assert "cash" in detail or "receivable" in detail
 
 
 def test_put_settlement_update_keeps_cheque_register_in_sync(
